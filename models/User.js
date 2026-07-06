@@ -12,7 +12,7 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['admin', 'pm', 'store', 'sitestore', 'purchase'],
+    enum: ['admin', 'pm', 'store', 'sitestore', 'purchase', 'Admin', 'Director', 'ProjectManager', 'PurchaseOfficer', 'MainStoreOfficer', 'SiteStoreOfficer'],
     required: true
   },
   email: {
@@ -23,6 +23,16 @@ const userSchema = new mongoose.Schema({
   isActive: {
     type: Boolean,
     default: true
+  },
+  projectId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Project',
+    default: null
+  },
+  project_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Project',
+    default: null
   }
 }, { timestamps: true });
 

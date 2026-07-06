@@ -50,6 +50,28 @@ const purchaseOrderSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  expectedDeliveryDate: {
+    type: Date
+  },
+  actualDeliveryDate: {
+    type: Date
+  },
+  receivedQty: {
+    type: Number
+  },
+  deliveryCondition: {
+    type: String,
+    enum: ['Good', 'Damaged', 'Partial']
+  },
+  paymentTerms: {
+    type: String
+  },
+  deliveryAddress: {
+    type: String
+  },
+  sentAt: {
+    type: Date
+  },
   createdBy: {
     type: String,
     required: true

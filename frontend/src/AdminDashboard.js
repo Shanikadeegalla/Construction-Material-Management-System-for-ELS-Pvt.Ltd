@@ -5,7 +5,7 @@ const AdminDashboard = ({ user, onLogout }) => {
   const [users, setUsers] = useState([]);
   const [showAddUser, setShowAddUser] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'StoreOfficer' });
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'MainStoreOfficer' });
   const [message, setMessage] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date());
   const [recentActivity, setRecentActivity] = useState([
@@ -51,7 +51,7 @@ const AdminDashboard = ({ user, onLogout }) => {
       setUsers([
         { _id: '1', name: 'John Smith', email: 'john@els.com', role: 'ProjectManager', status: true, createdAt: new Date().toISOString() },
         { _id: '2', name: 'Sarah Johnson', email: 'sarah@els.com', role: 'Director', status: true, createdAt: new Date().toISOString() },
-        { _id: '3', name: 'Mike Davis', email: 'mike@els.com', role: 'StoreOfficer', status: false, createdAt: new Date().toISOString() },
+        { _id: '3', name: 'Mike Davis', email: 'mike@els.com', role: 'MainStoreOfficer', status: false, createdAt: new Date().toISOString() },
         { _id: '4', name: 'Emily Brown', email: 'emily@els.com', role: 'PurchaseOfficer', status: true, createdAt: new Date().toISOString() },
       ]);
     }
@@ -73,7 +73,7 @@ const AdminDashboard = ({ user, onLogout }) => {
         setAuditLogs(prev => [newLog, ...prev]);
         const newAct = { name: user?.name || 'Admin', action: `Created new user: ${newUser.name} (${newUser.role})`, time: new Date(), type: 'success' };
         setRecentActivity(prev => [newAct, ...prev.slice(0, 4)]);
-        setNewUser({ name: '', email: '', password: '', role: 'StoreOfficer' });
+        setNewUser({ name: '', email: '', password: '', role: 'MainStoreOfficer' });
         fetchUsers();
       } else {
         setMessage(`❌ ${data.message || 'Failed to add user'}`);
@@ -206,11 +206,11 @@ const AdminDashboard = ({ user, onLogout }) => {
                       <div>
                         <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>ROLE</label>
                         <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}>
-                          <option value="Admin">Admin</option>
                           <option value="Director">Director</option>
                           <option value="ProjectManager">Project Manager</option>
                           <option value="PurchaseOfficer">Purchase Officer</option>
-                          <option value="StoreOfficer">Store Officer</option>
+                          <option value="MainStoreOfficer">Main Store Officer</option>
+                          <option value="SiteStoreOfficer">Site Store Officer</option>
                         </select>
                       </div>
                     </div>

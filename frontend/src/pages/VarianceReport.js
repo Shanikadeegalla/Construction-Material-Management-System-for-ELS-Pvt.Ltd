@@ -205,9 +205,9 @@ const VarianceReport = () => {
       }
       doc.text(item.materialName, 14, y);
       doc.text(item.unit, 68, y);
-      doc.text(item.plannedQty.toLocaleString(), 88, y);
-      doc.text(item.actualQty.toLocaleString(), 118, y);
-      doc.text(item.varianceQty.toLocaleString(), 148, y);
+      doc.text((item.plannedQty || 0).toLocaleString(), 88, y);
+      doc.text((item.actualQty || 0).toLocaleString(), 118, y);
+      doc.text((item.varianceQty || 0).toLocaleString(), 148, y);
       doc.text(`${item.variancePct}%`, 178, y);
       
       doc.setDrawColor(240, 240, 240);
@@ -398,10 +398,10 @@ const VarianceReport = () => {
                         <td style={styles.td}>{item.projectName}</td>
                         <td style={{ ...styles.td, fontWeight: '600', color: '#0d1b4b' }}>{item.materialName}</td>
                         <td style={styles.td}>{item.unit}</td>
-                        <td style={styles.td}>{item.plannedQty.toLocaleString()}</td>
-                        <td style={styles.td}>{item.actualQty.toLocaleString()}</td>
-                        <td style={{ ...styles.td, color: item.varianceQty > 0 ? '#dc2626' : '#16a34a', fontWeight: '500' }}>
-                          {item.varianceQty > 0 ? `+${item.varianceQty.toLocaleString()}` : item.varianceQty.toLocaleString()}
+                        <td style={styles.td}>{(item.plannedQty || 0).toLocaleString()}</td>
+                        <td style={styles.td}>{(item.actualQty || 0).toLocaleString()}</td>
+                        <td style={{ ...styles.td, color: (item.varianceQty || 0) > 0 ? '#dc2626' : '#16a34a', fontWeight: '500' }}>
+                          {(item.varianceQty || 0) > 0 ? `+${(item.varianceQty || 0).toLocaleString()}` : (item.varianceQty || 0).toLocaleString()}
                         </td>
                         <td style={{ ...styles.td, color: statusColor, fontWeight: 'bold' }}>
                           {item.variancePct > 0 ? `+${item.variancePct}%` : `${item.variancePct}%`}

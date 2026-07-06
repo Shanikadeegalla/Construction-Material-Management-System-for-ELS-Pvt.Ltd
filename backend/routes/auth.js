@@ -7,7 +7,8 @@ import {
   updateUser,
   deactivateUser,
   activateUser,
-  getAuditLogs
+  getAuditLogs,
+  resetUserPassword
 } from '../controllers/authController.js';
 import { protect, admin } from '../middleware/authMiddleware.js';
 
@@ -22,6 +23,7 @@ router.get('/users', protect, admin, getUsers);
 router.put('/users/:id', protect, updateUser);
 router.put('/users/:id/deactivate', protect, admin, deactivateUser);
 router.put('/users/:id/activate', protect, admin, activateUser);
+router.put('/users/:id/reset-password', protect, admin, resetUserPassword);
 
 // Audit logs
 router.get('/audit-logs', protect, getAuditLogs);

@@ -24,8 +24,18 @@ const userSchema = new mongoose.Schema(
     role: {
       type: String,
       required: true,
-      enum: ['Admin', 'Director', 'ProjectManager', 'PurchaseOfficer', 'StoreOfficer'],
-      default: 'StoreOfficer',
+      enum: ['Admin', 'Director', 'ProjectManager', 'PurchaseOfficer', 'MainStoreOfficer', 'SiteStoreOfficer'],
+      default: 'MainStoreOfficer',
+    },
+    projectId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Project',
+      default: null,
+    },
+    project_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Project',
+      default: null,
     },
     status: {
       type: Boolean,

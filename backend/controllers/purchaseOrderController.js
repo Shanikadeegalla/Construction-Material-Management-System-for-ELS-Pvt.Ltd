@@ -50,25 +50,49 @@ export const getPurchaseOrders = async (req, res) => {
       .populate('prId')
       .sort({ createdAt: -1 });
 
-    const formattedPOs = pos.map(po => ({
-      _id: po._id,
-      poNumber: po.poNumber,
-      prId: po.prId ? po.prId._id : null,
-      supplier: po.supplier,
-      totalAmount: po.totalAmount,
-      status: po.status,
-      notes: po.notes || '',
-      createdBy: po.createdBy,
-      createdAt: po.createdAt,
-      updatedAt: po.updatedAt,
-      items: po.items.map(item => ({
-        material: item.material,
-        materialName: item.materialName,
-        quantity: item.quantity,
-        unit: item.unit,
-        unitPrice: item.unitPrice
-      }))
-    }));
+    const suppliers = await Supplier.find().lean();
+    const supplierMap = {};
+    suppliers.forEach(s => {
+      supplierMap[s._id.toString()] = s.name;
+    });
+
+    const formattedPOs = pos.map(po => {
+      let supplierName = 'Unknown';
+      if (po.supplier) {
+        const supStr = po.supplier.toString();
+        if (supplierMap[supStr]) {
+          supplierName = supplierMap[supStr];
+        } else {
+          supplierName = po.supplier;
+        }
+      }
+      return {
+        _id: po._id,
+        poNumber: po.poNumber,
+        prId: po.prId ? po.prId._id : null,
+        supplier: supplierName,
+        totalAmount: po.totalAmount,
+        status: po.status,
+        notes: po.notes || '',
+        createdBy: po.createdBy,
+        createdAt: po.createdAt,
+        updatedAt: po.updatedAt,
+        expectedDeliveryDate: po.expectedDeliveryDate,
+        actualDeliveryDate: po.actualDeliveryDate,
+        receivedQty: po.receivedQty,
+        deliveryCondition: po.deliveryCondition,
+        paymentTerms: po.paymentTerms,
+        deliveryAddress: po.deliveryAddress,
+        sentAt: po.sentAt,
+        items: po.items.map(item => ({
+          material: item.material,
+          materialName: item.materialName,
+          quantity: item.quantity,
+          unit: item.unit,
+          unitPrice: item.unitPrice
+        }))
+      };
+    });
 
     res.status(200).json({ success: true, count: formattedPOs.length, data: formattedPOs });
   } catch (error) {
@@ -81,7 +105,7 @@ export const getPurchaseOrders = async (req, res) => {
 // @access  Private
 export const createPurchaseOrder = async (req, res) => {
   try {
-    const { prId, supplier, items, totalAmount, notes } = req.body;
+    const { prId, supplier, items, totalAmount, notes, expectedDeliveryDate, paymentTerms, deliveryAddress } = req.body;
     const createdBy = req.user ? req.user.name : (req.body.createdBy || 'Purchase Officer');
 
     if (!supplier || !items || !Array.isArray(items) || items.length === 0 || !totalAmount) {
@@ -134,7 +158,10 @@ export const createPurchaseOrder = async (req, res) => {
       totalAmount: Number(totalAmount),
       notes: notes || '',
       createdBy,
-      status: 'Pending'
+      status: 'Pending',
+      expectedDeliveryDate,
+      paymentTerms,
+      deliveryAddress
     };
 
     if (prId && mongoose.Types.ObjectId.isValid(prId)) {
@@ -162,13 +189,28 @@ export const getPurchaseOrderById = async (req, res) => {
   try {
     const po = await PurchaseOrder.findById(req.params.id)
       .populate('prId')
-      .populate('supplier');
+      .lean();
 
     if (!po) {
       return res.status(404).json({ success: false, message: 'Purchase order not found.' });
     }
 
-    res.status(200).json({ success: true, data: po });
+    let supplierData = null;
+    if (po.supplier) {
+      if (mongoose.Types.ObjectId.isValid(po.supplier)) {
+        supplierData = await Supplier.findById(po.supplier).lean();
+      }
+      if (!supplierData) {
+        supplierData = { name: po.supplier.toString() };
+      }
+    }
+
+    const formattedPo = {
+      ...po,
+      supplier: supplierData ? supplierData.name : 'Unknown'
+    };
+
+    res.status(200).json({ success: true, data: formattedPo });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -197,5 +239,190 @@ export const updatePurchaseOrderStatus = async (req, res) => {
     res.status(200).json({ success: true, message: `Purchase Order status updated to ${status}!`, data: po });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Send PO to supplier
+// @route   PUT /api/purchase-orders/:id/send
+// @access  Private
+export const sendPurchaseOrder = async (req, res) => {
+  try {
+    const po = await PurchaseOrder.findById(req.params.id);
+    if (!po) {
+      return res.status(404).json({ success: false, message: 'Purchase order not found.' });
+    }
+
+    let supplierName = 'Supplier';
+    if (po.supplier) {
+      if (mongoose.Types.ObjectId.isValid(po.supplier)) {
+        const found = await Supplier.findById(po.supplier);
+        if (found) supplierName = found.name;
+      } else {
+        supplierName = po.supplier.toString();
+      }
+    }
+
+    po.status = 'Sent';
+    po.sentAt = new Date();
+
+    await po.save();
+
+    res.status(200).json({
+      success: true,
+      message: `${po.poNumber} sent to ${supplierName} successfully!`,
+      data: po
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Rate PO delivery
+// @route   PUT /api/purchase-orders/:id/rate-delivery
+// @access  Private
+export const ratePurchaseOrderDelivery = async (req, res) => {
+  try {
+    const { actualDeliveryDate, receivedQty, deliveryCondition } = req.body;
+
+    if (!actualDeliveryDate || receivedQty === undefined || !deliveryCondition) {
+      return res.status(400).json({ success: false, message: 'Missing delivery rating fields.' });
+    }
+
+    const po = await PurchaseOrder.findById(req.params.id);
+    if (!po) {
+      return res.status(404).json({ success: false, message: 'Purchase order not found.' });
+    }
+
+    po.actualDeliveryDate = new Date(actualDeliveryDate);
+    po.receivedQty = Number(receivedQty);
+    po.deliveryCondition = deliveryCondition;
+    po.status = 'Delivered';
+
+    await po.save();
+
+    res.status(200).json({ success: true, message: 'Purchase Order delivery rated successfully!', data: po });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get supplier performance metrics
+// @route   GET /api/purchase-orders/supplier-performance
+// @access  Private
+export const getSupplierPerformance = async (req, res) => {
+  try {
+    const pos = await PurchaseOrder.find().lean();
+    const suppliers = await Supplier.find().lean();
+
+    const supplierMap = {};
+    suppliers.forEach(s => {
+      supplierMap[s._id.toString()] = s.name;
+    });
+
+    const performanceData = {};
+
+    // Initialize map with all suppliers
+    suppliers.forEach(s => {
+      performanceData[s.name] = {
+        supplierName: s.name,
+        totalOrders: 0,
+        deliveredCount: 0,
+        onTimeCount: 0,
+        totalOrderedQty: 0,
+        totalReceivedQty: 0
+      };
+    });
+
+    pos.forEach(po => {
+      let supplierName = 'Unknown';
+      if (po.supplier) {
+        const supStr = po.supplier.toString();
+        if (supplierMap[supStr]) {
+          supplierName = supplierMap[supStr];
+        } else {
+          supplierName = po.supplier;
+        }
+      }
+
+      if (supplierName === 'Unknown') return;
+
+      if (!performanceData[supplierName]) {
+        performanceData[supplierName] = {
+          supplierName,
+          totalOrders: 0,
+          deliveredCount: 0,
+          onTimeCount: 0,
+          totalOrderedQty: 0,
+          totalReceivedQty: 0
+        };
+      }
+
+      const metrics = performanceData[supplierName];
+      metrics.totalOrders += 1;
+
+      if (po.status === 'Delivered') {
+        metrics.deliveredCount += 1;
+
+        // Check if on-time
+        if (po.actualDeliveryDate && po.expectedDeliveryDate) {
+          const actual = new Date(po.actualDeliveryDate);
+          const expected = new Date(po.expectedDeliveryDate);
+          if (actual <= expected) {
+            metrics.onTimeCount += 1;
+          }
+        } else {
+          metrics.onTimeCount += 1; // Default to on-time if dates not recorded
+        }
+
+        // Qty accuracy
+        const ordered = po.items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+        metrics.totalOrderedQty += ordered;
+        metrics.totalReceivedQty += (po.receivedQty || 0);
+      }
+    });
+
+    const result = Object.values(performanceData).map(metrics => {
+      let accuracyPercent = 100;
+      let onTimePercent = 100;
+
+      if (metrics.deliveredCount > 0) {
+        if (metrics.totalOrderedQty > 0) {
+          accuracyPercent = (metrics.totalReceivedQty / metrics.totalOrderedQty) * 100;
+        }
+        onTimePercent = (metrics.onTimeCount / metrics.deliveredCount) * 100;
+      }
+
+      accuracyPercent = Math.round(accuracyPercent * 10) / 10;
+      onTimePercent = Math.round(onTimePercent * 10) / 10;
+
+      // Rating rules:
+      // Green "Excellent" (>95% accuracy)
+      // Blue "Good" (>85% accuracy)
+      // Yellow "Average" (>70% accuracy)
+      // Red "Poor" (below 70%)
+      let performanceRating = 'Poor';
+      if (metrics.deliveredCount === 0) {
+        performanceRating = 'N/A';
+      } else if (accuracyPercent > 95) {
+        performanceRating = 'Excellent';
+      } else if (accuracyPercent > 85) {
+        performanceRating = 'Good';
+      } else if (accuracyPercent > 70) {
+        performanceRating = 'Average';
+      }
+
+      return {
+        supplierName: metrics.supplierName,
+        totalOrders: metrics.totalOrders,
+        onTimeDeliveries: metrics.onTimeCount,
+        onTimePercent,
+        deliveryAccuracy: accuracyPercent,
+        performanceRating
+      };
+    });
+
+    res.status(200).json({ success: true, count: result.length, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };

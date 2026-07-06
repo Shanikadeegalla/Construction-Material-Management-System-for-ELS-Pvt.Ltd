@@ -2,16 +2,30 @@ import React, { useState, useEffect } from 'react';
 import SettingsPage from './SettingsPage';
 
 function MainStoreDashboard({ user, onLogout }) {
-  const [view, setView] = useState('dashboard'); // 'dashboard', 'add-stock', 'grn', 'issue', 'transfer-log'
+  const [view, setView] = useState('dashboard'); // 'dashboard', 'add-stock', 'grn', 'issue', 'transfer-log', 'purchase-request'
   const [materials, setMaterials] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [grns, setGrns] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [prs, setPrs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  // PR Form State
+  const [prForm, setPrForm] = useState({
+    projectName: '',
+    materialName: '',
+    unit: 'bag',
+    quantity: '',
+    urgency: 'Normal',
+    notes: ''
+  });
+  const [showPrForm, setShowPrForm] = useState(false);
 
   // Search & Filters for Stock Table
   const [searchQuery, setSearchQuery] = useState('');
@@ -36,7 +50,8 @@ function MainStoreDashboard({ user, onLogout }) {
   const [issueForm, setIssueForm] = useState({
     materialId: '',
     quantity: '',
-    projectName: ''
+    projectName: '',
+    projectId: ''
   });
 
   // GRN form
@@ -66,11 +81,20 @@ function MainStoreDashboard({ user, onLogout }) {
       if (data.success) {
         setNotifications(data.data);
       }
+
+      const countRes = await fetch('http://localhost:5000/api/notifications/count', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const countData = await countRes.json();
+      if (countData.success) {
+        setUnreadCount(countData.count);
+      }
     } catch (err) {
       setNotifications([
         { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
         { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
       ]);
+      setUnreadCount(2);
     }
   };
 
@@ -104,6 +128,20 @@ function MainStoreDashboard({ user, onLogout }) {
       // Fetch notifications
       await fetchNotifications();
 
+      // Fetch PRs
+      const prRes = await fetch('http://localhost:5000/api/purchase-requests', { headers });
+      const prData = await prRes.json();
+      if (prData.success) {
+        setPrs(prData.data);
+      }
+
+      // Fetch projects
+      const projRes = await fetch('http://localhost:5000/api/projects', { headers });
+      const projData = await projRes.json();
+      if (projData.success) {
+        setProjects(projData.data);
+      }
+
     } catch (err) {
       setError('Could not connect to the backend server. Using fallback demo data.');
       // Fallback
@@ -120,6 +158,13 @@ function MainStoreDashboard({ user, onLogout }) {
       ]);
       setNotifications([
         { materialName: 'Deformed Steel Bars 12mm', currentQty: 5, minimumStock: 10, location: 'MainStore', alertLevel: 'Low' }
+      ]);
+      setPrs([
+        { _id: '1', projectName: 'Colombo Port Expansion', materials: [{ materialName: 'Portland Cement OPC', quantity: 300, unit: 'bag' }], urgency: 'Normal', status: 'Pending', createdAt: new Date().toISOString() }
+      ]);
+      setProjects([
+        { _id: '1', projectName: 'Colombo Port Expansion' },
+        { _id: '2', projectName: 'Marina Heights Development' }
       ]);
     } finally {
       setLoading(false);
@@ -164,6 +209,13 @@ function MainStoreDashboard({ user, onLogout }) {
       setError('Please select a material and enter a valid quantity.');
       return;
     }
+
+    const selectedMat = materials.find(m => m._id === issueForm.materialId);
+    if (selectedMat && Number(issueForm.quantity) > selectedMat.quantity) {
+      setError('Transfer quantity exceeds available stock.');
+      return;
+    }
+
     try {
       const res = await fetch('http://localhost:5000/api/inventory/issue', {
         method: 'POST',
@@ -173,7 +225,7 @@ function MainStoreDashboard({ user, onLogout }) {
       const data = await res.json();
       if (res.ok) {
         setSuccess(data.message || '✅ Stock issued successfully!');
-        setIssueForm({ materialId: '', quantity: '', projectName: '' });
+        setIssueForm({ materialId: '', quantity: '', projectName: '', projectId: '' });
         setView('dashboard');
         fetchData();
       } else {
@@ -267,6 +319,78 @@ function MainStoreDashboard({ user, onLogout }) {
     window.location.reload();
   };
 
+  const handlePrSubmit = async (e) => {
+    e.preventDefault();
+    setError(''); setSuccess('');
+    if (!prForm.projectName || !prForm.materialName || !prForm.quantity || Number(prForm.quantity) <= 0) {
+      setError('Please fill in all required PR fields.');
+      return;
+    }
+
+    const payload = {
+      projectName: prForm.projectName,
+      materials: [{
+        materialName: prForm.materialName,
+        quantity: Number(prForm.quantity),
+        unit: prForm.unit,
+        reason: prForm.notes
+      }],
+      urgency: prForm.urgency,
+      notes: prForm.notes,
+      requestedBy: user ? user.name : 'Store Officer'
+    };
+
+    try {
+      const res = await fetch('http://localhost:5000/api/purchase-requests', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSuccess('✅ PR submitted to Project Manager');
+        setShowPrForm(false);
+        setPrForm({
+          projectName: '',
+          materialName: '',
+          unit: 'bag',
+          quantity: '',
+          urgency: 'Normal',
+          notes: ''
+        });
+        fetchData();
+      } else {
+        setError(data.message || 'Failed to submit Purchase Request.');
+      }
+    } catch (err) {
+      setSuccess('✅ PR submitted to Project Manager (Demo Mode)');
+      const mockPr = {
+        _id: String(Date.now()),
+        projectName: prForm.projectName,
+        materials: [{
+          materialName: prForm.materialName,
+          quantity: Number(prForm.quantity),
+          unit: prForm.unit,
+          reason: prForm.notes
+        }],
+        urgency: prForm.urgency,
+        status: 'Pending',
+        requestedBy: user ? user.name : 'Store Officer',
+        createdAt: new Date().toISOString()
+      };
+      setPrs(prev => [mockPr, ...prev]);
+      setShowPrForm(false);
+      setPrForm({
+        projectName: '',
+        materialName: '',
+        unit: 'bag',
+        quantity: '',
+        urgency: 'Normal',
+        notes: ''
+      });
+    }
+  };
+
   // Calculations for stats
   const mainMaterials = materials.filter(m => m.location === 'MainStore');
   const totalSKUs = mainMaterials.length;
@@ -304,8 +428,9 @@ function MainStoreDashboard({ user, onLogout }) {
             { id: 'dashboard', label: 'Dashboard', icon: '📊' },
             { id: 'add-stock', label: 'Add Stock', icon: '➕' },
             { id: 'grn', label: 'GRN Incoming', icon: '📥' },
-            { id: 'issue', label: 'Issue to Site', icon: '⇄' },
+            { id: 'issue-site', label: 'Issue to Site', icon: '⇄' },
             { id: 'transfer-log', label: 'Transfer Log', icon: '📋' },
+            { id: 'purchase-request', label: 'Purchase Request', icon: '📝' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
             <button
@@ -317,10 +442,6 @@ function MainStoreDashboard({ user, onLogout }) {
             </button>
           ))}
         </nav>
-
-        <button onClick={handleStoreSwitch} style={styles.sidebarSwitchBtn}>
-          🔄 Switch to Site Store
-        </button>
 
         <button onClick={onLogout} style={styles.sidebarLogoutBtn}>
           Logout Session
@@ -338,7 +459,7 @@ function MainStoreDashboard({ user, onLogout }) {
             {/* Notification Bell */}
             <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setShowNotifications(!showNotifications)}>
               <span style={{ fontSize: '20px' }}>🔔</span>
-              {notifications.length > 0 && (
+              {unreadCount > 0 && (
                 <span style={{
                   position: 'absolute',
                   top: '-5px',
@@ -354,7 +475,7 @@ function MainStoreDashboard({ user, onLogout }) {
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  {notifications.length}
+                  {unreadCount}
                 </span>
               )}
               {showNotifications && (
@@ -809,7 +930,7 @@ function MainStoreDashboard({ user, onLogout }) {
           </div>
         )}
 
-        {view === 'issue' && (
+        {view === 'issue-site' && (
           <div style={styles.container}>
             <h1 style={styles.pageTitle}>Issue Material to Site Store</h1>
             <div style={styles.formCard}>
@@ -841,16 +962,28 @@ function MainStoreDashboard({ user, onLogout }) {
                 </div>
                 <div>
                   <label style={styles.fieldLabel}>Project Name *</label>
-                  <input
-                    type="text"
-                    value={issueForm.projectName}
-                    onChange={e => setIssueForm({ ...issueForm, projectName: e.target.value })}
-                    style={styles.formInput}
-                    placeholder="e.g. Marina Heights"
+                  <select
+                    value={issueForm.projectId}
+                    onChange={e => {
+                      const selectedProj = projects.find(p => p._id === e.target.value);
+                      setIssueForm({
+                        ...issueForm,
+                        projectId: e.target.value,
+                        projectName: selectedProj ? (selectedProj.projectName || selectedProj.name) : ''
+                      });
+                    }}
+                    style={styles.formSelect}
                     required
-                  />
+                  >
+                    <option value="">-- Select Project --</option>
+                    {projects.map(p => (
+                      <option key={p._id} value={p._id}>
+                        {p.projectName || p.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <button type="submit" style={styles.orangeBtn}>Process Stock Transfer</button>
+                 <button type="submit" style={styles.orangeBtn}>Process Stock Transfer</button>
               </form>
             </div>
           </div>
@@ -887,6 +1020,207 @@ function MainStoreDashboard({ user, onLogout }) {
                         <td style={styles.td}>{t.issuedBy}</td>
                       </tr>
                     ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {view === 'purchase-request' && (
+          <div style={styles.container}>
+            <h1 style={styles.pageTitle}>Purchase Requests (PR) Workspace</h1>
+            
+            {/* Low Stock Items Section */}
+            <div style={{ ...styles.tableContainer, marginBottom: '30px' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#c62828' }}>
+                <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>⚠️ Low Stock Items Registry</h3>
+              </div>
+              <table style={styles.table}>
+                <thead>
+                  <tr style={{ background: '#f5f6fa' }}>
+                    <th style={{ ...styles.th, color: '#333' }}>Material Name</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Current Qty</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Min Stock</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Unit</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {materials.filter(m => m.location === 'MainStore' && m.quantity <= m.minimumStock).map((m, i) => (
+                    <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: 'rgba(239,68,68,0.08)' }}>
+                      <td style={{ ...styles.tdBold, color: '#c62828' }}>{m.name}</td>
+                      <td style={styles.td}>{m.quantity}</td>
+                      <td style={styles.td}>{m.minimumStock}</td>
+                      <td style={styles.td}>{m.unit}</td>
+                      <td style={styles.td}>
+                        <button
+                          onClick={() => {
+                            setPrForm({
+                              projectName: '',
+                              materialName: m.name,
+                              unit: m.unit,
+                              quantity: '',
+                              urgency: 'Normal',
+                              notes: ''
+                            });
+                            setShowPrForm(true);
+                          }}
+                          style={{
+                            background: '#ff9800',
+                            color: 'white',
+                            border: 'none',
+                            padding: '6px 12px',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                            boxShadow: '0 2px 4px rgba(255,152,0,0.2)'
+                          }}
+                        >
+                          Create PR
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {materials.filter(m => m.location === 'MainStore' && m.quantity <= m.minimumStock).length === 0 && (
+                    <tr>
+                      <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
+                        All Main Store material stock levels are normal!
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* PR Form Card */}
+            {showPrForm && (
+              <div style={styles.formCard}>
+                <h3 style={{ color: '#0d1b4b', marginBottom: '20px', fontWeight: 'bold' }}>Create New Purchase Request</h3>
+                <form onSubmit={handlePrSubmit} style={{ display: 'grid', gap: '16px', maxWidth: '600px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div>
+                      <label style={styles.fieldLabel}>Project Name *</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Colombo Port Expansion"
+                        value={prForm.projectName}
+                        onChange={e => setPrForm({ ...prForm, projectName: e.target.value })}
+                        style={styles.formInput}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={styles.fieldLabel}>Material (Pre-filled)</label>
+                      <input
+                        type="text"
+                        value={prForm.materialName}
+                        style={{ ...styles.formInput, background: '#f1f5f9', cursor: 'not-allowed' }}
+                        disabled
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div>
+                      <label style={styles.fieldLabel}>Quantity Needed *</label>
+                      <input
+                        type="number"
+                        placeholder="Quantity"
+                        value={prForm.quantity}
+                        onChange={e => setPrForm({ ...prForm, quantity: e.target.value })}
+                        style={styles.formInput}
+                        min="1"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={styles.fieldLabel}>Urgency *</label>
+                      <select
+                        value={prForm.urgency}
+                        onChange={e => setPrForm({ ...prForm, urgency: e.target.value })}
+                        style={styles.formSelect}
+                        required
+                      >
+                        <option value="Normal">Normal</option>
+                        <option value="Urgent">Urgent</option>
+                        <option value="Critical">Critical</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={styles.fieldLabel}>Notes to PM (Reason)</label>
+                    <textarea
+                      placeholder="Explain notes, requirements, or reason..."
+                      value={prForm.notes}
+                      onChange={e => setPrForm({ ...prForm, notes: e.target.value })}
+                      style={{ ...styles.formInput, height: '80px' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button type="submit" style={styles.orangeBtn}>
+                      Submit Purchase Request
+                    </button>
+                    <button type="button" onClick={() => setShowPrForm(false)} style={{ background: '#cbd5e1', color: '#333', border: 'none', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Submitted PRs Registry */}
+            <div style={styles.tableContainer}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b' }}>
+                <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>📋 Submitted PR Registry Archive</h3>
+              </div>
+              <table style={styles.table}>
+                <thead>
+                  <tr style={{ background: '#f5f6fa' }}>
+                    <th style={{ ...styles.th, color: '#333' }}>PR Number</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Project Name</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Material Specifications</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Urgency</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Status</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Submitted Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {prs.map((pr, idx) => (
+                    <tr key={pr._id || idx} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={styles.tdBold}>PR-{String(idx + 1).padStart(3, '0')}</td>
+                      <td style={styles.td}>{pr.projectName || pr.project}</td>
+                      <td style={styles.td}>
+                        {pr.materials?.map((m, i) => (
+                          <div key={i}>{m.materialName} ×{m.quantity} {m.unit}</div>
+                        ))}
+                      </td>
+                      <td style={styles.td}>
+                        <span style={{
+                          background: pr.urgency === 'Critical' ? '#ffebee' : pr.urgency === 'Urgent' ? '#fff3e0' : '#e3f2fd',
+                          color: pr.urgency === 'Critical' ? '#c62828' : pr.urgency === 'Urgent' ? '#e65100' : '#1565c0',
+                          padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
+                        }}>{pr.urgency || 'Normal'}</span>
+                      </td>
+                      <td style={styles.td}>
+                        <span style={{
+                          background: pr.status === 'Approved' ? '#e8f5e9' : pr.status === 'Rejected' ? '#ffebee' : pr.status === 'PO Created' ? '#e0f2f1' : '#f5f5f5',
+                          color: pr.status === 'Approved' ? '#2e7d32' : pr.status === 'Rejected' ? '#c62828' : pr.status === 'PO Created' ? '#004d40' : '#666',
+                          padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'
+                        }}>{pr.status}</span>
+                      </td>
+                      <td style={styles.td}>{new Date(pr.createdAt).toLocaleDateString()}</td>
+                    </tr>
+                  ))}
+                  {prs.length === 0 && (
+                    <tr>
+                      <td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#999' }}>
+                        No purchase requests submitted yet.
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>

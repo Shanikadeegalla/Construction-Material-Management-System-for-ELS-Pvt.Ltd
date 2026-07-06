@@ -290,7 +290,7 @@ export const createGRN = async (req, res) => {
 // @route   POST /api/inventory/issue
 // @access  Private
 export const issueMaterial = async (req, res) => {
-  const { materialId, quantity, projectName } = req.body;
+  const { materialId, quantity, projectName, projectId } = req.body;
   const issuedBy = req.user ? req.user.name : 'Store Officer';
 
   if (!materialId || !quantity || quantity <= 0) {
@@ -310,54 +310,70 @@ export const issueMaterial = async (req, res) => {
 
     const qtyToIssue = Number(quantity);
     if (mainStoreMaterial.quantity < qtyToIssue) {
-      return res.status(400).json({ message: 'Insufficient stock in Main Store' });
+      return res.status(400).json({ message: 'Transfer quantity exceeds available stock.' });
     }
 
-    // 2. Decrement from Main Store
-    mainStoreMaterial.quantity -= qtyToIssue;
-    await mainStoreMaterial.save();
-
-    // 3. Create or update in SiteStore (using deterministic encrypted name search)
-    const encryptedName = encryptDB(mainStoreMaterial.name);
-    let siteStoreMaterial = await Material.findOne({
-      name: encryptedName,
-      location: 'SiteStore'
-    });
-
-    if (siteStoreMaterial) {
-      const currentQty = Number(decryptDB(siteStoreMaterial.quantity)) || 0;
-      siteStoreMaterial.quantity = encryptDB(String(currentQty + qtyToIssue));
-      await siteStoreMaterial.save();
-    } else {
-      siteStoreMaterial = new Material({
-        name: encryptedName,
-        category: mainStoreMaterial.category,
-        unit: mainStoreMaterial.unit,
-        quantity: encryptDB(String(qtyToIssue)),
-        minimumStock: mainStoreMaterial.minimumStock,
-        location: 'SiteStore',
-        unitPrice: mainStoreMaterial.unitPrice,
-        description: mainStoreMaterial.description
+    // Determine target project ID
+    let targetProjectId = projectId;
+    if (!targetProjectId && projectName) {
+      const pDoc = await Project.findOne({
+        $or: [{ projectName }, { name: projectName }]
       });
-      await siteStoreMaterial.save();
+      if (pDoc) {
+        targetProjectId = pDoc._id;
+      }
     }
 
-    // 4. Save transfer log
-    const transferLog = new TransferLog({
-      materialId: mainStoreMaterial._id,
-      materialName: encryptedName,
-      quantity: encryptDB(String(qtyToIssue)),
-      from: 'MainStore',
-      to: 'SiteStore',
-      issuedBy,
-      date: new Date()
-    });
-    await transferLog.save();
+    // Start MongoDB Session Transaction
+    const session = await mongoose.startSession();
+    let transferLog;
 
-    // Prepare decrypted response
-    const decSiteStoreMaterial = siteStoreMaterial.toObject();
-    decSiteStoreMaterial.name = decryptDB(decSiteStoreMaterial.name);
-    decSiteStoreMaterial.quantity = Number(decryptDB(decSiteStoreMaterial.quantity)) || 0;
+    try {
+      session.startTransaction();
+
+      // 2. Decrement from Main Store
+      mainStoreMaterial.quantity -= qtyToIssue;
+      await mainStoreMaterial.save({ session });
+
+      // 3. Save transfer log (In-Transit status)
+      transferLog = new TransferLog({
+        materialId: mainStoreMaterial._id,
+        materialName: encryptDB(mainStoreMaterial.name),
+        quantity: encryptDB(String(qtyToIssue)),
+        from: 'MainStore',
+        to: 'SiteStore',
+        projectId: targetProjectId,
+        project_id: targetProjectId,
+        status: 'In-Transit',
+        issuedBy,
+        date: new Date()
+      });
+      await transferLog.save({ session });
+
+      await session.commitTransaction();
+      session.endSession();
+    } catch (txError) {
+      await session.abortTransaction();
+      session.endSession();
+
+      // Standalone Fallback
+      mainStoreMaterial.quantity -= qtyToIssue;
+      await mainStoreMaterial.save();
+
+      transferLog = new TransferLog({
+        materialId: mainStoreMaterial._id,
+        materialName: encryptDB(mainStoreMaterial.name),
+        quantity: encryptDB(String(qtyToIssue)),
+        from: 'MainStore',
+        to: 'SiteStore',
+        projectId: targetProjectId,
+        project_id: targetProjectId,
+        status: 'In-Transit',
+        issuedBy,
+        date: new Date()
+      });
+      await transferLog.save();
+    }
 
     const decTransferLog = transferLog.toObject();
     decTransferLog.materialName = decryptDB(decTransferLog.materialName);
@@ -365,9 +381,8 @@ export const issueMaterial = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Successfully transferred ${qtyToIssue} ${mainStoreMaterial.unit}(s) to Site Store for ${projectName || 'Site'}`,
+      message: `Successfully issued ${qtyToIssue} ${mainStoreMaterial.unit}(s) to Site Store (Shipment In-Transit)`,
       mainStoreMaterial,
-      siteStoreMaterial: decSiteStoreMaterial,
       transferLog: decTransferLog
     });
   } catch (error) {
@@ -554,6 +569,31 @@ export const getNotifications = async (req, res) => {
     });
 
     res.status(200).json({ success: true, count: formatted.length, data: formatted });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get count of low stock notifications
+// @route   GET /api/notifications/count
+// @access  Private
+export const getNotificationCount = async (req, res) => {
+  try {
+    const materials = await Material.find({});
+
+    let count = 0;
+    for (const m of materials) {
+      const doc = m.toObject();
+      if (doc.location === 'SiteStore') {
+        doc.name = decryptDB(doc.name);
+        doc.quantity = Number(decryptDB(doc.quantity)) || 0;
+      }
+      if (doc.quantity <= doc.minimumStock) {
+        count++;
+      }
+    }
+
+    res.status(200).json({ success: true, count });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

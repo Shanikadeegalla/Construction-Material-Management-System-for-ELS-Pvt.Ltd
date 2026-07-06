@@ -1,13 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import AdminDashboard from './pages/AdminDashboard';
-import MainStoreDashboard from './pages/MainStoreDashboard';
 import PMDashboard from './pages/PMDashboard';
 import PurchaseOrderPage from './pages/PurchaseOrderPage';
-import GRNPage from './pages/GRNPage';
-import SiteStoreDashboard from './pages/SiteStoreDashboard';
-import PurchaseRequestPage from './pages/PurchaseRequestPage';
-import SupplierManagement from './pages/SupplierManagement';
+import MainStoreDashboard from './pages/MainStoreDashboard';
 import DirectorDashboard from './pages/DirectorDashboard';
+import SiteStoreDashboard from './pages/SiteStoreDashboard';
 
 function App() {
   const [view, setView] = useState('login');
@@ -17,7 +14,7 @@ function App() {
   const [registerName, setRegisterName] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
-  const [registerRole, setRegisterRole] = useState('StoreOfficer');
+  const [registerRole, setRegisterRole] = useState('MainStoreOfficer');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -86,7 +83,7 @@ function App() {
       if (data.success) {
         setSuccess('Registration successful! Please login below.');
         setView('login');
-        setRegisterName(''); setRegisterEmail(''); setRegisterPassword(''); setRegisterRole('StoreOfficer');
+        setRegisterName(''); setRegisterEmail(''); setRegisterPassword(''); setRegisterRole('MainStoreOfficer');
       } else {
         setError(data.message || 'Registration failed.');
       }
@@ -103,8 +100,18 @@ function App() {
 
   const renderLogin = () => (
     <div style={styles.card}>
-      <h2 style={styles.cardTitle}>Account Sign In</h2>
-      <p style={styles.cardSub}>Welcome back! Please enter your details.</p>
+      {/* Brand Logo & Header */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '24px' }}>
+        <img 
+          src="/els-logo.png" 
+          alt="ELS Logo" 
+          style={{ width: '80px', height: '80px', objectFit: 'contain', marginBottom: '16px' }} 
+        />
+        <h2 style={{ fontSize: '22px', fontWeight: '800', color: '#ff9800', margin: '0 0 6px', textAlign: 'center' }}>ELS Construction (Pvt) Ltd</h2>
+      </div>
+
+      <h3 style={{ ...styles.cardTitle, fontSize: '18px', marginTop: '16px', marginBottom: '8px' }}>Account Sign In</h3>
+      <p style={styles.cardSub}>Welcome! Please enter your details.</p>
       {error && <div style={styles.errorAlert}>{error}</div>}
       {success && <div style={styles.successAlert}>{success}</div>}
       <form onSubmit={handleLogin} style={styles.form}>
@@ -154,7 +161,8 @@ function App() {
             <option value="Director">Director</option>
             <option value="ProjectManager">Project Manager</option>
             <option value="PurchaseOfficer">Purchase Officer</option>
-            <option value="StoreOfficer">Store Officer</option>
+            <option value="MainStoreOfficer">Main Store Officer</option>
+            <option value="SiteStoreOfficer">Site Store Officer</option>
           </select>
         </div>
         <button type="submit" disabled={loading} style={styles.button}>
@@ -173,21 +181,20 @@ function App() {
     if (user.role === 'Admin') {
       return <AdminDashboard user={user} onLogout={handleLogout} />;
     }
+    if (user.role === 'Director') {
+      return <DirectorDashboard user={user} onLogout={handleLogout} />;
+    }
     if (user.role === 'ProjectManager') {
       return <PMDashboard user={user} onLogout={handleLogout} />;
     }
     if (user.role === 'PurchaseOfficer') {
       return <PurchaseOrderPage user={user} onLogout={handleLogout} />;
     }
-    if (user.role === 'StoreOfficer') {
-      const storeType = localStorage.getItem('storeType') || 'MainStore';
-      if (storeType === 'SiteStore') {
-        return <SiteStoreDashboard user={user} onLogout={handleLogout} />;
-      }
+    if (user.role === 'MainStoreOfficer') {
       return <MainStoreDashboard user={user} onLogout={handleLogout} />;
     }
-    if (user.role === 'Director') {
-      return <DirectorDashboard user={user} onLogout={handleLogout} />;
+    if (user.role === 'SiteStoreOfficer') {
+      return <SiteStoreDashboard user={user} onLogout={handleLogout} />;
     }
 
     return (

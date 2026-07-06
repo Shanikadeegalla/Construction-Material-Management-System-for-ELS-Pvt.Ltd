@@ -1,18 +1,23 @@
 import mongoose from 'mongoose';
 
 const bomSchema = new mongoose.Schema({
+  projectId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Project',
+    required: true
+  },
   projectName: {
     type: String,
-    required: true,
     trim: true
   },
   version: {
     type: String,
-    required: true,
+    default: 'v1.0',
     trim: true
   },
   createdBy: {
-    type: String,
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
     required: true
   },
   materials: [{
@@ -31,12 +36,28 @@ const bomSchema = new mongoose.Schema({
     category: {
       type: String,
       required: true
+    },
+    estimatedUnitCost: {
+      type: Number,
+      default: 0
+    },
+    totalCost: {
+      type: Number,
+      default: 0
+    },
+    supplierRef: {
+      type: String,
+      default: ''
+    },
+    remarks: {
+      type: String,
+      default: ''
     }
   }],
   status: {
     type: String,
-    enum: ['Pending', 'Approved', 'Rejected'],
-    default: 'Pending'
+    enum: ['Draft', 'Submitted', 'Approved', 'Rejected', 'Pending'],
+    default: 'Draft'
   },
   rejectionReason: {
     type: String

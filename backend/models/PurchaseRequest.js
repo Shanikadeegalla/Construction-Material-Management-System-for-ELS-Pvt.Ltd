@@ -32,6 +32,11 @@ const purchaseRequestSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  urgency: {
+    type: String,
+    enum: ['Normal', 'Urgent', 'Critical'],
+    default: 'Normal'
+  },
   status: {
     type: String,
     enum: ['Pending', 'Approved', 'Rejected', 'PO Created'],

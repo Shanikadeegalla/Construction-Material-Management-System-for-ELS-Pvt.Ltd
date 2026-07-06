@@ -45,3 +45,13 @@ export const admin = (req, res, next) => {
     return next(new Error('Not authorized as an Admin'));
   }
 };
+
+export const authorizeRoles = (...roles) => {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      res.status(403);
+      return next(new Error(`Role ${req.user ? req.user.role : 'Guest'} is not authorized`));
+    }
+    next();
+  };
+};

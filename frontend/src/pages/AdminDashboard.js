@@ -39,7 +39,7 @@ const AdminDashboard = ({ user, onLogout }) => {
     name: '', 
     email: '', 
     password: '', 
-    role: 'StoreOfficer', 
+    role: 'MainStoreOfficer', 
     phone: '+94 77 123 4567' 
   });
   
@@ -47,13 +47,19 @@ const AdminDashboard = ({ user, onLogout }) => {
   const [editForm, setEditForm] = useState({ 
     name: '', 
     email: '', 
-    role: 'StoreOfficer', 
+    role: 'MainStoreOfficer', 
     phone: '+94 77 123 4567',
     status: true 
   });
   const [isEditing, setIsEditing] = useState(false);
   const [passwordResetOpen, setPasswordResetOpen] = useState(false);
   const [newPasswordVal, setNewPasswordVal] = useState('');
+  const [resetPasswordUser, setResetPasswordUser] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetPasswordError, setResetPasswordError] = useState('');
+
+
 
   const [message, setMessage] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -84,17 +90,21 @@ const AdminDashboard = ({ user, onLogout }) => {
       { name: 'Manage Suppliers', enabled: true },
       { name: 'View Inventory', enabled: true }
     ],
-    StoreOfficer: [
+    MainStoreOfficer: [
       { name: 'Issue Material', enabled: true },
-      { name: 'Log Usage', enabled: true },
       { name: 'View Low Stock', enabled: true },
       { name: 'Create GRN', enabled: true }
+    ],
+    SiteStoreOfficer: [
+      { name: 'Log Usage', enabled: true },
+      { name: 'View Inventory', enabled: true }
     ]
   });
 
   // Notifications state
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -111,11 +121,20 @@ const AdminDashboard = ({ user, onLogout }) => {
       if (data.success) {
         setNotifications(data.data);
       }
+
+      const countRes = await fetch('http://localhost:5000/api/notifications/count', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const countData = await countRes.json();
+      if (countData.success) {
+        setUnreadCount(countData.count);
+      }
     } catch (err) {
       setNotifications([
         { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
         { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
       ]);
+      setUnreadCount(2);
     }
   };
 
@@ -153,7 +172,7 @@ const AdminDashboard = ({ user, onLogout }) => {
       const mockUsers = [
         { _id: '1', name: 'John Smith', email: 'john@els.com', role: 'ProjectManager', status: true, phone: '+94 77 987 6543', createdAt: new Date(Date.now() - 30*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 2*60*60*1000).toISOString() },
         { _id: '2', name: 'Sarah Johnson', email: 'sarah@els.com', role: 'Director', status: true, phone: '+94 77 123 4567', createdAt: new Date(Date.now() - 60*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 4*60*60*1000).toISOString() },
-        { _id: '3', name: 'Mike Davis', email: 'mike@els.com', role: 'StoreOfficer', status: false, phone: '+94 77 444 5555', createdAt: new Date(Date.now() - 10*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 24*60*60*1000).toISOString() },
+        { _id: '3', name: 'Mike Davis', email: 'mike@els.com', role: 'MainStoreOfficer', status: false, phone: '+94 77 444 5555', createdAt: new Date(Date.now() - 10*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 24*60*60*1000).toISOString() },
         { _id: '4', name: 'Emily Brown', email: 'emily@els.com', role: 'PurchaseOfficer', status: true, phone: '+94 77 888 9999', createdAt: new Date(Date.now() - 15*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 12*60*60*1000).toISOString() },
       ];
       setUsers(mockUsers);
@@ -196,7 +215,7 @@ const AdminDashboard = ({ user, onLogout }) => {
       const data = await res.json();
       if (data.success) {
         showSuccessMessage(`✅ User "${newUser.name}" added successfully!`);
-        setNewUser({ name: '', email: '', password: '', role: 'StoreOfficer', phone: '+94 77 123 4567' });
+        setNewUser({ name: '', email: '', password: '', role: 'MainStoreOfficer', phone: '+94 77 123 4567' });
         setUserViewMode('list');
         fetchUsers();
         fetchAuditLogs();
@@ -249,6 +268,25 @@ const AdminDashboard = ({ user, onLogout }) => {
     e.preventDefault();
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
+
+      // If email changed, call the specific update-email endpoint first
+      if (editForm.email.trim().toLowerCase() !== selectedUser.email.toLowerCase()) {
+        const emailRes = await fetch(`http://localhost:5000/api/users/${selectedUser._id}/email`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ newEmail: editForm.email.trim() })
+        });
+        const emailData = await emailRes.json();
+        if (!emailRes.ok || !emailData.success) {
+          showErrorMessage(`❌ Email update failed: ${emailData.message || 'Email already in use'}`);
+          return;
+        }
+      }
+
+      // Then save the remaining fields (name, role, phone, etc.)
       const res = await fetch(`http://localhost:5000/api/auth/users/${selectedUser._id}`, {
         method: 'PUT',
         headers: {
@@ -296,6 +334,50 @@ const AdminDashboard = ({ user, onLogout }) => {
       }
     } catch (err) {
       showErrorMessage('❌ Network error resetting password.');
+    }
+  };
+
+  const handleResetPasswordClick = (u) => {
+    setResetPasswordUser(u);
+    setNewPassword('');
+    setConfirmPassword('');
+    setResetPasswordError('');
+  };
+
+
+
+  const handleResetPasswordSubmit = async (e) => {
+    e.preventDefault();
+    setResetPasswordError('');
+    
+    if (newPassword.length < 6) {
+      setResetPasswordError('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setResetPasswordError('Passwords do not match.');
+      return;
+    }
+    
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`http://localhost:5000/api/auth/users/${resetPasswordUser._id}/reset-password`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ password: newPassword })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showSuccessMessage(`🔑 Password reset successfully for user "${resetPasswordUser.name}"`);
+        setResetPasswordUser(null);
+      } else {
+        setResetPasswordError(data.message || 'Failed to reset password.');
+      }
+    } catch (err) {
+      setResetPasswordError('Server connection error.');
     }
   };
 
@@ -362,10 +444,10 @@ const AdminDashboard = ({ user, onLogout }) => {
     alignItems: 'center',
     gap: '12px',
     fontSize: '14px',
-    fontWeight: activePage === page ? '600' : '400',
-    backgroundColor: activePage === page ? '#2563eb' : 'transparent',
-    color: '#ffffff',
-    borderRadius: '8px',
+    fontWeight: activePage === page ? '600' : '500',
+    backgroundColor: activePage === page ? 'rgba(255,152,0,0.2)' : 'transparent',
+    borderLeft: activePage === page ? '3px solid #ff9800' : '3px solid transparent',
+    color: activePage === page ? '#ff9800' : '#ccc',
     transition: 'all 0.2s ease',
     marginBottom: '6px'
   });
@@ -399,27 +481,25 @@ const AdminDashboard = ({ user, onLogout }) => {
     <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f8fafc', color: '#0f172a', fontFamily: "'Inter', sans-serif" }}>
       
       {/* Sidebar */}
-      <div style={{ width: '240px', background: '#1e3a5f', color: 'white', display: 'flex', flexDirection: 'column', position: 'fixed', height: '100vh', zIndex: 10, boxShadow: '4px 0 10px rgba(0,0,0,0.05)' }}>
+      <div style={{ width: '240px', background: '#0d1b4b', color: 'white', display: 'flex', flexDirection: 'column', position: 'fixed', height: '100vh', zIndex: 10, boxShadow: '4px 0 10px rgba(0,0,0,0.05)' }}>
         
         {/* Logo area */}
-        <div style={{ padding: '24px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '18px', color: 'white', boxShadow: '0 4px 10px rgba(59, 130, 246, 0.4)' }}>
-            A
-          </div>
+        <div style={{ padding: '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '18px', color: 'white' }}>E</div>
           <div>
-            <div style={{ fontSize: '16px', fontWeight: '700', letterSpacing: '0.5px' }}>Admin Panel</div>
-            <div style={{ fontSize: '11px', color: '#93c5fd', fontWeight: '500' }}>ELS CMMS System</div>
+            <div style={{ fontSize: '16px', fontWeight: '700', color: '#ff9800' }}>ELS Constructions</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Admin Panel</div>
           </div>
         </div>
 
         {/* Current user context */}
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(255,255,255,0.02)' }}>
-          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '14px', border: '2px solid rgba(255,255,255,0.2)' }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#ff9800', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '16px', color: 'white' }}>
             {user?.name?.charAt(0).toUpperCase() || 'A'}
           </div>
           <div style={{ overflow: 'hidden' }}>
-            <div style={{ fontSize: '13px', fontWeight: '600', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{user?.name || 'Administrator'}</div>
-            <div style={{ fontSize: '11px', color: '#94a3b8' }}>Super Administrator</div>
+            <div style={{ fontSize: '13px', fontWeight: '600', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', color: 'white' }}>{user?.name || 'Administrator'}</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1' }}>Super Administrator</div>
           </div>
         </div>
 
@@ -480,9 +560,9 @@ const AdminDashboard = ({ user, onLogout }) => {
               {/* Notifications dropdown bell */}
               <div style={{ position: 'relative', cursor: 'pointer', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowNotifications(!showNotifications)}>
                 <Bell size={18} style={{ color: '#475569' }} />
-                {notifications.length > 0 && (
+                 {unreadCount > 0 && (
                   <span style={{ position: 'absolute', top: '2px', right: '2px', background: '#ef4444', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff' }}>
-                    {notifications.length}
+                    {unreadCount}
                   </span>
                 )}
                 
@@ -675,8 +755,12 @@ const AdminDashboard = ({ user, onLogout }) => {
                                   <button onClick={() => handleEditClick(u)} style={{ background: '#eff6ff', color: '#2563eb', border: 'none', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                     <Pencil size={12} /> Edit
                                   </button>
+
                                   <button onClick={() => handleToggleStatus(u)} style={{ background: u.status !== false ? '#fef2f2' : '#ecfdf5', color: u.status !== false ? '#ef4444' : '#10b981', border: 'none', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', minWidth: '95px' }}>
                                     {u.status !== false ? 'Deactivate' : 'Activate'}
+                                  </button>
+                                  <button onClick={() => handleResetPasswordClick(u)} style={{ background: '#fff7ed', color: '#ea580c', border: 'none', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <Key size={12} /> Reset PW
                                   </button>
                                 </td>
                               </tr>
@@ -808,11 +892,11 @@ const AdminDashboard = ({ user, onLogout }) => {
                               disabled={selectedUser && !isEditing}
                               style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', fontWeight: '500', outline: 'none', cursor: 'pointer' }}
                             >
-                              <option value="Admin">Admin</option>
                               <option value="Director">Director</option>
                               <option value="ProjectManager">Project Manager</option>
                               <option value="PurchaseOfficer">Purchase Officer</option>
-                              <option value="StoreOfficer">Store Officer</option>
+                              <option value="MainStoreOfficer">Main Store Officer</option>
+                              <option value="SiteStoreOfficer">Site Store Officer</option>
                             </select>
                           </div>
                           <div>
@@ -1011,6 +1095,52 @@ const AdminDashboard = ({ user, onLogout }) => {
 
         </main>
       </div>
+
+      {resetPasswordUser && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '32px', borderRadius: '16px', width: '420px', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ color: '#0d1b4b', marginTop: 0, marginBottom: '20px', fontSize: '18px', fontWeight: '700' }}>🔑 Reset Password</h3>
+            <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '20px' }}>Set a new password for <strong>{resetPasswordUser.name}</strong> ({resetPasswordUser.email}).</p>
+            
+            {resetPasswordError && (
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginBottom: '16px' }}>
+                {resetPasswordError}
+              </div>
+            )}
+            
+            <form onSubmit={handleResetPasswordSubmit}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '600', marginBottom: '6px', textTransform: 'uppercase' }}>New Password</label>
+                <input
+                  type="password"
+                  placeholder="Minimum 6 characters"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  style={{ width: '100%', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '8px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
+                  required
+                />
+              </div>
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '600', marginBottom: '6px', textTransform: 'uppercase' }}>Confirm Password</label>
+                <input
+                  type="password"
+                  placeholder="Repeat new password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  style={{ width: '100%', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '8px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
+                  required
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => setResetPasswordUser(null)} style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Cancel</button>
+                <button type="submit" style={{ background: '#ff9800', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px', boxShadow: '0 4px 12px rgba(255,152,0,0.2)' }}>Save Password</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+
 
     </div>
   );

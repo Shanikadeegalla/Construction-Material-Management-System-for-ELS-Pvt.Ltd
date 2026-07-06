@@ -31,6 +31,20 @@ const materialSchema = new mongoose.Schema({
     enum: ['MainStore', 'SiteStore'],
     default: 'MainStore'
   },
+  projectId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Project',
+    default: null
+  },
+  project_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Project',
+    default: null
+  },
+  status: {
+    type: String,
+    default: 'In-Stock'
+  },
   unitPrice: {
     type: Number,
     default: 0

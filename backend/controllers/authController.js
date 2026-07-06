@@ -9,6 +9,11 @@ export const registerUser = async (req, res, next) => {
   try {
     const { name, email, password, role } = req.body;
 
+    if (role === 'Admin') {
+      res.status(400);
+      throw new Error('Admin accounts cannot be created through this form.');
+    }
+
     if (!name || !email || !password) {
       res.status(400);
       throw new Error('Please enter all required fields');
@@ -25,7 +30,7 @@ export const registerUser = async (req, res, next) => {
       name,
       email,
       password,
-      role: role || 'StoreOfficer',
+      role: role || 'MainStoreOfficer',
       status: true
     });
 
@@ -62,7 +67,8 @@ export const loginUser = async (req, res, next) => {
       throw new Error('Please enter email and password');
     }
 
-    const user = await User.findOne({ email });
+    const cleanEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: cleanEmail });
 
     if (user && (await user.matchPassword(password))) {
       // Check if user is active
@@ -274,6 +280,47 @@ export const getAuditLogs = async (req, res, next) => {
   try {
     const logs = await AuditLog.find({}).populate('userId', 'name email').sort({ timestamp: -1 });
     res.status(200).json({ success: true, count: logs.length, data: logs });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Reset user password (Admin Only)
+// @route   PUT /api/auth/users/:id/reset-password
+// @access  Private (Admin Only)
+export const resetUserPassword = async (req, res, next) => {
+  try {
+    const { password } = req.body;
+    if (!password || password.trim().length < 6) {
+      res.status(400);
+      throw new Error('Password must be at least 6 characters long');
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      res.status(404);
+      throw new Error('User not found');
+    }
+
+    user.password = password;
+    await user.save();
+
+    // Log the audit event
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+    await AuditLog.create({
+      userId: req.user ? req.user._id : null,
+      userName: req.user ? req.user.name : 'System Admin',
+      action: `Reset Password for User: ${user.name}`,
+      module: 'User Management',
+      ipAddress,
+      timestamp: new Date(),
+      status: 'Success'
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Password reset successfully for user "${user.name}"`
+    });
   } catch (error) {
     next(error);
   }

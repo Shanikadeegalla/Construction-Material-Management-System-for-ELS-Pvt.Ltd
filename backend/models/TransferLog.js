@@ -29,6 +29,21 @@ const transferLogSchema = new mongoose.Schema({
   date: {
     type: Date,
     default: Date.now
+  },
+  projectId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Project',
+    default: null
+  },
+  project_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Project',
+    default: null
+  },
+  status: {
+    type: String,
+    enum: ['In-Transit', 'Received'],
+    default: 'In-Transit'
   }
 });
 

@@ -11,9 +11,19 @@ export const getUsageRecords = async (req, res) => {
     const decrypted = usages.map(u => {
       const doc = u.toObject();
       doc.materialName = decryptDB(doc.materialName);
-      doc.actualQty = Number(decryptDB(doc.actualQty)) || doc.actualQty;
-      doc.plannedQty = Number(decryptDB(doc.plannedQty)) || doc.plannedQty;
-      doc.variance = Number(decryptDB(doc.variance)) || doc.variance;
+      
+      const rawActual = doc.actualQty !== undefined ? doc.actualQty : doc.quantityUsed;
+      const decryptedActual = decryptDB(rawActual);
+      doc.actualQty = Number(decryptedActual) || Number(rawActual) || 0;
+      
+      const rawPlanned = doc.plannedQty !== undefined ? doc.plannedQty : 0;
+      const decryptedPlanned = decryptDB(rawPlanned);
+      doc.plannedQty = Number(decryptedPlanned) || Number(rawPlanned) || 0;
+      
+      const rawVariance = doc.variance !== undefined ? doc.variance : 0;
+      const decryptedVariance = decryptDB(rawVariance);
+      doc.variance = Number(decryptedVariance) || Number(rawVariance) || 0;
+      
       return doc;
     });
     res.status(200).json({ success: true, count: decrypted.length, data: decrypted });
@@ -72,9 +82,6 @@ export const addUsageRecord = async (req, res) => {
   }
 };
 
-// @desc    Get variance analysis report
-// @route   GET /api/material-usage/variance
-// @access  Private
 export const getVarianceReport = async (req, res) => {
   try {
     // 1. Get all approved BOMs
@@ -85,9 +92,19 @@ export const getVarianceReport = async (req, res) => {
     const decryptedUsages = usages.map(u => {
       const doc = u.toObject();
       doc.materialName = decryptDB(doc.materialName);
-      doc.actualQty = Number(decryptDB(doc.actualQty)) || doc.actualQty;
-      doc.plannedQty = Number(decryptDB(doc.plannedQty)) || doc.plannedQty;
-      doc.variance = Number(decryptDB(doc.variance)) || doc.variance;
+      
+      const rawActual = doc.actualQty !== undefined ? doc.actualQty : doc.quantityUsed;
+      const decryptedActual = decryptDB(rawActual);
+      doc.actualQty = Number(decryptedActual) || Number(rawActual) || 0;
+      
+      const rawPlanned = doc.plannedQty !== undefined ? doc.plannedQty : 0;
+      const decryptedPlanned = decryptDB(rawPlanned);
+      doc.plannedQty = Number(decryptedPlanned) || Number(rawPlanned) || 0;
+      
+      const rawVariance = doc.variance !== undefined ? doc.variance : 0;
+      const decryptedVariance = decryptDB(rawVariance);
+      doc.variance = Number(decryptedVariance) || Number(rawVariance) || 0;
+      
       return doc;
     });
 
@@ -101,11 +118,12 @@ export const getVarianceReport = async (req, res) => {
         projectMaterials[proj] = {};
       }
       bom.materials.forEach(mat => {
-        projectMaterials[proj][mat.name] = {
+        const key = mat.name.toLowerCase().trim();
+        projectMaterials[proj][key] = {
           projectName: proj,
           materialName: mat.name,
           unit: mat.unit,
-          plannedQty: mat.plannedQty,
+          plannedQty: Number(mat.plannedQty) || 0,
           actualQty: 0,
         };
       });
@@ -114,27 +132,29 @@ export const getVarianceReport = async (req, res) => {
     // Second, populate/accumulate using usage records (actual quantities)
     decryptedUsages.forEach(use => {
       const proj = use.projectName;
-      const mat = use.materialName;
+      const matName = use.materialName || '';
+      const key = matName.toLowerCase().trim();
+      
       if (!projectMaterials[proj]) {
         projectMaterials[proj] = {};
       }
-      if (!projectMaterials[proj][mat]) {
-        projectMaterials[proj][mat] = {
+      if (!projectMaterials[proj][key]) {
+        projectMaterials[proj][key] = {
           projectName: proj,
-          materialName: mat,
+          materialName: matName,
           unit: use.unit || 'bag',
-          plannedQty: 0, // Not in approved BOM
+          plannedQty: 0,
           actualQty: 0,
         };
       }
-      projectMaterials[proj][mat].actualQty += use.actualQty;
+      projectMaterials[proj][key].actualQty += Number(use.actualQty) || 0;
     });
 
     // Third, flatten into a list and calculate variance
     const reportData = [];
     Object.keys(projectMaterials).forEach(proj => {
-      Object.keys(projectMaterials[proj]).forEach(matName => {
-        const item = projectMaterials[proj][matName];
+      Object.keys(projectMaterials[proj]).forEach(key => {
+        const item = projectMaterials[proj][key];
         const diff = item.actualQty - item.plannedQty;
         // Variance % = (Actual - Planned) / Planned * 100
         let variancePct = 0;

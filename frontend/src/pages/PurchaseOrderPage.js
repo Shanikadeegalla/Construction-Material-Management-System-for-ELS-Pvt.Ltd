@@ -7,17 +7,22 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
   const [suppliers, setSuppliers] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [approvedPRs, setApprovedPRs] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [performanceData, setPerformanceData] = useState([]);
 
   // PO Form State
   const [form, setForm] = useState({
     prId: '',
     supplier: '',
     notes: '',
+    expectedDeliveryDate: '',
+    paymentTerms: '30 Days Credit',
+    deliveryAddress: '',
     items: [{ materialName: '', quantity: '', unit: 'bag', unitPrice: '' }]
   });
 
@@ -42,6 +47,15 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
     address: '',
     category: 'Cement',
     status: 'Active'
+  });
+
+  // Rate Delivery popup state
+  const [showRateModal, setShowRateModal] = useState(false);
+  const [selectedPo, setSelectedPo] = useState(null);
+  const [rateForm, setRateForm] = useState({
+    actualDeliveryDate: new Date().toISOString().substring(0, 10),
+    receivedQty: '',
+    deliveryCondition: 'Good'
   });
 
   // Search Filter for Suppliers
@@ -76,6 +90,11 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
       const prData = await prRes.json();
       if (prData.success) setApprovedPRs(prData.data);
 
+      // Fetch Supplier Performance
+      const perfRes = await fetch('http://localhost:5000/api/purchase-orders/supplier-performance', { headers });
+      const perfData = await perfRes.json();
+      if (perfData.success) setPerformanceData(perfData.data);
+
     } catch (err) {
       setError('Could not connect to the backend server. Loading fallback demo data.');
       setOrders([
@@ -86,6 +105,10 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
       setSuppliers([
         { _id: '1', name: 'Lanka Cement Ltd', contactPerson: 'Nimal Perera', phone: '0711122334', email: 'nimal@lankacement.lk', category: 'Cement', status: 'Active' },
         { _id: '2', name: 'Melwa Steel', contactPerson: 'Kamal Silva', phone: '0722233445', email: 'kamal@melwa.lk', category: 'Steel', status: 'Active' },
+      ]);
+      setPerformanceData([
+        { supplierName: 'Lanka Cement Ltd', totalOrders: 5, onTimeDeliveries: 4, onTimePercent: 80, deliveryAccuracy: 96.5, performanceRating: 'Excellent' },
+        { supplierName: 'Melwa Steel', totalOrders: 3, onTimeDeliveries: 3, onTimePercent: 100, deliveryAccuracy: 100, performanceRating: 'Excellent' },
       ]);
     }
   };
@@ -100,11 +123,20 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
       if (data.success) {
         setNotifications(data.data);
       }
+
+      const countRes = await fetch('http://localhost:5000/api/notifications/count', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const countData = await countRes.json();
+      if (countData.success) {
+        setUnreadCount(countData.count);
+      }
     } catch (err) {
       setNotifications([
         { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
         { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
       ]);
+      setUnreadCount(2);
     }
   };
 
@@ -158,7 +190,15 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
       if (res.ok && data.success) {
         setMessage('✅ Purchase Order created successfully!');
         setShowForm(false);
-        setForm({ prId: '', supplier: '', notes: '', items: [{ materialName: '', quantity: '', unit: 'bag', unitPrice: '' }] });
+        setForm({
+          prId: '',
+          supplier: '',
+          notes: '',
+          expectedDeliveryDate: '',
+          paymentTerms: '30 Days Credit',
+          deliveryAddress: '',
+          items: [{ materialName: '', quantity: '', unit: 'bag', unitPrice: '' }]
+        });
         fetchData();
       } else {
         setError(data.message || 'Failed to create PO.');
@@ -186,6 +226,61 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
     } catch {
       setMessage(`✅ PO status updated to ${status}! (Demo Mode)`);
       setOrders(prev => prev.map(o => o._id === id ? { ...o, status } : o));
+    }
+  };
+
+  const handleSendToSupplier = async (id, poNumber, supplierName) => {
+    setError(''); setMessage('');
+    try {
+      const res = await fetch(`http://localhost:5000/api/purchase-orders/${id}/send`, {
+        method: 'PUT',
+        headers: getHeaders()
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMessage(`✅ ${poNumber} sent to ${supplierName} successfully!`);
+        fetchData();
+      } else {
+        setError(data.message || 'Failed to send PO.');
+      }
+    } catch {
+      setMessage(`✅ ${poNumber} sent to ${supplierName} successfully! (Demo Mode)`);
+      setOrders(prev => prev.map(o => o._id === id ? { ...o, status: 'Sent', sentAt: new Date().toISOString() } : o));
+    }
+  };
+
+  const handleRateClick = (po) => {
+    setSelectedPo(po);
+    const totalQty = po.items ? po.items.reduce((sum, item) => sum + item.quantity, 0) : 0;
+    setRateForm({
+      actualDeliveryDate: new Date().toISOString().substring(0, 10),
+      receivedQty: po.receivedQty || totalQty,
+      deliveryCondition: po.deliveryCondition || 'Good'
+    });
+    setShowRateModal(true);
+  };
+
+  const handleRateSubmit = async (e) => {
+    e.preventDefault();
+    setError(''); setMessage('');
+    try {
+      const res = await fetch(`http://localhost:5000/api/purchase-orders/${selectedPo._id}/rate-delivery`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify(rateForm)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMessage('✅ PO delivery rated successfully!');
+        setShowRateModal(false);
+        fetchData();
+      } else {
+        setError(data.message || 'Failed to rate delivery.');
+      }
+    } catch {
+      setMessage('✅ PO delivery rated successfully! (Demo Mode)');
+      setOrders(prev => prev.map(o => o._id === selectedPo._id ? { ...o, status: 'Delivered', actualDeliveryDate: rateForm.actualDeliveryDate, receivedQty: Number(rateForm.receivedQty), deliveryCondition: rateForm.deliveryCondition } : o));
+      setShowRateModal(false);
     }
   };
 
@@ -310,6 +405,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
             { id: 'dashboard', label: 'PO Dashboard', icon: '⊞' },
             { id: 'orders', label: 'Purchase Orders', icon: '📦' },
             { id: 'suppliers', label: 'Suppliers Registry', icon: '🏭' },
+            { id: 'performance', label: 'Supplier Performance', icon: '📈' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
             <div key={item.id} onClick={() => { setActivePage(item.id); setError(''); setMessage(''); }}
@@ -330,13 +426,14 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
             {activePage === 'dashboard' && 'PO Dashboard'}
             {activePage === 'orders' && 'Purchase Orders Catalog'}
             {activePage === 'suppliers' && 'Supplier Registry'}
+            {activePage === 'performance' && 'Supplier Performance Evaluation'}
             {activePage === 'settings' && 'User Settings & Preferences'}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
             {/* Notification Bell */}
             <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setShowNotifications(!showNotifications)}>
               <span style={{ fontSize: '20px' }}>🔔</span>
-              {notifications.length > 0 && (
+              {unreadCount > 0 && (
                 <span style={{
                   position: 'absolute',
                   top: '-5px',
@@ -352,7 +449,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  {notifications.length}
+                  {unreadCount}
                 </span>
               )}
               {showNotifications && (
@@ -549,6 +646,29 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                       </div>
                     </div>
 
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>EXPECTED DELIVERY DATE *</label>
+                        <input type="date" value={form.expectedDeliveryDate || ''} onChange={e => setForm({ ...form, expectedDeliveryDate: e.target.value })} required
+                          style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }} />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>PAYMENT TERMS *</label>
+                        <select value={form.paymentTerms || ''} onChange={e => setForm({ ...form, paymentTerms: e.target.value })} required
+                          style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}>
+                          <option value="30 Days Credit">30 Days Credit</option>
+                          <option value="Cash on Delivery">Cash on Delivery</option>
+                          <option value="50% Advance">50% Advance</option>
+                          <option value="Full Payment">Full Payment</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>DELIVERY ADDRESS *</label>
+                        <input placeholder="Enter delivery address..." value={form.deliveryAddress || ''} onChange={e => setForm({ ...form, deliveryAddress: e.target.value })} required
+                          style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }} />
+                      </div>
+                    </div>
+
                     <div style={{ marginBottom: '16px' }}>
                       <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>NOTES</label>
                       <input placeholder="Enter terms, remarks or delivery location..." value={form.notes}
@@ -574,7 +694,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['PO No.', 'Supplier', 'Order Items Description', 'Total (LKR)', 'Created Date', 'Status', 'Actions'].map(h => (
+                      {['PO No.', 'Supplier', 'Order Items Description', 'Total (LKR)', 'Expected Delivery', 'Payment Terms', 'Created Date', 'Status', 'Actions'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
@@ -592,6 +712,12 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>
                           {po.totalAmount?.toLocaleString()}
                         </td>
+                        <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>
+                          {po.expectedDeliveryDate ? new Date(po.expectedDeliveryDate).toLocaleDateString() : '-'}
+                        </td>
+                        <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
+                          {po.paymentTerms || '-'}
+                        </td>
                         <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{new Date(po.createdAt).toLocaleDateString()}</td>
                         <td style={{ padding: '12px 16px' }}>
                           <span style={{
@@ -601,17 +727,17 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                           }}>{po.status}</span>
                         </td>
                         <td style={{ padding: '12px 16px' }}>
-                          <div style={{ display: 'flex', gap: '4px' }}>
+                          <div style={{ display: 'flex', gap: '6px' }}>
                             {po.status === 'Pending' && (
-                              <button onClick={() => handleUpdateStatus(po._id, 'Sent')}
-                                style={{ background: '#1565c0', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>
-                                Mark as Sent
+                              <button onClick={() => handleSendToSupplier(po._id, po.poNumber, po.supplier)}
+                                style={{ background: '#ff9800', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                Send to Supplier
                               </button>
                             )}
-                            {po.status === 'Sent' && (
-                              <button onClick={() => handleUpdateStatus(po._id, 'Delivered')}
-                                style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>
-                                Mark as Delivered
+                            {(po.status === 'Sent' || po.status === 'Delivered') && (
+                              <button onClick={() => handleRateClick(po)}
+                                style={{ background: '#ff9800', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                Rate Delivery
                               </button>
                             )}
                           </div>
@@ -765,9 +891,124 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
             </div>
           )}
 
+          {activePage === 'performance' && (
+            <div>
+              <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#0d1b4b', color: 'white' }}>
+                      {['Supplier Name', 'Total Orders', 'On-Time Deliveries', 'Delivery Accuracy %', 'Performance Rating'].map(h => (
+                        <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {performanceData.map((perf, i) => {
+                      const rating = perf.performanceRating;
+                      let ratingBg = '#ffebee';
+                      let ratingColor = '#c62828';
+                      if (rating === 'Excellent') {
+                        ratingBg = '#e8f5e9';
+                        ratingColor = '#2e7d32';
+                      } else if (rating === 'Good') {
+                        ratingBg = '#e3f2fd';
+                        ratingColor = '#1565c0';
+                      } else if (rating === 'Average') {
+                        ratingBg = '#fff3e0';
+                        ratingColor = '#e65100';
+                      } else if (rating === 'N/A') {
+                        ratingBg = '#f5f5f5';
+                        ratingColor = '#666';
+                      }
+
+                      return (
+                        <tr key={i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                          <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#0d1b4b' }}>{perf.supplierName}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{perf.totalOrders}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>
+                            {perf.onTimeDeliveries} ({perf.onTimePercent}%)
+                          </td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600' }}>
+                            {perf.deliveryAccuracy}%
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span style={{
+                              background: ratingBg,
+                              color: ratingColor,
+                              padding: '4px 10px',
+                              borderRadius: '12px',
+                              fontSize: '12px',
+                              fontWeight: '600'
+                            }}>{rating}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {activePage === 'settings' && <SettingsPage user={user} onLogout={onLogout} />}
         </div>
       </div>
+
+      {showRateModal && selectedPo && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '8px', width: '450px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ color: '#0d1b4b', marginTop: 0, marginBottom: '20px' }}>Rate Delivery: {selectedPo.poNumber}</h3>
+            <form onSubmit={handleRateSubmit}>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#666', fontWeight: '600', marginBottom: '6px' }}>ACTUAL DELIVERY DATE *</label>
+                <input
+                  type="date"
+                  value={rateForm.actualDeliveryDate}
+                  onChange={e => setRateForm({ ...rateForm, actualDeliveryDate: e.target.value })}
+                  style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}
+                  required
+                />
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#666', fontWeight: '600', marginBottom: '6px' }}>RECEIVED QUANTITY *</label>
+                <input
+                  type="number"
+                  placeholder="Total Qty Received"
+                  value={rateForm.receivedQty}
+                  onChange={e => setRateForm({ ...rateForm, receivedQty: e.target.value })}
+                  style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}
+                  min="0"
+                  required
+                />
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#666', fontWeight: '600', marginBottom: '6px' }}>DELIVERY CONDITION *</label>
+                <select
+                  value={rateForm.deliveryCondition}
+                  onChange={e => setRateForm({ ...rateForm, deliveryCondition: e.target.value })}
+                  style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box', background: 'white' }}
+                  required
+                >
+                  <option value="Good">Good</option>
+                  <option value="Damaged">Damaged</option>
+                  <option value="Partial">Partial</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button type="submit" style={{ background: '#ff9800', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                  Save Delivery Rating
+                </button>
+                <button type="button" onClick={() => setShowRateModal(false)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,4 +1,6 @@
 import PurchaseRequest from '../models/PurchaseRequest.js';
+import BOM from '../models/BOM.js';
+import Project from '../models/Project.js';
 
 // @desc    Get all purchase requests
 // @route   GET /api/purchase-requests
@@ -19,6 +21,7 @@ export const getPurchaseRequests = async (req, res) => {
       project: pr.project,
       projectName: pr.projectName || pr.project,
       requestedBy: pr.requestedBy,
+      urgency: pr.urgency || 'Normal',
       status: pr.status,
       approvedBy: pr.approvedBy || '',
       rejectionReason: pr.rejectionReason || '',
@@ -39,7 +42,7 @@ export const getPurchaseRequests = async (req, res) => {
 // @access  Private
 export const createPurchaseRequest = async (req, res) => {
   try {
-    const { project, projectName, materials, notes } = req.body;
+    const { project, projectName, materials, notes, urgency } = req.body;
     const finalProjectName = projectName || project;
     const requestedBy = req.user ? req.user.name : (req.body.requestedBy || 'Store Officer');
 
@@ -47,12 +50,55 @@ export const createPurchaseRequest = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Missing required PR fields.' });
     }
 
-    const mappedMaterials = materials.map(m => ({
-      materialName: m.materialName || m.name || 'Unnamed Material',
-      quantity: Number(m.quantity) || 0,
-      unit: m.unit || 'bag',
-      reason: m.reason || ''
-    }));
+    // 1. Look up the project document
+    const projectDoc = await Project.findOne({ 
+      $or: [
+        { projectName: finalProjectName },
+        { name: finalProjectName }
+      ]
+    });
+    if (!projectDoc) {
+      return res.status(400).json({ success: false, message: `Project "${finalProjectName}" not found.` });
+    }
+
+    // 2. Find the approved BOM for this project
+    const approvedBom = await BOM.findOne({ projectId: projectDoc._id, status: 'Approved' });
+    if (!approvedBom) {
+      return res.status(400).json({ success: false, message: 'No approved BOM is available for this project.' });
+    }
+
+    const mappedMaterials = [];
+    for (const m of materials) {
+      const matName = m.materialName || m.name || '';
+      const qty = Number(m.quantity) || 0;
+      const unit = m.unit || 'bag';
+
+      // Find matching item in approved BOM
+      const bomItem = approvedBom.materials.find(
+        bi => bi.name.trim().toLowerCase() === matName.trim().toLowerCase()
+      );
+
+      if (!bomItem) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Material "${matName}" is not included in the approved BOM for this project.` 
+        });
+      }
+
+      if (qty > bomItem.plannedQty) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Requested quantity for "${matName}" (${qty}) exceeds the approved BOM quantity (${bomItem.plannedQty}).` 
+        });
+      }
+
+      mappedMaterials.push({
+        materialName: bomItem.name, // normalize to exact spelling in BOM
+        quantity: qty,
+        unit: unit,
+        reason: m.reason || ''
+      });
+    }
 
     const pr = new PurchaseRequest({
       project: finalProjectName,
@@ -60,6 +106,7 @@ export const createPurchaseRequest = async (req, res) => {
       materials: mappedMaterials,
       requestedBy,
       notes: notes || '',
+      urgency: urgency || 'Normal',
       status: 'Pending'
     });
 

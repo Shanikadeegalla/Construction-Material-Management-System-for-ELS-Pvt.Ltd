@@ -22,7 +22,25 @@ const protect = async (req, res, next) => {
 
 const authorizeRoles = (...roles) => {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
+    if (!req.user || !req.user.role) {
+      return res.status(403).json({ message: 'Role is not authorized' });
+    }
+    
+    const userRole = req.user.role.toLowerCase();
+    const allowedRoles = roles.map(r => r.toLowerCase());
+    
+    // Map capitalized roles to lowercase checks
+    const mapRole = (role) => {
+      if (role === 'projectmanager') return 'pm';
+      if (role === 'mainstoreofficer') return 'store';
+      if (role === 'sitestoreofficer') return 'sitestore';
+      if (role === 'purchaseofficer') return 'purchase';
+      return role;
+    };
+
+    const mappedUserRole = mapRole(userRole);
+
+    if (!allowedRoles.includes(userRole) && !allowedRoles.includes(mappedUserRole)) {
       return res.status(403).json({ 
         message: `Role ${req.user.role} is not authorized` 
       });

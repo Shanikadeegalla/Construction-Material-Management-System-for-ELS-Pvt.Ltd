@@ -8,7 +8,7 @@ const FIXED_IV = Buffer.from('1234567890123456'); // 16 bytes fixed IV for datab
 export function encryptTransit(text) {
   if (text === null || text === undefined) return text;
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(SECRET_KEY), iv);
+  const cipher = crypto.createCipheriv(ALGORITHM, Buffer.alloc(32, SECRET_KEY), iv);
   let encrypted = cipher.update(String(text), 'utf8', 'hex');
   encrypted += cipher.final('hex');
   return iv.toString('hex') + ':' + encrypted;
@@ -20,7 +20,7 @@ export function decryptTransit(text) {
     const parts = text.split(':');
     const iv = Buffer.from(parts[0], 'hex');
     const encryptedText = Buffer.from(parts[1], 'hex');
-    const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.from(SECRET_KEY), iv);
+    const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.alloc(32, SECRET_KEY), iv);
     let decrypted = decipher.update(encryptedText);
     decrypted = Buffer.concat([decrypted, decipher.final()]);
     return decrypted.toString('utf8');
@@ -32,7 +32,7 @@ export function decryptTransit(text) {
 // For Database: fixed IV (deterministic)
 export function encryptDB(text) {
   if (text === null || text === undefined) return text;
-  const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(SECRET_KEY), FIXED_IV);
+  const cipher = crypto.createCipheriv(ALGORITHM, Buffer.alloc(32, SECRET_KEY), FIXED_IV);
   let encrypted = cipher.update(String(text), 'utf8', 'hex');
   encrypted += cipher.final('hex');
   return encrypted;
@@ -43,7 +43,7 @@ export function decryptDB(text) {
   // Encrypted strings are hex representations of encrypted content (even length, only hex characters)
   if (!/^[0-9a-fA-F]+$/.test(text)) return text;
   try {
-    const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.from(SECRET_KEY), FIXED_IV);
+    const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.alloc(32, SECRET_KEY), FIXED_IV);
     let decrypted = decipher.update(text, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;

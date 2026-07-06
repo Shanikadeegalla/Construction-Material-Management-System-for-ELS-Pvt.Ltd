@@ -8,6 +8,16 @@ function SiteStoreDashboard({ user, onLogout }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  // Phase 8 - Approved BOM states
+  const [projects, setProjects] = useState([]);
+  const [selectedProjId, setSelectedProjId] = useState('');
+  const [bomMaterialsList, setBomMaterialsList] = useState([]);
+  const [noApprovedBomError, setNoApprovedBomError] = useState(false);
+  const [loadingBom, setLoadingBom] = useState(false);
+
+  // Phase 9 - Stock Transfer States
+  const [transfers, setTransfers] = useState([]);
+
   // PR Form State
   const [prForm, setPrForm] = useState({
     projectName: '',
@@ -26,6 +36,10 @@ function SiteStoreDashboard({ user, onLogout }) {
   // Usage History from LocalStorage
   const [usageHistory, setUsageHistory] = useState([]);
 
+  // Main Store stock lookup for shortages
+  const [mainStoreStock, setMainStoreStock] = useState(null);
+  const [showMainStoreStock, setShowMainStoreStock] = useState(false);
+
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
     return {
@@ -39,7 +53,7 @@ function SiteStoreDashboard({ user, onLogout }) {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('http://localhost:5000/api/inventory?location=SiteStore', {
+      const res = await fetch('http://localhost:5000/api/site/inventory', {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -63,8 +77,104 @@ function SiteStoreDashboard({ user, onLogout }) {
     }
   };
 
+  const fetchProjects = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/projects', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProjects(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching projects:', err);
+    }
+  };
+
+  const handleProjectChange = async (projectName) => {
+    setError(''); setSuccess('');
+    const proj = projects.find(p => p.projectName === projectName || p.name === projectName);
+    if (!proj) {
+      setSelectedProjId('');
+      setBomMaterialsList([]);
+      setNoApprovedBomError(false);
+      setPrForm({ ...prForm, projectName, items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }] });
+      return;
+    }
+
+    setSelectedProjId(proj._id);
+    setLoadingBom(true);
+    setNoApprovedBomError(false);
+    setPrForm({ ...prForm, projectName, items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }] });
+
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`http://localhost:5000/api/bom/approved/${proj._id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.data) {
+        setBomMaterialsList(data.data.materials || []);
+        setNoApprovedBomError(false);
+      } else {
+        setBomMaterialsList([]);
+        setNoApprovedBomError(true);
+      }
+    } catch (err) {
+      console.error(err);
+      setBomMaterialsList([]);
+      setNoApprovedBomError(true);
+    } finally {
+      setLoadingBom(false);
+    }
+  };
+
+  const fetchTransfers = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/inventory/transfers', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        const userProjId = user?.projectId || user?.project_id;
+        const projectTransfers = data.filter(t => String(t.projectId) === String(userProjId) || String(t.project_id) === String(userProjId));
+        setTransfers(projectTransfers);
+      }
+    } catch (err) {
+      console.error('Error fetching transfers:', err);
+    }
+  };
+
+  const handleConfirmReceipt = async (transferLogId) => {
+    setError(''); setSuccess('');
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`http://localhost:5000/api/site/confirm-transfer/${transferLogId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSuccess('✅ Delivery receipt confirmed successfully! Stock updated.');
+        fetchMaterials();
+        fetchTransfers();
+      } else {
+        setError(data.message || 'Failed to confirm receipt.');
+      }
+    } catch (err) {
+      setError('Connection error occurred.');
+    }
+  };
+
   useEffect(() => {
     fetchMaterials();
+    fetchProjects();
+    fetchTransfers();
     // Load usage logs
     const logs = localStorage.getItem('siteUsageLogs');
     if (logs) {
@@ -76,6 +186,57 @@ function SiteStoreDashboard({ user, onLogout }) {
     }
   }, []);
 
+  useEffect(() => {
+    if (projects.length > 0 && (user?.projectId || user?.project_id)) {
+      const userProjId = user.projectId || user.project_id;
+      const userProj = projects.find(p => p._id === userProjId);
+      if (userProj && prForm.projectName !== (userProj.projectName || userProj.name)) {
+        handleProjectChange(userProj.projectName || userProj.name);
+      }
+    }
+  }, [projects, user]);
+
+  const checkShortage = async (matId, qty) => {
+    if (!matId || !qty || Number(qty) <= 0) {
+      setMainStoreStock(null);
+      setShowMainStoreStock(false);
+      return;
+    }
+    const selectedMaterial = materials.find(m => m._id === matId);
+    if (!selectedMaterial) return;
+
+    if (selectedMaterial.quantity < Number(qty)) {
+      try {
+        const res = await fetch(`http://localhost:5000/api/materials/main-store/${matId}`, {
+          headers: getHeaders()
+        });
+        const data = await res.json();
+        if (data.success && data.data) {
+          setMainStoreStock(data.data);
+          setShowMainStoreStock(true);
+        } else {
+          setMainStoreStock(null);
+          setShowMainStoreStock(false);
+        }
+      } catch (err) {
+        console.error('Error fetching main store stock:', err);
+        setMainStoreStock({
+          name: selectedMaterial.name,
+          quantity: 0,
+          updatedAt: new Date().toISOString()
+        });
+        setShowMainStoreStock(true);
+      }
+    } else {
+      setMainStoreStock(null);
+      setShowMainStoreStock(false);
+    }
+  };
+
+  useEffect(() => {
+    checkShortage(usageForm.materialId, usageForm.quantityUsed);
+  }, [usageForm.materialId, usageForm.quantityUsed, materials]);
+
   const handlePrSubmit = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -84,6 +245,24 @@ function SiteStoreDashboard({ user, onLogout }) {
     if (invalid) {
       setError('Please fill in material name and valid quantity for all request rows.');
       return;
+    }
+
+    if (noApprovedBomError) {
+      setError('Cannot submit PR without an approved BOM for this project.');
+      return;
+    }
+
+    // Verify each item against approved BOM qty
+    for (const item of prForm.items) {
+      const bomMat = bomMaterialsList.find(bm => bm.name === item.materialName);
+      if (!bomMat) {
+        setError(`Material "${item.materialName}" is not in the approved BOM.`);
+        return;
+      }
+      if (Number(item.quantity) > bomMat.plannedQty) {
+        setError(`Requested quantity for "${item.materialName}" (${item.quantity}) exceeds the approved BOM limit (${bomMat.plannedQty}).`);
+        return;
+      }
     }
 
     try {
@@ -139,23 +318,45 @@ function SiteStoreDashboard({ user, onLogout }) {
     if (!selectedMaterial) return;
 
     if (selectedMaterial.quantity < Number(quantityUsed)) {
-      setError(`Insufficient stock. Only ${selectedMaterial.quantity} ${selectedMaterial.unit}(s) available.`);
+      try {
+        const token = JSON.parse(localStorage.getItem('user'))?.token;
+        const lookupRes = await fetch(`http://localhost:5000/api/materials/main-store/${materialId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const lookupData = await lookupRes.json();
+        
+        if (lookupRes.ok && lookupData.success && lookupData.data) {
+          const mainQty = lookupData.data.quantity;
+          if (mainQty > 0) {
+            setError(`Insufficient stock at the site. However, the Main Store currently has ${mainQty} units.`);
+          } else {
+            setError('Insufficient stock at both the Site Store and Main Store.');
+          }
+        } else {
+          setError(`Insufficient stock. Only ${selectedMaterial.quantity} units available at site.`);
+        }
+      } catch (err) {
+        setError(`Insufficient stock. Only ${selectedMaterial.quantity} units available at site.`);
+      }
       return;
     }
 
     try {
-      const remainingQty = selectedMaterial.quantity - Number(quantityUsed);
-      // Encrypt update quantity payload
-      const ciphertext = encryptTransit(JSON.stringify({ quantity: remainingQty }));
-
-      // Update inventory on backend
-      const res = await fetch(`http://localhost:5000/api/inventory/${materialId}`, {
-        method: 'PUT',
+      // Update inventory on backend via POST /api/site/material-usage
+      const res = await fetch('http://localhost:5000/api/site/material-usage', {
+        method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ ciphertext })
+        body: JSON.stringify({
+          materialId,
+          quantity_used: Number(quantityUsed),
+          date,
+          purpose
+        })
       });
 
-      if (res.ok) {
+      const data = await res.json();
+
+      if (res.ok && data.success) {
         // Record log locally
         const newLog = {
           id: Date.now(),
@@ -173,7 +374,13 @@ function SiteStoreDashboard({ user, onLogout }) {
         setUsageForm({ materialId: '', quantityUsed: '', date: new Date().toISOString().substring(0, 10), purpose: '' });
         fetchMaterials();
       } else {
-        setError('Failed to update inventory during usage log.');
+        if (data.insufficient && data.mainStoreStock) {
+          setError(data.message);
+          setMainStoreStock(data.mainStoreStock);
+          setShowMainStoreStock(true);
+        } else {
+          setError(data.message || 'Failed to update inventory during usage log.');
+        }
       }
     } catch (err) {
       setError('Connection error occurred.');
@@ -204,7 +411,13 @@ function SiteStoreDashboard({ user, onLogout }) {
             <div style={styles.dbAvatar}>{user.name ? user.name.charAt(0).toUpperCase() : 'S'}</div>
             <div style={styles.sidebarUserInfo}>
               <div style={styles.sidebarUserName}>{user.name}</div>
-              <div style={styles.sidebarUserRole}>{user.role} — Site Store</div>
+              <div style={styles.sidebarUserRole}>
+                {user.role} {(() => {
+                  const userProjId = user.projectId || user.project_id;
+                  const userProj = projects.find(p => p._id === userProjId);
+                  return userProj ? `(${userProj.projectName || userProj.name})` : '— Site Store';
+                })()}
+              </div>
               <div style={{ fontSize: '11px', color: '#10b981', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }}>
                 <span>🔒</span> Encrypted
               </div>
@@ -229,10 +442,6 @@ function SiteStoreDashboard({ user, onLogout }) {
           ))}
         </nav>
 
-        <button onClick={handleStoreSwitch} style={styles.sidebarSwitchBtn}>
-          🔄 Switch to Main Store
-        </button>
-
         <button onClick={onLogout} style={styles.sidebarLogoutBtn}>
           Logout Session
         </button>
@@ -245,7 +454,13 @@ function SiteStoreDashboard({ user, onLogout }) {
 
         {view === 'dashboard' && (
           <div style={styles.container}>
-            <h1 style={styles.pageTitle}>Site Store Operations Center</h1>
+            <h1 style={styles.pageTitle}>
+              Site Store Operations Center {(() => {
+                const userProjId = user.projectId || user.project_id;
+                const userProj = projects.find(p => p._id === userProjId);
+                return userProj ? `— ${userProj.projectName || userProj.name}` : '';
+              })()}
+            </h1>
 
             {/* Stats row */}
             <div style={styles.statsGrid}>
@@ -360,6 +575,53 @@ function SiteStoreDashboard({ user, onLogout }) {
                 </table>
               )}
             </div>
+
+            {/* In-Transit Shipments Section */}
+            <div style={{ ...styles.tableContainer, marginTop: '30px' }}>
+              <div style={{ padding: '16px 20px', color: 'white', margin: 0, borderBottom: '1px solid #eee', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ margin: 0, fontSize: '15px', color: 'white' }}>🚚 In-Transit Shipments (Awaiting Receipt)</h3>
+                <button onClick={fetchTransfers} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Refresh</button>
+              </div>
+              {transfers.filter(t => t.status === 'In-Transit').length === 0 ? (
+                <div style={styles.emptyState}>No shipments currently in-transit.</div>
+              ) : (
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.tableHeaderRow}>
+                      <th style={styles.th}>Material Name</th>
+                      <th style={styles.th}>Quantity</th>
+                      <th style={styles.th}>Issued By</th>
+                      <th style={styles.th}>Date Shipped</th>
+                      <th style={styles.th}>Status</th>
+                      <th style={styles.th}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transfers.filter(t => t.status === 'In-Transit').map(t => (
+                      <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={styles.tdBold}>{t.materialName}</td>
+                        <td style={styles.td}>{t.quantity}</td>
+                        <td style={styles.td}>{t.issuedBy}</td>
+                        <td style={styles.td}>{new Date(t.date).toLocaleDateString()}</td>
+                        <td style={styles.td}>
+                          <span style={{ background: '#fef3c7', color: '#d97706', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                            {t.status}
+                          </span>
+                        </td>
+                        <td style={styles.td}>
+                          <button
+                            onClick={() => handleConfirmReceipt(t._id)}
+                            style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                          >
+                            Confirm Receipt
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </div>
         )}
 
@@ -371,14 +633,20 @@ function SiteStoreDashboard({ user, onLogout }) {
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginBottom: '16px' }}>
                   <div>
                     <label style={styles.fieldLabel}>Project Name *</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Marina Heights Development"
+                    <select
                       value={prForm.projectName}
-                      onChange={e => setPrForm({ ...prForm, projectName: e.target.value })}
-                      style={styles.formInput}
+                      onChange={e => handleProjectChange(e.target.value)}
+                      style={styles.formSelect}
+                      disabled={!!(user?.projectId || user?.project_id)}
                       required
-                    />
+                    >
+                      <option value="">-- Select Project --</option>
+                      {projects.map(p => (
+                        <option key={p._id} value={p.projectName || p.name}>
+                          {p.projectName || p.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label style={styles.fieldLabel}>Date Requested</label>
@@ -391,20 +659,47 @@ function SiteStoreDashboard({ user, onLogout }) {
                   </div>
                 </div>
 
+                {noApprovedBomError && (
+                  <div style={{ padding: '12px', background: '#ffebee', border: '1px solid #ef5350', color: '#c62828', borderRadius: '6px', marginBottom: '16px', fontWeight: '500', textAlign: 'left' }}>
+                    ⚠️ No approved BOM is available for this project. PR creation is disabled.
+                  </div>
+                )}
+
                 <h4 style={{ color: '#0d1b4b', marginBottom: '12px' }}>Requested Materials</h4>
                 {prForm.items.map((item, idx) => (
                   <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 2fr auto', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-                    <input
-                      placeholder="Material Name (e.g. River Sand)"
-                      value={item.materialName}
-                      onChange={e => {
-                        const updated = [...prForm.items];
-                        updated[idx].materialName = e.target.value;
-                        setPrForm({ ...prForm, items: updated });
-                      }}
-                      style={styles.formInput}
-                      required
-                    />
+                    <div>
+                      <select
+                        value={item.materialName}
+                        onChange={e => {
+                          const updated = [...prForm.items];
+                          updated[idx].materialName = e.target.value;
+                          const bomMat = bomMaterialsList.find(bm => bm.name === e.target.value);
+                          if (bomMat) {
+                            updated[idx].unit = bomMat.unit;
+                            updated[idx].bomApprovedQty = bomMat.plannedQty;
+                          } else {
+                            updated[idx].bomApprovedQty = undefined;
+                          }
+                          setPrForm({ ...prForm, items: updated });
+                        }}
+                        style={styles.formSelect}
+                        disabled={noApprovedBomError || bomMaterialsList.length === 0}
+                        required
+                      >
+                        <option value="">-- Select Material --</option>
+                        {bomMaterialsList.map(bm => (
+                          <option key={bm._id || bm.name} value={bm.name}>
+                            {bm.name}
+                          </option>
+                        ))}
+                      </select>
+                      {item.bomApprovedQty !== undefined && (
+                        <div style={{ fontSize: '11px', color: '#ff9800', marginTop: '2px', fontWeight: '600', textAlign: 'left' }}>
+                          BOM Approved: {item.bomApprovedQty} {item.unit}
+                        </div>
+                      )}
+                    </div>
                     <input
                       type="number"
                       placeholder="Quantity"
@@ -416,6 +711,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                       }}
                       style={styles.formInput}
                       min="1"
+                      max={item.bomApprovedQty}
                       required
                     />
                     <select
@@ -426,6 +722,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                         setPrForm({ ...prForm, items: updated });
                       }}
                       style={styles.formSelect}
+                      disabled
                     >
                       {['kg', 'ton', 'bag', 'piece', 'litre', 'm3'].map(u => (
                         <option key={u} value={u}>{u}</option>
@@ -455,6 +752,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                 <button
                   type="button"
                   onClick={() => setPrForm({ ...prForm, items: [...prForm.items, { materialName: '', quantity: '', unit: 'bag', reason: '' }] })}
+                  disabled={noApprovedBomError || bomMaterialsList.length === 0}
                   style={{ background: '#e3f2fd', color: '#1565c0', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', marginBottom: '16px', fontSize: '13px' }}
                 >
                   + Add Item
@@ -470,7 +768,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                   />
                 </div>
 
-                <button type="submit" style={styles.orangeBtn}>Submit Purchase Request</button>
+                <button type="submit" style={styles.orangeBtn} disabled={noApprovedBomError || prForm.projectName === ''}>Submit Purchase Request</button>
               </form>
             </div>
           </div>
@@ -492,7 +790,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                       required
                     >
                       <option value="">-- Select Site Material --</option>
-                      {materials.filter(m => m.quantity > 0).map(m => (
+                      {materials.map(m => (
                         <option key={m._id} value={m._id}>{m.name} (Avail: {m.quantity} {m.unit})</option>
                       ))}
                     </select>
@@ -534,6 +832,38 @@ function SiteStoreDashboard({ user, onLogout }) {
                 </div>
                 <button type="submit" style={styles.orangeBtn}>Record Usage</button>
               </form>
+
+              {showMainStoreStock && mainStoreStock && (
+                <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', border: '1px dashed #ff9800', borderRadius: '8px', textAlign: 'left' }}>
+                  <h4 style={{ margin: '0 0 12px', color: '#0d1b4b', fontWeight: '700', fontSize: '14px' }}>Main Store Stock (Read-Only)</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', fontSize: '13px', color: '#475569', marginBottom: '16px' }}>
+                    <div><strong>Material Name:</strong> {mainStoreStock.name}</div>
+                    <div><strong>Available Qty:</strong> {mainStoreStock.quantity}</div>
+                    <div><strong>Last Updated:</strong> {new Date(mainStoreStock.updatedAt).toLocaleString()}</div>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      const selectedMaterial = materials.find(m => m._id === usageForm.materialId);
+                      const neededQty = Number(usageForm.quantityUsed) - (selectedMaterial ? selectedMaterial.quantity : 0);
+                      setPrForm({
+                        projectName: '',
+                        notes: `Shortage request for ${selectedMaterial ? selectedMaterial.name : ''}.`,
+                        items: [{
+                          materialName: selectedMaterial ? selectedMaterial.name : '',
+                          quantity: neededQty > 0 ? neededQty : Number(usageForm.quantityUsed),
+                          unit: selectedMaterial ? selectedMaterial.unit : 'bag',
+                          reason: `Shortage at site store. Needed: ${usageForm.quantityUsed}, Available at site: ${selectedMaterial ? selectedMaterial.quantity : 0}`
+                        }]
+                      });
+                      setView('create-pr');
+                    }} 
+                    style={{ ...styles.orangeBtn, padding: '8px 16px', fontSize: '12px', background: '#0d1b4b' }}
+                  >
+                    Request Materials (PR)
+                  </button>
+                </div>
+              )}
             </div>
 
             <div style={styles.tableContainer}>
