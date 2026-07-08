@@ -15,6 +15,8 @@ import notificationRoutes from './routes/notifications.js';
 import projectRoutes from './routes/projectRoutes.js';
 import materialRoutes from './routes/materials.js';
 import siteInventoryRoutes from './routes/siteInventoryRoutes.js';
+import roleRoutes from './routes/roleRoutes.js';
+import permissionRoutes from './routes/permissionRoutes.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 import { handleEncryption } from './middleware/encryptionMiddleware.js';
 
@@ -46,6 +48,8 @@ app.use('/api/material-usage', materialUsageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/materials', materialRoutes);
+app.use('/api/roles', roleRoutes);
+app.use('/api/permissions', permissionRoutes);
 app.use('/api', siteInventoryRoutes);
 
 // Root route
