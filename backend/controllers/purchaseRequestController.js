@@ -101,7 +101,8 @@ export const createPurchaseRequest = async (req, res) => {
         materialName: bomItem.name, // normalize to exact spelling in BOM
         quantity: qty,
         unit: unit,
-        reason: m.reason || ''
+        reason: m.reason || '',
+        estimatedUnitCost: bomItem.estimatedUnitCost || 0
       });
     }
 

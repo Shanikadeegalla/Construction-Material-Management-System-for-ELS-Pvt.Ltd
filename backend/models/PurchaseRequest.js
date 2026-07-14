@@ -26,6 +26,14 @@ const purchaseRequestSchema = new mongoose.Schema({
     reason: {
       type: String,
       trim: true
+    },
+    // Copied from the approved BOM's material at PR-creation time (see
+    // createPurchaseRequest), so the price the Director approves on the
+    // resulting PO reflects the BOM's actual cost estimate instead of a
+    // blind placeholder.
+    estimatedUnitCost: {
+      type: Number,
+      default: 0
     }
   }],
   requestedBy: {

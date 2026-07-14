@@ -78,7 +78,16 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     };
   };
 
+  const hasSession = () => {
+    try {
+      return !!JSON.parse(localStorage.getItem('user'))?.token;
+    } catch {
+      return false;
+    }
+  };
+
   const fetchData = async () => {
+    if (!hasSession()) return;
     setError('');
     try {
       const headers = getHeaders();
@@ -166,6 +175,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   };
 
   const fetchNotifications = async () => {
+    if (!hasSession()) return;
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const res = await fetch('http://localhost:5000/api/inventory/notifications', {
@@ -195,6 +205,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   // Fetches PR-submitted / PO-approved / PO-rejected notifications addressed to
   // this Purchase Manager, separate from the low-stock inventory alerts above.
   const fetchPrNotifications = async () => {
+    if (!hasSession()) return;
     try {
       const res = await fetch('http://localhost:5000/api/notifications', { headers: getHeaders() });
       const data = await res.json();
@@ -242,7 +253,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         materialName: m.materialName || m.name,
         quantity: m.quantity,
         unit: m.unit || 'bag',
-        unitPrice: ''
+        unitPrice: m.estimatedUnitCost ?? ''
       }));
       setForm({ ...form, prId, items });
     } else {
@@ -324,7 +335,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         materialName: m.materialName,
         quantity: m.quantity,
         unit: m.unit || 'bags',
-        unitPrice: 100 // default prefilled unit price
+        unitPrice: m.estimatedUnitCost ?? '' // prefilled from the approved BOM's cost estimate
       }))
     });
     setShowForm(true);
@@ -876,7 +887,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           {message && <div style={{ background: '#e8f5e9', border: '1px solid #4caf50', color: '#2e7d32', padding: '10px 16px', borderRadius: '6px', marginBottom: '16px' }}>{message}</div>}
 
           {/* Stats Bar */}
-          {activePage !== 'suppliers' ? (
+          {activePage === 'settings' ? null : activePage !== 'suppliers' ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
               {stats.map((s, i) => (
                 <div 
@@ -1117,6 +1128,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px' }} />
                         <select value={item.unit} onChange={e => updateItem(index, 'unit', e.target.value)}
                           style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px' }}>
+                          {!['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].includes(item.unit) && item.unit && (
+                            <option value={item.unit}>{item.unit}</option>
+                          )}
                           {['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].map(u => <option key={u} value={u}>{u}</option>)}
                         </select>
                         <input type="number" placeholder="Unit Price (LKR)" value={item.unitPrice}
