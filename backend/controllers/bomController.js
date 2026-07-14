@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import BOM from '../models/BOM.js';
 import Project from '../models/Project.js';
 import User from '../models/userModel.js';
+import ItemMaster from '../models/ItemMaster.js';
 import { createNotificationHelper } from './notificationController.js';
 
 // Helper to calculate the next version for a project
@@ -34,6 +35,71 @@ const getNextVersion = async (projectId) => {
     // Increment major version if previous was Approved or Submitted (e.g. v1.1 -> v2.0)
     return `v${major + 1}.0`;
   }
+};
+
+// A BOM Number identifies the material requirement plan for a project and stays
+// constant across versions/resubmissions (only the version string changes). It is
+// derived from the project's own human-readable projectId (e.g. "PRJ-2026-004")
+// so the BOM number is traceable back to its project at a glance, and unique
+// because the project code it's built from is unique. The collision-guard
+// suffix is a safety net for edge cases (e.g. two drafts opened for the same
+// project by different users before one is finalized).
+const getOrCreateBOMNumber = async (projectId) => {
+  const existing = await BOM.findOne({ projectId, bomNumber: { $exists: true, $ne: null } }).sort({ createdAt: 1 });
+  if (existing && existing.bomNumber) {
+    return existing.bomNumber;
+  }
+
+  const project = await Project.findById(projectId);
+  const projectCode = project?.projectId || String(projectId).slice(-6).toUpperCase();
+
+  let bomNumber = `BOM-${projectCode}`;
+  let suffix = 1;
+  while (await BOM.exists({ bomNumber })) {
+    suffix += 1;
+    bomNumber = `BOM-${projectCode}-${suffix}`;
+  }
+  return bomNumber;
+};
+
+// Materials must always be sourced from the active Material Master catalog -
+// the client may only supply materialId, plannedQty, supplierRef and remarks.
+// Name/category/unit/estimatedUnitCost are looked up here so they can never
+// be manually typed or tampered with via a direct API call.
+const resolveMaterialsFromMaster = async (materials) => {
+  const resolved = [];
+
+  for (const m of materials) {
+    if (!m.materialId) {
+      throw new Error('Every BOM item must reference a material from the Master Material list.');
+    }
+
+    const master = await ItemMaster.findOne({ _id: m.materialId, status: 'Active' });
+    if (!master) {
+      throw new Error(`Material "${m.name || m.materialName || m.materialId}" is not an active Master Material.`);
+    }
+
+    const qty = Number(m.plannedQty) || Number(m.quantity) || 0;
+    if (qty <= 0) {
+      throw new Error(`Please provide a valid planned quantity for "${master.materialName}".`);
+    }
+
+    const cost = Number(master.estimatedUnitCost) || 0;
+
+    resolved.push({
+      materialId: master._id,
+      name: master.materialName,
+      unit: master.unit,
+      plannedQty: qty,
+      category: master.category,
+      estimatedUnitCost: cost,
+      totalCost: qty * cost,
+      supplierRef: m.supplierRef || '',
+      remarks: m.remarks || ''
+    });
+  }
+
+  return resolved;
 };
 
 // @desc    Get all BOMs
@@ -94,20 +160,12 @@ export const createBOM = async (req, res) => {
       creatorId = pmUser ? pmUser._id : new mongoose.Types.ObjectId();
     }
 
-    const mappedMaterials = materials.map(m => {
-      const qty = Number(m.plannedQty) || Number(m.quantity) || 0;
-      const cost = Number(m.estimatedUnitCost) || 0;
-      return {
-        name: m.name || m.materialName || 'Unnamed Material',
-        unit: m.unit || 'bag',
-        plannedQty: qty,
-        category: m.category || 'Other',
-        estimatedUnitCost: cost,
-        totalCost: qty * cost,
-        supplierRef: m.supplierRef || '',
-        remarks: m.remarks || ''
-      };
-    });
+    let mappedMaterials;
+    try {
+      mappedMaterials = await resolveMaterialsFromMaster(materials);
+    } catch (validationErr) {
+      return res.status(400).json({ success: false, message: validationErr.message });
+    }
 
     const isSubmitted = status === 'Submitted';
 
@@ -118,11 +176,15 @@ export const createBOM = async (req, res) => {
       // PM is editing/updating an existing draft BOM
       draftBom.materials = mappedMaterials;
       draftBom.projectName = projectName;
-      
+      if (!draftBom.bomNumber) {
+        draftBom.bomNumber = await getOrCreateBOMNumber(projectId);
+      }
+
       if (isSubmitted) {
         // Submit the draft: change status and calculate proper version
         draftBom.status = 'Submitted';
         draftBom.version = await getNextVersion(projectId);
+        draftBom.submittedAt = new Date();
       } else {
         // Save as draft again: keep draft status and calculate version if not set
         if (!draftBom.version) {
@@ -153,14 +215,17 @@ export const createBOM = async (req, res) => {
     } else {
       // Create new document (since no draft exists or it is a new submission)
       const finalVersion = await getNextVersion(projectId);
+      const bomNumber = await getOrCreateBOMNumber(projectId);
 
       const bom = new BOM({
+        bomNumber,
         projectId,
         projectName,
         version: finalVersion,
         createdBy: creatorId,
         materials: mappedMaterials,
-        status: status || 'Draft'
+        status: status || 'Draft',
+        submittedAt: isSubmitted ? new Date() : undefined
       });
 
       await bom.save();
@@ -225,13 +290,9 @@ export const rejectBOM = async (req, res) => {
     const approvedBy = req.user ? req.user.name : 'Director';
     const { rejectionReason } = req.body;
 
-    if (!rejectionReason || !rejectionReason.trim()) {
-      return res.status(400).json({ success: false, message: 'Rejection reason is required.' });
-    }
-
     const bom = await BOM.findByIdAndUpdate(
       req.params.id,
-      { status: 'Rejected', approvedBy, rejectionReason },
+      { status: 'Rejected', approvedBy, rejectionReason: rejectionReason || '' },
       { new: true }
     ).populate('projectId');
 
@@ -240,7 +301,7 @@ export const rejectBOM = async (req, res) => {
     }
 
     const projectName = bom.projectName || (bom.projectId ? (bom.projectId.projectName || bom.projectId.name) : 'Project');
-    const msg = `BOM ${bom.version} for ${projectName} Rejected: ${rejectionReason}`;
+    const msg = `BOM ${bom.version} for ${projectName} Rejected${rejectionReason ? `: ${rejectionReason}` : ''}`;
     await createNotificationHelper(bom.createdBy, msg, 'BOM_rejected', '/bom');
 
     res.status(200).json({ success: true, message: 'BOM rejected successfully!', data: bom });

@@ -1,5 +1,4 @@
 import Material from '../models/Material.js';
-import TransferLog from '../models/TransferLog.js';
 import MaterialUsage from '../models/MaterialUsage.js';
 import Project from '../models/Project.js';
 import { decryptDB, encryptDB } from '../utils/cryptoUtils.js';
@@ -14,7 +13,7 @@ const decryptIfNeeded = (val) => {
 // @access  Private
 export const getSiteInventory = async (req, res) => {
   try {
-    const userProjectId = req.user.project_id || req.user.projectId;
+    const userProjectId = req.query.projectId || req.user.project_id || req.user.projectId;
     if (!userProjectId) {
       return res.status(400).json({ success: false, message: 'User is not assigned to a project.' });
     }
@@ -43,7 +42,7 @@ export const getSiteInventory = async (req, res) => {
 // @access  Private (Admin / Director)
 export const getProjectsOverview = async (req, res) => {
   try {
-    if (req.user.role !== 'Admin' && req.user.role !== 'Director') {
+    if (req.user.role !== 'Admin' && req.user.role !== 'Director' && req.user.role !== 'ProjectManager') {
       return res.status(403).json({ success: false, message: 'Access denied.' });
     }
 
@@ -147,189 +146,8 @@ export const logMaterialUsage = async (req, res) => {
   }
 };
 
-// @desc    Issue material from Main Store to Site Store
-// @route   POST /api/main-store/issue-to-site
-// @access  Private (MainStoreOfficer)
-export const issueToSite = async (req, res) => {
-  try {
-    const { materialName, quantity, target_project_id } = req.body;
-
-    if (!materialName || !quantity || Number(quantity) <= 0 || !target_project_id) {
-      return res.status(400).json({ success: false, message: 'Missing issue fields.' });
-    }
-
-    // Deduct from central Main Store stock
-    const mainMat = await Material.findOne({ name: materialName, location: 'MainStore' });
-    if (!mainMat || mainMat.quantity < Number(quantity)) {
-      return res.status(400).json({ success: false, message: 'Transfer quantity exceeds available stock.' });
-    }
-
-    // Start MongoDB Session Transaction
-    const mongoose = (await import('mongoose')).default;
-    const session = await mongoose.startSession();
-    let log;
-
-    try {
-      session.startTransaction();
-
-      mainMat.quantity -= Number(quantity);
-      await mainMat.save({ session });
-
-      // In-Transit Transfer Log
-      log = new TransferLog({
-        materialId: mainMat._id,
-        materialName: encryptDB(materialName),
-        quantity: encryptDB(String(quantity)),
-        from: 'MainStore',
-        to: 'SiteStore',
-        projectId: target_project_id,
-        project_id: target_project_id,
-        status: 'In-Transit',
-        issuedBy: req.user ? req.user.name : 'Store Officer'
-      });
-      await log.save({ session });
-
-      await session.commitTransaction();
-      session.endSession();
-    } catch (txError) {
-      await session.abortTransaction();
-      session.endSession();
-
-      // Standalone Fallback
-      mainMat.quantity -= Number(quantity);
-      await mainMat.save();
-
-      log = new TransferLog({
-        materialId: mainMat._id,
-        materialName: encryptDB(materialName),
-        quantity: encryptDB(String(quantity)),
-        from: 'MainStore',
-        to: 'SiteStore',
-        projectId: target_project_id,
-        project_id: target_project_id,
-        status: 'In-Transit',
-        issuedBy: req.user ? req.user.name : 'Store Officer'
-      });
-      await log.save();
-    }
-
-    const decLog = log.toObject();
-    decLog.materialName = decryptDB(decLog.materialName);
-    decLog.quantity = Number(decryptDB(decLog.quantity)) || 0;
-
-    res.status(201).json({
-      success: true,
-      message: 'Stock successfully issued (Shipment is In-Transit).',
-      transferLog: decLog
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Confirm delivery receipt of in-transit material transfer
-// @route   POST /api/site/confirm-transfer/:transferLogId
-// @access  Private (SiteStoreOfficer)
-export const confirmTransferReceipt = async (req, res) => {
-  try {
-    const { transferLogId } = req.params;
-    const transferLog = await TransferLog.findById(transferLogId);
-    if (!transferLog) {
-      return res.status(404).json({ success: false, message: 'Transfer log not found.' });
-    }
-
-    if (transferLog.status === 'Received') {
-      return res.status(400).json({ success: false, message: 'This transfer has already been received.' });
-    }
-
-    const userProjectId = req.user.project_id || req.user.projectId;
-    if (transferLog.projectId && String(transferLog.projectId) !== String(userProjectId)) {
-      return res.status(403).json({ success: false, message: 'You are not authorized to confirm receipt for this project.' });
-    }
-
-    const mongoose = (await import('mongoose')).default;
-    const session = await mongoose.startSession();
-    try {
-      session.startTransaction();
-
-      const mainMat = await Material.findById(transferLog.materialId);
-      const matName = decryptDB(transferLog.materialName);
-      const qtyToReceive = Number(decryptDB(transferLog.quantity)) || 0;
-
-      const siteMats = await Material.find({
-        location: 'SiteStore',
-        $or: [{ project_id: userProjectId }, { projectId: userProjectId }]
-      }).session(session);
-
-      let siteMat = siteMats.find(m => decryptDB(m.name) === matName);
-
-      if (siteMat) {
-        const currentQty = Number(decryptDB(siteMat.quantity)) || 0;
-        const newQty = currentQty + qtyToReceive;
-        siteMat.quantity = encryptDB(String(newQty));
-        await siteMat.save({ session });
-      } else {
-        siteMat = new Material({
-          name: encryptDB(matName),
-          category: mainMat ? mainMat.category : 'Other',
-          unit: mainMat ? mainMat.unit : 'bag',
-          quantity: encryptDB(String(qtyToReceive)),
-          minimumStock: mainMat ? mainMat.minimumStock : 10,
-          location: 'SiteStore',
-          unitPrice: mainMat ? mainMat.unitPrice : 0,
-          project_id: userProjectId,
-          projectId: userProjectId
-        });
-        await siteMat.save({ session });
-      }
-
-      transferLog.status = 'Received';
-      await transferLog.save({ session });
-
-      await session.commitTransaction();
-      session.endSession();
-    } catch (txError) {
-      await session.abortTransaction();
-      session.endSession();
-
-      // Standalone Fallback
-      const mainMat = await Material.findById(transferLog.materialId);
-      const matName = decryptDB(transferLog.materialName);
-      const qtyToReceive = Number(decryptDB(transferLog.quantity)) || 0;
-
-      const siteMats = await Material.find({
-        location: 'SiteStore',
-        $or: [{ project_id: userProjectId }, { projectId: userProjectId }]
-      });
-
-      let siteMat = siteMats.find(m => decryptDB(m.name) === matName);
-
-      if (siteMat) {
-        const currentQty = Number(decryptDB(siteMat.quantity)) || 0;
-        const newQty = currentQty + qtyToReceive;
-        siteMat.quantity = encryptDB(String(newQty));
-        await siteMat.save();
-      } else {
-        siteMat = new Material({
-          name: encryptDB(matName),
-          category: mainMat ? mainMat.category : 'Other',
-          unit: mainMat ? mainMat.unit : 'bag',
-          quantity: encryptDB(String(qtyToReceive)),
-          minimumStock: mainMat ? mainMat.minimumStock : 10,
-          location: 'SiteStore',
-          unitPrice: mainMat ? mainMat.unitPrice : 0,
-          project_id: userProjectId,
-          projectId: userProjectId
-        });
-        await siteMat.save();
-      }
-
-      transferLog.status = 'Received';
-      await transferLog.save();
-    }
-
-    res.status(200).json({ success: true, message: 'Transfer received and inventory updated.' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
+// Note: issuing materials from Main Store to Site Store and confirming their
+// receipt is now handled end-to-end by the Material Issuance Note flow
+// (see controllers/materialIssuanceController.js, mounted at /api/min),
+// which ties every issuance back to an approved BOM instead of being raised
+// ad hoc.

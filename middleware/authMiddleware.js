@@ -34,7 +34,7 @@ const authorizeRoles = (...roles) => {
       if (role === 'projectmanager') return 'pm';
       if (role === 'mainstoreofficer') return 'store';
       if (role === 'sitestoreofficer') return 'sitestore';
-      if (role === 'purchaseofficer') return 'purchase';
+      if (role === 'purchasemanager' || role === 'purchaseofficer') return 'purchase';
       return role;
     };
 

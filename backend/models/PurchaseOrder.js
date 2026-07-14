@@ -13,7 +13,7 @@ const purchaseOrderSchema = new mongoose.Schema({
   supplier: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Supplier',
-    required: true
+    required: false
   },
   items: [{
     materialName: {
@@ -43,8 +43,17 @@ const purchaseOrderSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Pending', 'Sent', 'Delivered', 'Closed', 'Cancelled'],
-    default: 'Pending'
+    enum: ['Draft', 'Pending', 'Approved', 'Rejected', 'Sent', 'Delivered', 'Closed', 'Cancelled'],
+    default: 'Draft'
+  },
+  approvedBy: {
+    type: String
+  },
+  approvedAt: {
+    type: Date
+  },
+  rejectionReason: {
+    type: String
   },
   notes: {
     type: String,

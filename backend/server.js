@@ -17,6 +17,8 @@ import materialRoutes from './routes/materials.js';
 import siteInventoryRoutes from './routes/siteInventoryRoutes.js';
 import roleRoutes from './routes/roleRoutes.js';
 import permissionRoutes from './routes/permissionRoutes.js';
+import itemMasterRoutes from './routes/itemMasterRoutes.js';
+import materialIssuanceRoutes from './routes/materialIssuanceRoutes.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 import { handleEncryption } from './middleware/encryptionMiddleware.js';
 
@@ -50,6 +52,8 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/materials', materialRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/permissions', permissionRoutes);
+app.use('/api/item-master', itemMasterRoutes);
+app.use('/api/min', materialIssuanceRoutes);
 app.use('/api', siteInventoryRoutes);
 
 // Root route

@@ -48,9 +48,15 @@ export const admin = (req, res, next) => {
 
 export const authorizeRoles = (...roles) => {
   return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user) {
       res.status(403);
-      return next(new Error(`Role ${req.user ? req.user.role : 'Guest'} is not authorized`));
+      return next(new Error(`Role Guest is not authorized`));
+    }
+    const userRole = req.user.role;
+    const allowed = [...roles];
+    if (!allowed.includes(userRole)) {
+      res.status(403);
+      return next(new Error(`Role ${userRole} is not authorized`));
     }
     next();
   };

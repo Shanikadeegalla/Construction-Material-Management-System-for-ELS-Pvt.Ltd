@@ -37,16 +37,15 @@ const purchaseRequestSchema = new mongoose.Schema({
     enum: ['Normal', 'Urgent', 'Critical'],
     default: 'Normal'
   },
+  source: {
+    type: String,
+    enum: ['MainStore', 'Site'],
+    default: 'MainStore'
+  },
   status: {
     type: String,
-    enum: ['Pending', 'Approved', 'Rejected', 'PO Created'],
+    enum: ['Pending', 'PO Created'],
     default: 'Pending'
-  },
-  approvedBy: {
-    type: String
-  },
-  rejectionReason: {
-    type: String
   },
   notes: {
     type: String,

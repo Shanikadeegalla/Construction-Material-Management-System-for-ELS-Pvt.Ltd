@@ -11,14 +11,7 @@ export const getRoles = async (req, res, next) => {
     
     // Enrich roles with user count
     const enrichedRoles = await Promise.all(roles.map(async (role) => {
-      let count = 0;
-      if (role.name === 'StoreOfficer') {
-        count = await User.countDocuments({ role: { $in: ['StoreOfficer', 'MainStoreOfficer'] } });
-      } else if (role.name === 'SiteStorekeeper') {
-        count = await User.countDocuments({ role: { $in: ['SiteStorekeeper', 'SiteStoreOfficer'] } });
-      } else {
-        count = await User.countDocuments({ role: role.name });
-      }
+      const count = await User.countDocuments({ role: role.name });
       return {
         ...role.toObject(),
         userCount: count
@@ -60,7 +53,7 @@ export const createRole = async (req, res, next) => {
     const defaultModules = [
       "Create/Edit Users", "View User List", "Audit Logs",
       "Create Project", "View Projects", "BOM Creation", "BOM Approval",
-      "Create PR", "Approve PR", "Create PO", "Approve PO", "Supplier Management",
+      "Create PR", "Create PO", "Approve PO", "Supplier Management",
       "Create GRN", "View Stock", "Issue Materials", "Stock Adjustments",
       "View Reports", "Export PDF/Excel"
     ];
@@ -129,14 +122,7 @@ export const deleteRole = async (req, res, next) => {
     }
 
     // Check if any users are assigned to this role
-    let count = 0;
-    if (role.name === 'StoreOfficer') {
-      count = await User.countDocuments({ role: { $in: ['StoreOfficer', 'MainStoreOfficer'] } });
-    } else if (role.name === 'SiteStorekeeper') {
-      count = await User.countDocuments({ role: { $in: ['SiteStorekeeper', 'SiteStoreOfficer'] } });
-    } else {
-      count = await User.countDocuments({ role: role.name });
-    }
+    const count = await User.countDocuments({ role: role.name });
 
     if (count > 0) {
       res.status(400);

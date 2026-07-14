@@ -286,109 +286,11 @@ export const createGRN = async (req, res) => {
   }
 };
 
-// @desc    Issue materials to site store (transfer)
-// @route   POST /api/inventory/issue
-// @access  Private
-export const issueMaterial = async (req, res) => {
-  const { materialId, quantity, projectName, projectId } = req.body;
-  const issuedBy = req.user ? req.user.name : 'Store Officer';
-
-  if (!materialId || !quantity || quantity <= 0) {
-    return res.status(400).json({ message: 'Invalid material ID or quantity' });
-  }
-
-  try {
-    // 1. Find material in MainStore
-    const mainStoreMaterial = await Material.findById(materialId);
-    if (!mainStoreMaterial) {
-      return res.status(404).json({ message: 'Material not found in Main Store' });
-    }
-
-    if (mainStoreMaterial.location !== 'MainStore') {
-      return res.status(400).json({ message: 'Material can only be issued from Main Store' });
-    }
-
-    const qtyToIssue = Number(quantity);
-    if (mainStoreMaterial.quantity < qtyToIssue) {
-      return res.status(400).json({ message: 'Transfer quantity exceeds available stock.' });
-    }
-
-    // Determine target project ID
-    let targetProjectId = projectId;
-    if (!targetProjectId && projectName) {
-      const pDoc = await Project.findOne({
-        $or: [{ projectName }, { name: projectName }]
-      });
-      if (pDoc) {
-        targetProjectId = pDoc._id;
-      }
-    }
-
-    // Start MongoDB Session Transaction
-    const session = await mongoose.startSession();
-    let transferLog;
-
-    try {
-      session.startTransaction();
-
-      // 2. Decrement from Main Store
-      mainStoreMaterial.quantity -= qtyToIssue;
-      await mainStoreMaterial.save({ session });
-
-      // 3. Save transfer log (In-Transit status)
-      transferLog = new TransferLog({
-        materialId: mainStoreMaterial._id,
-        materialName: encryptDB(mainStoreMaterial.name),
-        quantity: encryptDB(String(qtyToIssue)),
-        from: 'MainStore',
-        to: 'SiteStore',
-        projectId: targetProjectId,
-        project_id: targetProjectId,
-        status: 'In-Transit',
-        issuedBy,
-        date: new Date()
-      });
-      await transferLog.save({ session });
-
-      await session.commitTransaction();
-      session.endSession();
-    } catch (txError) {
-      await session.abortTransaction();
-      session.endSession();
-
-      // Standalone Fallback
-      mainStoreMaterial.quantity -= qtyToIssue;
-      await mainStoreMaterial.save();
-
-      transferLog = new TransferLog({
-        materialId: mainStoreMaterial._id,
-        materialName: encryptDB(mainStoreMaterial.name),
-        quantity: encryptDB(String(qtyToIssue)),
-        from: 'MainStore',
-        to: 'SiteStore',
-        projectId: targetProjectId,
-        project_id: targetProjectId,
-        status: 'In-Transit',
-        issuedBy,
-        date: new Date()
-      });
-      await transferLog.save();
-    }
-
-    const decTransferLog = transferLog.toObject();
-    decTransferLog.materialName = decryptDB(decTransferLog.materialName);
-    decTransferLog.quantity = Number(decryptDB(decTransferLog.quantity)) || 0;
-
-    res.json({
-      success: true,
-      message: `Successfully issued ${qtyToIssue} ${mainStoreMaterial.unit}(s) to Site Store (Shipment In-Transit)`,
-      mainStoreMaterial,
-      transferLog: decTransferLog
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+// Note: issuing materials from Main Store to Site Store now always goes
+// through the Material Issuance Note flow (controllers/materialIssuanceController.js,
+// mounted at /api/min), which validates against an approved BOM before any
+// stock moves. This file keeps getTransfers below as a read-only ledger of
+// the TransferLog rows that flow creates.
 
 // @desc    Get all Goods Received Notes (GRN)
 // @route   GET /api/inventory/grn

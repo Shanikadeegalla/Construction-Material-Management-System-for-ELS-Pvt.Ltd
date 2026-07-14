@@ -4,19 +4,23 @@ import path from 'path';
 import fs from 'fs';
 import Project from '../models/Project.js';
 import { protect } from '../middleware/authMiddleware.js';
+import { checkPermission } from '../middleware/permissionMiddleware.js';
 
 const router = express.Router();
 
-// Ensure uploads/drawings folder exists
-const uploadDir = './uploads/drawings';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// Ensure upload folders exist
+const drawingsDir = './uploads/drawings';
+const specificationsDir = './uploads/specifications';
+[drawingsDir, specificationsDir].forEach((dir) => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
 
 // Multer Config
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, uploadDir);
+    cb(null, file.fieldname === 'specifications' ? specificationsDir : drawingsDir);
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -27,22 +31,27 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   fileFilter: function (req, file, cb) {
-    const filetypes = /jpeg|jpg|png|pdf/;
+    const filetypes = /jpeg|jpg|png|pdf|doc|docx|xls|xlsx/;
     const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = filetypes.test(file.mimetype);
 
-    if (mimetype && extname) {
+    if (extname) {
       return cb(null, true);
     } else {
-      cb(new Error('Only images (jpg/jpeg/png) and PDFs are allowed!'));
+      cb(new Error('Only images (jpg/jpeg/png), PDFs, and Word/Excel documents are allowed!'));
     }
   }
 });
 
+// Accepts multiple construction drawings and multiple specification/other documents
+const uploadProjectFiles = upload.fields([
+  { name: 'drawings', maxCount: 20 },
+  { name: 'specifications', maxCount: 20 }
+]);
+
 // @desc    Create a new project
 // @route   POST /api/projects
 // @access  Private (Project Manager)
-router.post('/', protect, upload.single('drawingFile'), async (req, res) => {
+router.post('/', protect, checkPermission('Create Project'), uploadProjectFiles, async (req, res) => {
   try {
     const {
       projectName,
@@ -70,14 +79,29 @@ router.post('/', protect, upload.single('drawingFile'), async (req, res) => {
       startDate: { $gte: startOfYear, $lte: endOfYear }
     });
 
-    const suffix = String(count + 1).padStart(3, '0');
-    const projectId = `PRJ-${year}-${suffix}`;
-
-    // Get file path if file uploaded
-    let drawingFilePath = '';
-    if (req.file) {
-      drawingFilePath = `/uploads/drawings/${req.file.filename}`;
+    let projectId = '';
+    let suffixNum = count + 1;
+    let exists = true;
+    while (exists) {
+      const suffix = String(suffixNum).padStart(3, '0');
+      projectId = `PRJ-${year}-${suffix}`;
+      const existingProject = await Project.findOne({ projectId });
+      if (!existingProject) {
+        exists = false;
+      } else {
+        suffixNum++;
+      }
     }
+
+    // Build uploaded document lists
+    const drawings = (req.files?.drawings || []).map((f) => ({
+      fileName: f.originalname,
+      filePath: `/uploads/drawings/${f.filename}`
+    }));
+    const specifications = (req.files?.specifications || []).map((f) => ({
+      fileName: f.originalname,
+      filePath: `/uploads/specifications/${f.filename}`
+    }));
 
     const project = new Project({
       projectId,
@@ -88,12 +112,14 @@ router.post('/', protect, upload.single('drawingFile'), async (req, res) => {
       expectedEndDate: new Date(expectedEndDate),
       budget: Number(budget),
       description,
-      drawingFile: drawingFilePath,
+      drawings,
+      specifications,
       status: status || 'Planning',
       createdBy: req.user._id
     });
 
     await project.save();
+    await project.populate('createdBy', 'name email');
 
     res.status(201).json({
       success: true,
@@ -108,7 +134,7 @@ router.post('/', protect, upload.single('drawingFile'), async (req, res) => {
 // @desc    List all projects (filtered by creator if role is PM)
 // @route   GET /api/projects
 // @access  Private
-router.get('/', protect, async (req, res) => {
+router.get('/', protect, checkPermission('View Projects'), async (req, res) => {
   try {
     const query = req.user.role === 'ProjectManager' ? { createdBy: req.user._id } : {};
     const projects = await Project.find(query)
@@ -124,7 +150,7 @@ router.get('/', protect, async (req, res) => {
 // @desc    Update a project
 // @route   PUT /api/projects/:id
 // @access  Private (Project Manager)
-router.put('/:id', protect, upload.single('drawingFile'), async (req, res) => {
+router.put('/:id', protect, uploadProjectFiles, async (req, res) => {
   try {
     const {
       projectName,
@@ -156,11 +182,23 @@ router.put('/:id', protect, upload.single('drawingFile'), async (req, res) => {
     if (description !== undefined) project.description = description;
     if (status) project.status = status;
 
-    if (req.file) {
-      project.drawingFile = `/uploads/drawings/${req.file.filename}`;
+    if (req.files?.drawings?.length) {
+      const newDrawings = req.files.drawings.map((f) => ({
+        fileName: f.originalname,
+        filePath: `/uploads/drawings/${f.filename}`
+      }));
+      project.drawings = [...(project.drawings || []), ...newDrawings];
+    }
+    if (req.files?.specifications?.length) {
+      const newSpecifications = req.files.specifications.map((f) => ({
+        fileName: f.originalname,
+        filePath: `/uploads/specifications/${f.filename}`
+      }));
+      project.specifications = [...(project.specifications || []), ...newSpecifications];
     }
 
     await project.save();
+    await project.populate('createdBy', 'name email');
 
     res.status(200).json({
       success: true,

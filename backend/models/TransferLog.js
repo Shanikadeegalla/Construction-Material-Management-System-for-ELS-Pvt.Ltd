@@ -44,6 +44,11 @@ const transferLogSchema = new mongoose.Schema({
     type: String,
     enum: ['In-Transit', 'Received'],
     default: 'In-Transit'
+  },
+  minId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'MaterialIssuanceNote',
+    default: null
   }
 });
 

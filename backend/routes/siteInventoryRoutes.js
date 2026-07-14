@@ -2,18 +2,15 @@ import express from 'express';
 import {
   getSiteInventory,
   getProjectsOverview,
-  logMaterialUsage,
-  issueToSite,
-  confirmTransferReceipt
+  logMaterialUsage
 } from '../controllers/siteInventoryController.js';
-import { protect, authorizeRoles } from '../middleware/authMiddleware.js';
+import { protect } from '../middleware/authMiddleware.js';
+import { checkPermission } from '../middleware/permissionMiddleware.js';
 
 const router = express.Router();
 
 router.get('/site/inventory', protect, getSiteInventory);
-router.get('/admin/projects-overview', protect, authorizeRoles('Admin', 'Director'), getProjectsOverview);
-router.post('/site/material-usage', protect, authorizeRoles('SiteStoreOfficer', 'Admin'), logMaterialUsage);
-router.post('/main-store/issue-to-site', protect, authorizeRoles('MainStoreOfficer', 'Admin'), issueToSite);
-router.post('/site/confirm-transfer/:transferLogId', protect, authorizeRoles('SiteStoreOfficer', 'Admin'), confirmTransferReceipt);
+router.get('/admin/projects-overview', protect, checkPermission('View Reports'), getProjectsOverview);
+router.post('/site/material-usage', protect, checkPermission('Log Material Usage'), logMaterialUsage);
 
 export default router;

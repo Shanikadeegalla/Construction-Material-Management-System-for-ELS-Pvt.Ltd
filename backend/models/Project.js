@@ -35,9 +35,16 @@ const projectSchema = new mongoose.Schema({
   description: {
     type: String
   },
-  drawingFile: {
-    type: String
-  },
+  drawings: [{
+    fileName: { type: String },
+    filePath: { type: String },
+    uploadedAt: { type: Date, default: Date.now }
+  }],
+  specifications: [{
+    fileName: { type: String },
+    filePath: { type: String },
+    uploadedAt: { type: Date, default: Date.now }
+  }],
   status: {
     type: String,
     enum: ['Planning', 'Active', 'On Hold', 'OnHold', 'Completed'],

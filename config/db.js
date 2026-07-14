@@ -7,7 +7,8 @@ const connectDB = async () => {
   } catch (error) {
     console.error('DB Connection Error:', error.message);
     console.warn('Please ensure MongoDB is running locally on 127.0.0.1:27017, or configure MONGO_URI in your .env file.');
-    process.exit(1);
+    console.log('Retrying MongoDB connection in 5 seconds...');
+    setTimeout(connectDB, 5000);
   }
 };
 

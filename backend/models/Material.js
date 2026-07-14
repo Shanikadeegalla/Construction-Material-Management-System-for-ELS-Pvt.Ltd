@@ -1,6 +1,11 @@
 import mongoose from 'mongoose';
+import { decryptDB } from '../utils/cryptoUtils.js';
 
 const materialSchema = new mongoose.Schema({
+  materialCode: {
+    type: String,
+    default: ''
+  },
   name: {
     type: String,
     required: true,
@@ -25,6 +30,16 @@ const materialSchema = new mongoose.Schema({
     type: Number,
     required: true,
     default: 10
+  },
+  maximumStock: {
+    type: Number,
+    required: true,
+    default: 100
+  },
+  reorderLevel: {
+    type: Number,
+    required: true,
+    default: 50
   },
   location: {
     type: String,
@@ -54,5 +69,29 @@ const materialSchema = new mongoose.Schema({
     trim: true
   }
 }, { timestamps: true });
+
+materialSchema.pre('save', async function (next) {
+  if (this.isNew || this.isModified('name')) {
+    try {
+      const ItemMaster = mongoose.model('ItemMaster');
+      const decryptedName = decryptDB(this.name);
+      const master = await ItemMaster.findOne({
+        $or: [
+          { materialName: this.name },
+          { materialName: decryptedName }
+        ]
+      });
+      if (master) {
+        this.materialCode = master.materialCode;
+        this.minimumStock = master.minimumStock;
+        this.maximumStock = master.maximumStock;
+        this.reorderLevel = master.reorderLevel;
+      }
+    } catch (err) {
+      // silent fail if model not registered
+    }
+  }
+  next();
+});
 
 export default mongoose.model('Material', materialSchema);

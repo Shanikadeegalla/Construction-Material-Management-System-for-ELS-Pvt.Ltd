@@ -1,6 +1,10 @@
 import PurchaseRequest from '../models/PurchaseRequest.js';
 import BOM from '../models/BOM.js';
 import Project from '../models/Project.js';
+import PurchaseOrder from '../models/PurchaseOrder.js';
+import Supplier from '../models/Supplier.js';
+import User from '../models/userModel.js';
+import { createNotificationHelper } from './notificationController.js';
 
 // @desc    Get all purchase requests
 // @route   GET /api/purchase-requests
@@ -23,8 +27,6 @@ export const getPurchaseRequests = async (req, res) => {
       requestedBy: pr.requestedBy,
       urgency: pr.urgency || 'Normal',
       status: pr.status,
-      approvedBy: pr.approvedBy || '',
-      rejectionReason: pr.rejectionReason || '',
       notes: pr.notes || '',
       createdAt: pr.createdAt,
       updatedAt: pr.updatedAt,
@@ -42,7 +44,10 @@ export const getPurchaseRequests = async (req, res) => {
 // @access  Private
 export const createPurchaseRequest = async (req, res) => {
   try {
-    const { project, projectName, materials, notes, urgency } = req.body;
+    const { project, projectName, materials, notes, urgency, source, status } = req.body;
+    if (source === 'Site') {
+      return res.status(400).json({ success: false, message: 'Purchase requests originating from Site are not permitted.' });
+    }
     const finalProjectName = projectName || project;
     const requestedBy = req.user ? req.user.name : (req.body.requestedBy || 'Store Officer');
 
@@ -112,54 +117,18 @@ export const createPurchaseRequest = async (req, res) => {
 
     await pr.save();
 
+    // Notify Purchase Managers so they can convert the PR into a PO
+    try {
+      const purchaseManagers = await User.find({ role: 'PurchaseManager' });
+      const msg = `New Purchase Request from Main Store for ${finalProjectName} (${mappedMaterials.length} item${mappedMaterials.length === 1 ? '' : 's'}) awaiting PO conversion`;
+      for (const pmUser of purchaseManagers) {
+        await createNotificationHelper(pmUser._id, msg, 'PR_SUBMITTED', '/purchase-orders');
+      }
+    } catch (nErr) {
+      console.error('Error creating PR submission notifications:', nErr);
+    }
+
     res.status(201).json({ success: true, message: 'Purchase request submitted successfully!', data: pr });
-  } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Approve a purchase request
-// @route   PUT /api/purchase-requests/:id/approve
-// @access  Private
-export const approvePurchaseRequest = async (req, res) => {
-  try {
-    const approvedBy = req.user ? req.user.name : 'Project Manager';
-    
-    const pr = await PurchaseRequest.findByIdAndUpdate(
-      req.params.id,
-      { status: 'Approved', approvedBy },
-      { new: true }
-    );
-
-    if (!pr) {
-      return res.status(404).json({ success: false, message: 'Purchase request not found.' });
-    }
-
-    res.status(200).json({ success: true, message: 'Purchase request approved successfully!', data: pr });
-  } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Reject a purchase request
-// @route   PUT /api/purchase-requests/:id/reject
-// @access  Private
-export const rejectPurchaseRequest = async (req, res) => {
-  try {
-    const approvedBy = req.user ? req.user.name : 'Project Manager';
-    const { rejectionReason } = req.body;
-
-    const pr = await PurchaseRequest.findByIdAndUpdate(
-      req.params.id,
-      { status: 'Rejected', approvedBy, rejectionReason: rejectionReason || 'No reason provided' },
-      { new: true }
-    );
-
-    if (!pr) {
-      return res.status(404).json({ success: false, message: 'Purchase request not found.' });
-    }
-
-    res.status(200).json({ success: true, message: 'Purchase request rejected successfully!', data: pr });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }

@@ -11,6 +11,8 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Please add an email'],
       unique: true,
+      trim: true,
+      lowercase: true,
       match: [
         /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
         'Please add a valid email',
@@ -24,7 +26,7 @@ const userSchema = new mongoose.Schema(
     role: {
       type: String,
       required: true,
-      enum: ['Admin', 'Director', 'ProjectManager', 'PurchaseOfficer', 'MainStoreOfficer', 'SiteStoreOfficer'],
+      enum: ['Admin', 'Director', 'ProjectManager', 'PurchaseManager', 'MainStoreOfficer', 'SiteStoreOfficer'],
       default: 'MainStoreOfficer',
     },
     projectId: {
@@ -41,6 +43,61 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    firstName: {
+      type: String,
+      default: '',
+    },
+    lastName: {
+      type: String,
+      default: '',
+    },
+    username: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    employeeId: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
+    gender: {
+      type: String,
+      enum: ['Male', 'Female', 'Other', ''],
+      default: '',
+    },
+    phone: {
+      type: String,
+      default: '',
+    },
+    alternatePhone: {
+      type: String,
+      default: '',
+    },
+    avatarUrl: {
+      type: String,
+      default: '/uploads/default-avatar.png',
+    },
+    settings: {
+      system: {
+        darkMode: { type: Boolean, default: false },
+        notifications: {
+          systemAlerts: { type: Boolean, default: true },
+          emailNotifs: { type: Boolean, default: true },
+          desktopNotifs: { type: Boolean, default: false }
+        },
+        locale: {
+          language: { type: String, default: 'en' },
+          timezone: { type: String, default: 'Asia/Colombo' },
+          dateFormat: { type: String, default: 'YYYY-MM-DD' }
+        }
+      },
+      profile: {
+        sidebarCollapsed: { type: Boolean, default: false },
+        twoFactorEnabled: { type: Boolean, default: false }
+      }
+    }
   },
   {
     timestamps: true,
