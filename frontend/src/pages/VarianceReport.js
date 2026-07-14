@@ -13,6 +13,7 @@ import {
   Legend,
   ResponsiveContainer
 } from 'recharts';
+import { formatDateTime, formatDayMonth } from '../utils/dateUtils';
 
 const VarianceReport = () => {
   const [reportData, setReportData] = useState([]);
@@ -107,7 +108,7 @@ const VarianceReport = () => {
   // Group timeline by date (accumulate actual quantities for chart)
   const lineChartData = Object.values(
     filteredTimeline.reduce((acc, curr) => {
-      const dateStr = new Date(curr.usageDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const dateStr = formatDayMonth(curr.usageDate);
       if (!acc[dateStr]) {
         acc[dateStr] = { date: dateStr, quantity: 0 };
       }
@@ -163,7 +164,7 @@ const VarianceReport = () => {
     
     doc.setFontSize(9);
     doc.setFont("helvetica", "normal");
-    doc.text(`Generated Date: ${new Date().toLocaleString()}`, 14, 60);
+    doc.text(`Generated Date: ${formatDateTime(new Date())}`, 14, 60);
     doc.text(`Selected Project Profile: ${selectedProject}`, 14, 65);
 
     // Draw Stats summary in PDF
@@ -225,7 +226,7 @@ const VarianceReport = () => {
     const wsData = [
       ["ELS Construction (Pvt) Ltd"],
       ["Material Variance Analysis Report"],
-      [`Generated Date: ${new Date().toLocaleString()}`],
+      [`Generated Date: ${formatDateTime(new Date())}`],
       [`Selected Project Profile: ${selectedProject}`],
       [], // Spacer
       ["Summary Statistics"],
@@ -342,7 +343,7 @@ const VarianceReport = () => {
                       <Tooltip />
                       <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
                       <Bar dataKey="plannedQty" name="Planned Quantity" fill="#0d1b4b" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="actualQty" name="Actual Usage" fill="#ff9800" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="actualQty" name="Actual Usage" fill="#2563eb" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -363,7 +364,7 @@ const VarianceReport = () => {
                       <YAxis tick={{ fill: '#64748b', fontSize: 11 }} />
                       <Tooltip />
                       <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
-                      <Line type="monotone" dataKey="quantity" name="Total Units Consumed" stroke="#ff9800" strokeWidth={3} activeDot={{ r: 8 }} />
+                      <Line type="monotone" dataKey="quantity" name="Total Units Consumed" stroke="#2563eb" strokeWidth={3} activeDot={{ r: 8 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>

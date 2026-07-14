@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
+import { formatDate, formatDateTime } from '../utils/dateUtils';
+import DateInput from '../components/DateInput';
 
 function SiteStoreDashboard({ user, onLogout }) {
   const [view, setView] = useState('dashboard'); // 'dashboard', 'site-inventory', 'create-pr', 'usage'
@@ -15,11 +17,12 @@ function SiteStoreDashboard({ user, onLogout }) {
   const [noApprovedBomError, setNoApprovedBomError] = useState(false);
   const [loadingBom, setLoadingBom] = useState(false);
 
-  // Phase 9 - Stock Transfer States
-  const [transfers, setTransfers] = useState([]);
+  // Phase 9 - Material Issuance Note (MIN) States
+  const [mins, setMins] = useState([]);
+  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
 
-  // PR Form State
-  const [prForm, setPrForm] = useState({
+  // Material Issuance Note Form State (Requisition)
+  const [minForm, setMinForm] = useState({
     projectName: '',
     notes: '',
     items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }]
@@ -53,7 +56,10 @@ function SiteStoreDashboard({ user, onLogout }) {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('http://localhost:5000/api/site/inventory', {
+      const url = selectedProjId 
+        ? `http://localhost:5000/api/site/inventory?projectId=${selectedProjId}` 
+        : 'http://localhost:5000/api/site/inventory';
+      const res = await fetch(url, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -69,11 +75,33 @@ function SiteStoreDashboard({ user, onLogout }) {
     } catch (err) {
       setError('Could not connect to the backend server. Loading demo data.');
       setMaterials([
-        { _id: 'site1', name: 'Portland Cement OPC', category: 'Cement', unit: 'bag', quantity: 50, minimumStock: 10, unitPrice: 1850, location: 'SiteStore' },
-        { _id: 'site2', name: 'Deformed Steel Bars 12mm', category: 'Steel', unit: 'ton', quantity: 2, minimumStock: 2, unitPrice: 185000, location: 'SiteStore' }
+        { _id: 'site1', name: 'Portland Cement OPC', category: 'Cement', unit: 'bag', quantity: 8, minimumStock: 10, reorderLevel: 25, maximumStock: 50, unitPrice: 1850, location: 'SiteStore' },
+        { _id: 'site2', name: 'Deformed Steel Bars 12mm', category: 'Steel', unit: 'ton', quantity: 2, minimumStock: 2, reorderLevel: 5, maximumStock: 10, unitPrice: 185000, location: 'SiteStore' }
       ]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchMINs = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/min', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      let finalData = data;
+      if (data && data.ciphertext) {
+        finalData = JSON.parse(decryptTransit(data.ciphertext));
+      }
+      if (finalData.success && Array.isArray(finalData.data)) {
+        const filtered = selectedProjId
+          ? finalData.data.filter(m => String(m.projectId) === String(selectedProjId))
+          : finalData.data;
+        setMins(filtered);
+      }
+    } catch (err) {
+      console.error('Error fetching Material Issuance Notes:', err);
     }
   };
 
@@ -99,14 +127,14 @@ function SiteStoreDashboard({ user, onLogout }) {
       setSelectedProjId('');
       setBomMaterialsList([]);
       setNoApprovedBomError(false);
-      setPrForm({ ...prForm, projectName, items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }] });
+      setMinForm({ ...minForm, projectName, items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }] });
       return;
     }
 
     setSelectedProjId(proj._id);
     setLoadingBom(true);
     setNoApprovedBomError(false);
-    setPrForm({ ...prForm, projectName, items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }] });
+    setMinForm({ ...minForm, projectName, items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }] });
 
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -130,28 +158,11 @@ function SiteStoreDashboard({ user, onLogout }) {
     }
   };
 
-  const fetchTransfers = async () => {
-    try {
-      const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/inventory/transfers', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        const userProjId = user?.projectId || user?.project_id;
-        const projectTransfers = data.filter(t => String(t.projectId) === String(userProjId) || String(t.project_id) === String(userProjId));
-        setTransfers(projectTransfers);
-      }
-    } catch (err) {
-      console.error('Error fetching transfers:', err);
-    }
-  };
-
-  const handleConfirmReceipt = async (transferLogId) => {
+  const handleConfirmReceipt = async (minId) => {
     setError(''); setSuccess('');
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/site/confirm-transfer/${transferLogId}`, {
+      const res = await fetch(`http://localhost:5000/api/min/${minId}/confirm-receipt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -162,7 +173,7 @@ function SiteStoreDashboard({ user, onLogout }) {
       if (res.ok && data.success) {
         setSuccess('✅ Delivery receipt confirmed successfully! Stock updated.');
         fetchMaterials();
-        fetchTransfers();
+        fetchMINs();
       } else {
         setError(data.message || 'Failed to confirm receipt.');
       }
@@ -174,7 +185,7 @@ function SiteStoreDashboard({ user, onLogout }) {
   useEffect(() => {
     fetchMaterials();
     fetchProjects();
-    fetchTransfers();
+    fetchMINs();
     // Load usage logs
     const logs = localStorage.getItem('siteUsageLogs');
     if (logs) {
@@ -184,17 +195,17 @@ function SiteStoreDashboard({ user, onLogout }) {
         setUsageHistory([]);
       }
     }
-  }, []);
+  }, [selectedProjId]);
 
   useEffect(() => {
     if (projects.length > 0 && (user?.projectId || user?.project_id)) {
       const userProjId = user.projectId || user.project_id;
       const userProj = projects.find(p => p._id === userProjId);
-      if (userProj && prForm.projectName !== (userProj.projectName || userProj.name)) {
+      if (userProj && minForm.projectName !== (userProj.projectName || userProj.name)) {
         handleProjectChange(userProj.projectName || userProj.name);
       }
     }
-  }, [projects, user]);
+  }, [projects, user, selectedProjId]);
 
   const checkShortage = async (matId, qty) => {
     if (!matId || !qty || Number(qty) <= 0) {
@@ -237,23 +248,23 @@ function SiteStoreDashboard({ user, onLogout }) {
     checkShortage(usageForm.materialId, usageForm.quantityUsed);
   }, [usageForm.materialId, usageForm.quantityUsed, materials]);
 
-  const handlePrSubmit = async (e) => {
+  const handleMINSubmit = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
 
-    const invalid = prForm.items.some(item => !item.materialName || !item.quantity || Number(item.quantity) <= 0);
+    const invalid = minForm.items.some(item => !item.materialName || !item.quantity || Number(item.quantity) <= 0);
     if (invalid) {
       setError('Please fill in material name and valid quantity for all request rows.');
       return;
     }
 
     if (noApprovedBomError) {
-      setError('Cannot submit PR without an approved BOM for this project.');
+      setError('Cannot submit a Material Issuance Note without an approved BOM for this project.');
       return;
     }
 
     // Verify each item against approved BOM qty
-    for (const item of prForm.items) {
+    for (const item of minForm.items) {
       const bomMat = bomMaterialsList.find(bm => bm.name === item.materialName);
       if (!bomMat) {
         setError(`Material "${item.materialName}" is not in the approved BOM.`);
@@ -267,40 +278,42 @@ function SiteStoreDashboard({ user, onLogout }) {
 
     try {
       const payload = {
-        projectName: prForm.projectName,
-        notes: prForm.notes,
-        materials: prForm.items,
+        projectId: selectedProjId,
+        projectName: minForm.projectName,
+        notes: minForm.notes,
+        materials: minForm.items,
         requestedBy: user ? user.name : 'Store Officer'
       };
 
       // Encrypt payload for transit
       const ciphertext = encryptTransit(JSON.stringify(payload));
 
-      const res = await fetch('http://localhost:5000/api/purchase-requests', {
+      const res = await fetch('http://localhost:5000/api/min', {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ ciphertext })
       });
       const data = await res.json();
-      
+
       let finalData = data;
       if (data && data.ciphertext) {
         finalData = JSON.parse(decryptTransit(data.ciphertext));
       }
 
       if (res.ok && finalData.success) {
-        setSuccess('✅ Purchase Request submitted successfully to PM for approval!');
-        setPrForm({
+        setSuccess('✅ Material Issuance Note submitted successfully to Main Store!');
+        setMinForm({
           projectName: '',
           notes: '',
           items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }]
         });
+        fetchMINs();
         setView('dashboard');
       } else {
-        setError(finalData.message || 'Failed to submit Purchase Request.');
+        setError(finalData.message || 'Failed to submit Material Issuance Note.');
       }
     } catch (err) {
-      setError('Connection error occurred.');
+      setError('Could not connect to the backend server to submit the Material Issuance Note.');
     }
   };
 
@@ -402,7 +415,7 @@ function SiteStoreDashboard({ user, onLogout }) {
       {/* Navigation Sidebar */}
       <aside style={styles.sidebar}>
         <div style={styles.sidebarHeader}>
-          <div style={styles.logoIcon}>E</div>
+          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
           <h2 style={styles.sidebarTitle}>ELS CMMS</h2>
         </div>
 
@@ -429,7 +442,7 @@ function SiteStoreDashboard({ user, onLogout }) {
           {[
             { id: 'dashboard', label: 'Dashboard', icon: '📊' },
             { id: 'site-inventory', label: 'Site Inventory', icon: '🏗️' },
-            { id: 'create-pr', label: 'Create PR', icon: '📋' },
+            { id: 'create-min', label: 'Material Issuance Note', icon: '📋' },
             { id: 'usage', label: 'Material Usage', icon: '🔧' },
           ].map(item => (
             <button
@@ -461,6 +474,61 @@ function SiteStoreDashboard({ user, onLogout }) {
                 return userProj ? `— ${userProj.projectName || userProj.name}` : '';
               })()}
             </h1>
+
+            {/* Low Stock Alert Section */}
+            {materials.some(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)) && (
+              <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '8px', padding: '16px', marginBottom: '24px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)', textAlign: 'left' }}>
+                <h3 style={{ margin: '0 0 12px', color: '#b45309', fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  ⚠️ Low Stock Alert (Below Reorder Level)
+                </h3>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '2px solid #f59e0b', color: '#4b5563' }}>
+                        <th style={{ padding: '6px 8px' }}>Project Name</th>
+                        <th style={{ padding: '6px 8px' }}>Material Name</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Current Stock</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Min Level</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Reorder Level</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Max Level</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Shortage</th>
+                        <th style={{ padding: '6px 8px', textAlign: 'center' }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).map((m, idx) => {
+                        const min = m.minimumStock || 10;
+                        const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+                        const max = m.maximumStock || 100;
+                        const shortage = Math.max(0, max - m.quantity);
+                        const isCritical = m.quantity <= min;
+                        const projName = m.project_id?.projectName || m.projectId?.projectName || m.project_id?.name || m.projectId?.name || 'Main Project';
+                        return (
+                          <tr key={m._id || idx} style={{ borderBottom: '1px solid #fef3c7' }}>
+                            <td style={{ padding: '8px', fontWeight: '600' }}>{projName}</td>
+                            <td style={{ padding: '8px' }}>{m.name}</td>
+                            <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold' }}>{m.quantity} {m.unit}</td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>{min} {m.unit}</td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>{reorder} {m.unit}</td>
+                            <td style={{ padding: '8px', textAlign: 'right' }}>{max} {m.unit}</td>
+                            <td style={{ padding: '8px', textAlign: 'right', color: '#dc2626', fontWeight: '700' }}>{shortage} {m.unit}</td>
+                            <td style={{ padding: '8px', textAlign: 'center' }}>
+                              <span style={{ 
+                                background: isCritical ? '#fee2e2' : '#ffedd5',
+                                color: isCritical ? '#991b1b' : '#c2410c',
+                                padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', fontSize: '10px'
+                              }}>
+                                {isCritical ? 'Critical' : 'Low Stock'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* Stats row */}
             <div style={styles.statsGrid}>
@@ -526,6 +594,52 @@ function SiteStoreDashboard({ user, onLogout }) {
                 </table>
               )}
             </div>
+
+            {/* Material Issuance Note Status List */}
+            <div style={{ ...styles.tableContainer, marginTop: '24px' }}>
+              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                📋 Material Issuance Note Status Logs
+                <button onClick={fetchMINs} style={{ background: '#2563eb', border: 'none', color: 'white', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Refresh</button>
+              </h3>
+              {mins.length === 0 ? (
+                <div style={styles.emptyState}>No Material Issuance Note logs found.</div>
+              ) : (
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.tableHeaderRow}>
+                      <th style={styles.th}>MIN No.</th>
+                      <th style={styles.th}>Materials Requested</th>
+                      <th style={styles.th}>Status</th>
+                      <th style={styles.th}>Notes</th>
+                      <th style={styles.th}>Feedback</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mins.map(m => (
+                      <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ ...styles.td, fontWeight: 'bold' }}>{m.minNumber}</td>
+                        <td style={styles.td}>
+                          {(m.materials || []).map((mat, i) => (
+                            <div key={i}>{mat.materialName} ({mat.quantity} {mat.unit})</div>
+                          ))}
+                        </td>
+                        <td style={styles.td}>
+                          <span style={{
+                            background: m.status === 'Received' ? '#e8f5e9' : m.status === 'Issued' ? '#e0f2f1' : m.status === 'Approved' ? '#e3f2fd' : m.status === 'Rejected' ? '#ffebee' : '#fff3e0',
+                            color: m.status === 'Received' ? '#2e7d32' : m.status === 'Issued' ? '#00695c' : m.status === 'Approved' ? '#1565c0' : m.status === 'Rejected' ? '#c62828' : '#b7791f',
+                            padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
+                          }}>
+                            {m.status}
+                          </span>
+                        </td>
+                        <td style={styles.td}>{m.notes || '-'}</td>
+                        <td style={styles.td}>{m.status === 'Rejected' ? m.rejectionReason : m.status === 'Issued' ? 'Shipped — confirm receipt under Site Inventory' : m.status === 'Received' ? 'Delivered & confirmed' : '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </div>
         )}
 
@@ -576,20 +690,20 @@ function SiteStoreDashboard({ user, onLogout }) {
               )}
             </div>
 
-            {/* In-Transit Shipments Section */}
+            {/* In-Transit Material Issuance Notes Section */}
             <div style={{ ...styles.tableContainer, marginTop: '30px' }}>
               <div style={{ padding: '16px 20px', color: 'white', margin: 0, borderBottom: '1px solid #eee', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, fontSize: '15px', color: 'white' }}>🚚 In-Transit Shipments (Awaiting Receipt)</h3>
-                <button onClick={fetchTransfers} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Refresh</button>
+                <button onClick={fetchMINs} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Refresh</button>
               </div>
-              {transfers.filter(t => t.status === 'In-Transit').length === 0 ? (
+              {mins.filter(m => m.status === 'Issued').length === 0 ? (
                 <div style={styles.emptyState}>No shipments currently in-transit.</div>
               ) : (
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
-                      <th style={styles.th}>Material Name</th>
-                      <th style={styles.th}>Quantity</th>
+                      <th style={styles.th}>MIN No.</th>
+                      <th style={styles.th}>Materials</th>
                       <th style={styles.th}>Issued By</th>
                       <th style={styles.th}>Date Shipped</th>
                       <th style={styles.th}>Status</th>
@@ -597,20 +711,24 @@ function SiteStoreDashboard({ user, onLogout }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {transfers.filter(t => t.status === 'In-Transit').map(t => (
-                      <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={styles.tdBold}>{t.materialName}</td>
-                        <td style={styles.td}>{t.quantity}</td>
-                        <td style={styles.td}>{t.issuedBy}</td>
-                        <td style={styles.td}>{new Date(t.date).toLocaleDateString()}</td>
+                    {mins.filter(m => m.status === 'Issued').map(m => (
+                      <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={styles.tdBold}>{m.minNumber}</td>
+                        <td style={styles.td}>
+                          {(m.materials || []).map((mat, i) => (
+                            <div key={i}>{mat.materialName} ({mat.quantity} {mat.unit})</div>
+                          ))}
+                        </td>
+                        <td style={styles.td}>{m.issuedBy}</td>
+                        <td style={styles.td}>{formatDate(m.issuedAt)}</td>
                         <td style={styles.td}>
                           <span style={{ background: '#fef3c7', color: '#d97706', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
-                            {t.status}
+                            {m.status}
                           </span>
                         </td>
                         <td style={styles.td}>
                           <button
-                            onClick={() => handleConfirmReceipt(t._id)}
+                            onClick={() => handleConfirmReceipt(m._id)}
                             style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
                           >
                             Confirm Receipt
@@ -625,16 +743,16 @@ function SiteStoreDashboard({ user, onLogout }) {
           </div>
         )}
 
-        {view === 'create-pr' && (
+        {view === 'create-min' && (
           <div style={styles.container}>
-            <h1 style={styles.pageTitle}>Create Purchase Request</h1>
+            <h1 style={styles.pageTitle}>Create Material Issuance Note</h1>
             <div style={styles.formCard}>
-              <form onSubmit={handlePrSubmit}>
+              <form onSubmit={handleMINSubmit}>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginBottom: '16px' }}>
                   <div>
                     <label style={styles.fieldLabel}>Project Name *</label>
                     <select
-                      value={prForm.projectName}
+                      value={minForm.projectName}
                       onChange={e => handleProjectChange(e.target.value)}
                       style={styles.formSelect}
                       disabled={!!(user?.projectId || user?.project_id)}
@@ -652,7 +770,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                     <label style={styles.fieldLabel}>Date Requested</label>
                     <input
                       type="text"
-                      value={new Date().toLocaleDateString()}
+                      value={formatDate(new Date())}
                       style={{ ...styles.formInput, background: '#f1f5f9' }}
                       disabled
                     />
@@ -661,18 +779,18 @@ function SiteStoreDashboard({ user, onLogout }) {
 
                 {noApprovedBomError && (
                   <div style={{ padding: '12px', background: '#ffebee', border: '1px solid #ef5350', color: '#c62828', borderRadius: '6px', marginBottom: '16px', fontWeight: '500', textAlign: 'left' }}>
-                    ⚠️ No approved BOM is available for this project. PR creation is disabled.
+                    ⚠️ No approved BOM is available for this project. Requisition creation is disabled.
                   </div>
                 )}
 
                 <h4 style={{ color: '#0d1b4b', marginBottom: '12px' }}>Requested Materials</h4>
-                {prForm.items.map((item, idx) => (
+                {minForm.items.map((item, idx) => (
                   <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 2fr auto', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
                     <div>
                       <select
                         value={item.materialName}
                         onChange={e => {
-                          const updated = [...prForm.items];
+                          const updated = [...minForm.items];
                           updated[idx].materialName = e.target.value;
                           const bomMat = bomMaterialsList.find(bm => bm.name === e.target.value);
                           if (bomMat) {
@@ -681,7 +799,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                           } else {
                             updated[idx].bomApprovedQty = undefined;
                           }
-                          setPrForm({ ...prForm, items: updated });
+                          setMinForm({ ...minForm, items: updated });
                         }}
                         style={styles.formSelect}
                         disabled={noApprovedBomError || bomMaterialsList.length === 0}
@@ -695,7 +813,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                         ))}
                       </select>
                       {item.bomApprovedQty !== undefined && (
-                        <div style={{ fontSize: '11px', color: '#ff9800', marginTop: '2px', fontWeight: '600', textAlign: 'left' }}>
+                        <div style={{ fontSize: '11px', color: '#2563eb', marginTop: '2px', fontWeight: '600', textAlign: 'left' }}>
                           BOM Approved: {item.bomApprovedQty} {item.unit}
                         </div>
                       )}
@@ -705,9 +823,9 @@ function SiteStoreDashboard({ user, onLogout }) {
                       placeholder="Quantity"
                       value={item.quantity}
                       onChange={e => {
-                        const updated = [...prForm.items];
+                        const updated = [...minForm.items];
                         updated[idx].quantity = e.target.value;
-                        setPrForm({ ...prForm, items: updated });
+                        setMinForm({ ...minForm, items: updated });
                       }}
                       style={styles.formInput}
                       min="1"
@@ -717,9 +835,9 @@ function SiteStoreDashboard({ user, onLogout }) {
                     <select
                       value={item.unit}
                       onChange={e => {
-                        const updated = [...prForm.items];
+                        const updated = [...minForm.items];
                         updated[idx].unit = e.target.value;
-                        setPrForm({ ...prForm, items: updated });
+                        setMinForm({ ...minForm, items: updated });
                       }}
                       style={styles.formSelect}
                       disabled
@@ -729,19 +847,19 @@ function SiteStoreDashboard({ user, onLogout }) {
                       ))}
                     </select>
                     <input
-                      placeholder="Reason for requesting"
+                      placeholder="Reason for requisition"
                       value={item.reason}
                       onChange={e => {
-                        const updated = [...prForm.items];
+                        const updated = [...minForm.items];
                         updated[idx].reason = e.target.value;
-                        setPrForm({ ...prForm, items: updated });
+                        setMinForm({ ...minForm, items: updated });
                       }}
                       style={styles.formInput}
                     />
-                    {prForm.items.length > 1 && (
+                    {minForm.items.length > 1 && (
                       <button
                         type="button"
-                        onClick={() => setPrForm({ ...prForm, items: prForm.items.filter((_, i) => i !== idx) })}
+                        onClick={() => setMinForm({ ...minForm, items: minForm.items.filter((_, i) => i !== idx) })}
                         style={{ background: '#ffebee', color: '#c62828', border: 'none', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer' }}
                       >
                         ✕
@@ -751,7 +869,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                 ))}
                 <button
                   type="button"
-                  onClick={() => setPrForm({ ...prForm, items: [...prForm.items, { materialName: '', quantity: '', unit: 'bag', reason: '' }] })}
+                  onClick={() => setMinForm({ ...minForm, items: [...minForm.items, { materialName: '', quantity: '', unit: 'bag', reason: '' }] })}
                   disabled={noApprovedBomError || bomMaterialsList.length === 0}
                   style={{ background: '#e3f2fd', color: '#1565c0', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', marginBottom: '16px', fontSize: '13px' }}
                 >
@@ -759,16 +877,16 @@ function SiteStoreDashboard({ user, onLogout }) {
                 </button>
 
                 <div style={{ marginBottom: '16px' }}>
-                  <label style={styles.fieldLabel}>Request Notes</label>
+                  <label style={styles.fieldLabel}>Requisition Notes</label>
                   <textarea
                     placeholder="Enter extra instructions or remarks..."
-                    value={prForm.notes}
-                    onChange={e => setPrForm({ ...prForm, notes: e.target.value })}
+                    value={minForm.notes}
+                    onChange={e => setMinForm({ ...minForm, notes: e.target.value })}
                     style={{ ...styles.formInput, height: '80px' }}
                   />
                 </div>
 
-                <button type="submit" style={styles.orangeBtn} disabled={noApprovedBomError || prForm.projectName === ''}>Submit Purchase Request</button>
+                <button type="submit" style={styles.orangeBtn} disabled={noApprovedBomError || minForm.projectName === ''}>Submit Material Issuance Note</button>
               </form>
             </div>
           </div>
@@ -810,10 +928,9 @@ function SiteStoreDashboard({ user, onLogout }) {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '16px', marginBottom: '16px' }}>
                   <div>
                     <label style={styles.fieldLabel}>Usage Date</label>
-                    <input
-                      type="date"
+                    <DateInput
                       value={usageForm.date}
-                      onChange={e => setUsageForm({ ...usageForm, date: e.target.value })}
+                      onChange={iso => setUsageForm({ ...usageForm, date: iso })}
                       style={styles.formInput}
                       required
                     />
@@ -834,21 +951,21 @@ function SiteStoreDashboard({ user, onLogout }) {
               </form>
 
               {showMainStoreStock && mainStoreStock && (
-                <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', border: '1px dashed #ff9800', borderRadius: '8px', textAlign: 'left' }}>
+                <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', border: '1px dashed #2563eb', borderRadius: '8px', textAlign: 'left' }}>
                   <h4 style={{ margin: '0 0 12px', color: '#0d1b4b', fontWeight: '700', fontSize: '14px' }}>Main Store Stock (Read-Only)</h4>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', fontSize: '13px', color: '#475569', marginBottom: '16px' }}>
                     <div><strong>Material Name:</strong> {mainStoreStock.name}</div>
                     <div><strong>Available Qty:</strong> {mainStoreStock.quantity}</div>
-                    <div><strong>Last Updated:</strong> {new Date(mainStoreStock.updatedAt).toLocaleString()}</div>
+                    <div><strong>Last Updated:</strong> {formatDateTime(mainStoreStock.updatedAt)}</div>
                   </div>
                   <button 
                     type="button" 
                     onClick={() => {
                       const selectedMaterial = materials.find(m => m._id === usageForm.materialId);
                       const neededQty = Number(usageForm.quantityUsed) - (selectedMaterial ? selectedMaterial.quantity : 0);
-                      setPrForm({
+                      setMinForm({
                         projectName: '',
-                        notes: `Shortage request for ${selectedMaterial ? selectedMaterial.name : ''}.`,
+                        notes: `Shortage requisition for ${selectedMaterial ? selectedMaterial.name : ''}.`,
                         items: [{
                           materialName: selectedMaterial ? selectedMaterial.name : '',
                           quantity: neededQty > 0 ? neededQty : Number(usageForm.quantityUsed),
@@ -856,11 +973,11 @@ function SiteStoreDashboard({ user, onLogout }) {
                           reason: `Shortage at site store. Needed: ${usageForm.quantityUsed}, Available at site: ${selectedMaterial ? selectedMaterial.quantity : 0}`
                         }]
                       });
-                      setView('create-pr');
-                    }} 
+                      setView('create-min');
+                    }}
                     style={{ ...styles.orangeBtn, padding: '8px 16px', fontSize: '12px', background: '#0d1b4b' }}
                   >
-                    Request Materials (PR)
+                    Request Materials (MIN)
                   </button>
                 </div>
               )}
@@ -897,7 +1014,68 @@ function SiteStoreDashboard({ user, onLogout }) {
             </div>
           </div>
         )}
+
+        {/* Footer */}
+        <div style={{ textAlign: 'center', padding: '20px 0 8px', marginTop: '16px', fontSize: '12px', color: '#94a3b8' }}>
+          ELS Construction Material Management System &copy;2026
+        </div>
       </main>
+
+      {/* Low Stock Popup Alerts (Mandatory overlay) */}
+      {(() => {
+        const alertsToTrigger = materials.filter(m => {
+          const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+          return m.quantity < reorder;
+        });
+        const unacknowledged = alertsToTrigger.filter(m => !acknowledgedAlerts[m._id]);
+        if (unacknowledged.length === 0) return null;
+        
+        return (
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+            <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '500px', boxShadow: '0 10px 25px rgba(0,0,0,0.3)', borderTop: '6px solid #ef4444', textAlign: 'left' }}>
+              <h3 style={{ color: '#ef4444', margin: '0 0 16px', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                🚨 Low Stock Alert Notification
+              </h3>
+              <p style={{ color: '#475569', fontSize: '14px', marginBottom: '20px' }}>
+                The following materials have fallen below their reorder levels. Please review and requisition stock:
+              </p>
+              <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '24px' }}>
+                {unacknowledged.map(m => {
+                  const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+                  const isCritical = m.quantity <= (m.minimumStock || 10);
+                  return (
+                    <div key={m._id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}>
+                      <div>
+                        <strong style={{ color: '#0f172a' }}>{m.name}</strong>
+                        <div style={{ fontSize: '11px', color: '#64748b' }}>Stock: {m.quantity} {m.unit} / Reorder: {reorder} {m.unit}</div>
+                      </div>
+                      <span style={{ 
+                        background: isCritical ? '#fee2e2' : '#ffedd5', 
+                        color: isCritical ? '#991b1b' : '#c2410c',
+                        padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' 
+                      }}>
+                        {isCritical ? 'Critical' : 'Low Stock'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <button 
+                onClick={() => {
+                  const updated = { ...acknowledgedAlerts };
+                  alertsToTrigger.forEach(m => {
+                    updated[m._id] = true;
+                  });
+                  setAcknowledgedAlerts(updated);
+                }}
+                style={{ width: '100%', padding: '12px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+              >
+                Acknowledge & Dismiss Alerts
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -931,18 +1109,6 @@ const styles = {
     fontWeight: '700',
     color: 'white',
   },
-  logoIcon: {
-    width: '38px',
-    height: '38px',
-    borderRadius: '10px',
-    background: 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontWeight: 'bold',
-    fontSize: '18px',
-    color: 'white',
-  },
   sidebarUserSection: {
     display: 'flex',
     alignItems: 'center',
@@ -955,7 +1121,7 @@ const styles = {
     width: '38px',
     height: '38px',
     borderRadius: '50%',
-    background: 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)',
+    background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -974,7 +1140,7 @@ const styles = {
   },
   sidebarUserRole: {
     fontSize: '12px',
-    color: '#ff9800',
+    color: '#2563eb',
     fontWeight: '600',
   },
   sidebarNav: {
@@ -1002,21 +1168,21 @@ const styles = {
     width: '100%',
     textAlign: 'left',
     padding: '12px 16px',
-    backgroundColor: '#ff9800',
+    backgroundColor: '#2563eb',
     color: 'white',
     border: 'none',
     borderRadius: '6px',
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: '600',
-    boxShadow: '0 4px 12px rgba(255,152,0,0.2)',
+    boxShadow: '0 4px 12px rgba(37, 99, 235,0.2)',
   },
   sidebarSwitchBtn: {
     width: '100%',
     padding: '12px',
-    backgroundColor: 'rgba(255,152,0,0.1)',
-    color: '#ff9800',
-    border: '1px solid rgba(255,152,0,0.2)',
+    backgroundColor: 'rgba(37, 99, 235,0.1)',
+    color: '#2563eb',
+    border: '1px solid rgba(37, 99, 235,0.2)',
     borderRadius: '6px',
     cursor: 'pointer',
     fontSize: '13px',
@@ -1163,7 +1329,7 @@ const styles = {
     backgroundColor: 'white',
   },
   orangeBtn: {
-    background: '#ff9800',
+    background: '#2563eb',
     color: 'white',
     border: 'none',
     padding: '12px 24px',

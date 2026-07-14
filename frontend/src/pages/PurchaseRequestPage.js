@@ -141,7 +141,7 @@ function PurchaseRequestPage({ user }) {
           <div style={styles.statLabel}>My Total Requests</div>
           <div style={styles.statValue}>{totalPRs}</div>
         </div>
-        <div style={{ ...styles.statCard, borderLeft: '4px solid #ff9800' }}>
+        <div style={{ ...styles.statCard, borderLeft: '4px solid #2563eb' }}>
           <div style={styles.statLabel}>Pending Approvals</div>
           <div style={styles.statValue}>{pendingPRs}</div>
         </div>
@@ -288,7 +288,7 @@ function PurchaseRequestPage({ user }) {
                       <span style={{ ...styles.badge, backgroundColor: '#fee2e2', color: '#ef4444' }}>✕ Rejected</span>
                     )}
                     {req.status === 'Pending' && (
-                      <span style={{ ...styles.badge, backgroundColor: '#fff3e0', color: '#ff9800' }}>⏳ Pending</span>
+                      <span style={{ ...styles.badge, backgroundColor: '#dbeafe', color: '#2563eb' }}>⏳ Pending</span>
                     )}
                   </td>
                 </tr>
@@ -344,7 +344,7 @@ const styles = {
     marginBottom: '24px',
   },
   orangeBtn: {
-    backgroundColor: '#ff9800',
+    backgroundColor: '#2563eb',
     color: 'white',
     border: 'none',
     borderRadius: '6px',
@@ -352,7 +352,7 @@ const styles = {
     fontSize: '14px',
     fontWeight: '600',
     cursor: 'pointer',
-    boxShadow: '0 4px 10px rgba(255,152,0,0.15)',
+    boxShadow: '0 4px 10px rgba(37, 99, 235,0.15)',
   },
   formCard: {
     backgroundColor: 'white',
@@ -360,7 +360,7 @@ const styles = {
     padding: '24px',
     marginBottom: '24px',
     boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-    border: '1px solid #ff9800',
+    border: '1px solid #2563eb',
   },
   formTitle: {
     fontSize: '16px',

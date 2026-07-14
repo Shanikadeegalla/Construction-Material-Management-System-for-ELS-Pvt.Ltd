@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import AdminDashboard from './pages/AdminDashboard';
 import PMDashboard from './pages/PMDashboard';
 import PurchaseOrderPage from './pages/PurchaseOrderPage';
@@ -11,6 +12,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [registerName, setRegisterName] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
@@ -53,9 +55,20 @@ function App() {
       });
       const data = await res.json();
       if (data.success) {
-        localStorage.setItem('user', JSON.stringify(data.data));
+        const userData = data.data;
+        localStorage.setItem('user', JSON.stringify(userData));
         localStorage.setItem('cmms_last_login', new Date().toISOString());
-        setUser(data.data);
+        
+        // Sync dark mode preference from user settings database
+        const isDark = userData.settings?.system?.darkMode === true;
+        localStorage.setItem('cmms_dark_mode', isDark);
+        if (isDark) {
+          document.body.classList.add('dark-mode');
+        } else {
+          document.body.classList.remove('dark-mode');
+        }
+        
+        setUser(userData);
         setView('dashboard');
         setLoginEmail(''); setLoginPassword('');
       } else {
@@ -107,7 +120,7 @@ function App() {
           alt="ELS Logo" 
           style={{ width: '80px', height: '80px', objectFit: 'contain', marginBottom: '16px' }} 
         />
-        <h2 style={{ fontSize: '22px', fontWeight: '800', color: '#ff9800', margin: '0 0 6px', textAlign: 'center' }}>ELS Construction (Pvt) Ltd</h2>
+        <h2 style={{ fontSize: '22px', fontWeight: '800', color: '#0d1b4b', margin: '0 0 6px', textAlign: 'center' }}>ELS Construction (Pvt) Ltd</h2>
       </div>
 
       <h3 style={{ ...styles.cardTitle, fontSize: '18px', marginTop: '16px', marginBottom: '8px' }}>Account Sign In</h3>
@@ -122,8 +135,16 @@ function App() {
         </div>
         <div style={styles.formGroup}>
           <label style={styles.label}>Password</label>
-          <input type="password" placeholder="••••••••" value={loginPassword}
-            onChange={(e) => setLoginPassword(e.target.value)} style={styles.input} required />
+          <div style={{ position: 'relative' }}>
+            <input type={showLoginPassword ? 'text' : 'password'} placeholder="••••••••" value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)} style={{ ...styles.input, width: '100%', boxSizing: 'border-box', paddingRight: '44px' }} required />
+            {loginPassword && (
+              <span onClick={() => setShowLoginPassword(!showLoginPassword)}
+                style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: '#64748b', display: 'flex' }}>
+                {showLoginPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </span>
+            )}
+          </div>
         </div>
         <button type="submit" disabled={loading} style={styles.button}>
           {loading ? 'Authenticating...' : 'Sign In'}
@@ -151,7 +172,7 @@ function App() {
         </div>
         <div style={styles.formGroup}>
           <label style={styles.label}>Password</label>
-          <input type="password" placeholder="•••••••• (min 6 chars)" value={registerPassword}
+          <input type="password" placeholder="8+ chars, upper, lower, number, symbol" value={registerPassword}
             onChange={(e) => setRegisterPassword(e.target.value)} style={styles.input} required />
         </div>
         <div style={styles.formGroup}>
@@ -160,7 +181,7 @@ function App() {
             <option value="Admin">Admin</option>
             <option value="Director">Director</option>
             <option value="ProjectManager">Project Manager</option>
-            <option value="PurchaseOfficer">Purchase Officer</option>
+            <option value="PurchaseManager">Purchase Manager</option>
             <option value="MainStoreOfficer">Main Store Officer</option>
             <option value="SiteStoreOfficer">Site Store Officer</option>
           </select>
@@ -176,25 +197,31 @@ function App() {
     </div>
   );
 
+  const handleUserUpdate = (updatedUser) => {
+    const mergedUser = { ...user, ...updatedUser };
+    localStorage.setItem('user', JSON.stringify(mergedUser));
+    setUser(mergedUser);
+  };
+
   const renderDashboard = () => {
     if (!user) return null;
     if (user.role === 'Admin') {
-      return <AdminDashboard user={user} onLogout={handleLogout} />;
+      return <AdminDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
     if (user.role === 'Director') {
-      return <DirectorDashboard user={user} onLogout={handleLogout} />;
+      return <DirectorDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
     if (user.role === 'ProjectManager') {
-      return <PMDashboard user={user} onLogout={handleLogout} />;
+      return <PMDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'PurchaseOfficer') {
-      return <PurchaseOrderPage user={user} onLogout={handleLogout} />;
+    if (user.role === 'PurchaseManager') {
+      return <PurchaseOrderPage user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
     if (user.role === 'MainStoreOfficer') {
-      return <MainStoreDashboard user={user} onLogout={handleLogout} />;
+      return <MainStoreDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
     if (user.role === 'SiteStoreOfficer') {
-      return <SiteStoreDashboard user={user} onLogout={handleLogout} />;
+      return <SiteStoreDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
 
     return (
@@ -206,8 +233,26 @@ function App() {
     );
   };
 
+  const getPageContainerStyle = () => {
+    if (!user) {
+      // Sign-in page background restored to original theme
+      return {
+        ...styles.pageContainer,
+        backgroundColor: '#030712',
+        backgroundImage: 'radial-gradient(circle at 50% 0%, #1e1b4b 0%, #030712 60%)'
+      };
+    } else {
+      // Workspace pages are Slate/Blue themed
+      return {
+        ...styles.pageContainer,
+        backgroundColor: '#020617',
+        backgroundImage: 'radial-gradient(circle at 50% 0%, #0f172a 0%, #020617 60%)'
+      };
+    }
+  };
+
   return (
-    <div style={styles.pageContainer}>
+    <div style={getPageContainerStyle()}>
       <style>{globalStyles}</style>
       {!user && (
         <header style={styles.header}>
@@ -242,7 +287,7 @@ const styles = {
   navbar: { background: '#1e1b4b', padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   navTitle: { color: 'white', fontSize: '18px' },
   navLinks: { display: 'flex', alignItems: 'center', gap: '12px' },
-  navBtn: { color: 'white', border: '1px solid #6366f1', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '14px' },
+  navBtn: { color: 'white', border: '1px solid #2563eb', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '14px' },
   navUser: { color: '#9ca3af', fontSize: '14px' },
   content: { padding: '24px' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 40px', borderBottom: '1px solid #1f2937', backgroundColor: 'rgba(3,7,18,0.7)', backdropFilter: 'blur(12px)' },
@@ -250,24 +295,24 @@ const styles = {
   logoIcon: { width: '38px', height: '38px', borderRadius: '10px', background: 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '18px', color: 'white' },
   logoText: { fontSize: '20px', fontWeight: '700', color: 'white' },
   navStatus: { display: 'flex', alignItems: 'center' },
-  guestBadge: { padding: '6px 12px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' },
+  guestBadge: { padding: '6px 12px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', backgroundColor: 'rgba(255,152,0,0.1)', color: '#ff9800', border: '1px solid rgba(255,152,0,0.2)' },
   main: { flex: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' },
-  card: { backgroundColor: 'rgba(17,24,39,0.75)', borderRadius: '24px', padding: '40px', width: '100%', maxWidth: '450px', border: '1px solid #374151', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', backdropFilter: 'blur(16px)' },
-  cardTitle: { fontSize: '24px', fontWeight: '700', marginBottom: '8px', textAlign: 'center', color: '#ffffff' },
-  cardSub: { fontSize: '14px', color: '#9ca3af', marginBottom: '30px', textAlign: 'center' },
+  card: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '40px', width: '100%', maxWidth: '450px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)' },
+  cardTitle: { fontSize: '24px', fontWeight: '700', marginBottom: '8px', textAlign: 'center', color: '#1e293b' },
+  cardSub: { fontSize: '14px', color: '#64748b', marginBottom: '30px', textAlign: 'center' },
   form: { display: 'flex', flexDirection: 'column', gap: '20px' },
   formGroup: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  label: { fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#9ca3af' },
-  input: { backgroundColor: '#030712', border: '1px solid #4b5563', borderRadius: '12px', padding: '12px 16px', fontSize: '14px', color: '#ffffff', outline: 'none' },
-  select: { backgroundColor: '#030712', border: '1px solid #4b5563', borderRadius: '12px', padding: '12px 16px', fontSize: '14px', color: '#ffffff', outline: 'none', cursor: 'pointer' },
-  button: { background: 'linear-gradient(to right, #6366f1, #a855f7)', color: '#ffffff', border: 'none', borderRadius: '12px', padding: '14px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '10px' },
-  authSwitch: { marginTop: '24px', textAlign: 'center', fontSize: '14px', color: '#9ca3af' },
-  switchLink: { color: '#6366f1', fontWeight: '600', cursor: 'pointer', textDecoration: 'underline' },
-  errorAlert: { backgroundColor: 'rgba(239,68,68,0.15)', border: '1px solid #ef4444', color: '#fca5a5', padding: '12px 16px', borderRadius: '12px', fontSize: '13px', marginBottom: '20px', textAlign: 'center' },
-  successAlert: { backgroundColor: 'rgba(16,185,129,0.15)', border: '1px solid #10b981', color: '#a7f3d0', padding: '12px 16px', borderRadius: '12px', fontSize: '13px', marginBottom: '20px', textAlign: 'center' },
+  label: { fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#475569' },
+  input: { backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', padding: '12px 16px', fontSize: '14px', color: '#0f172a', outline: 'none' },
+  select: { backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', padding: '12px 16px', fontSize: '14px', color: '#0f172a', outline: 'none', cursor: 'pointer' },
+  button: { background: 'linear-gradient(to right, #ff9800, #f57c00)', color: '#ffffff', border: 'none', borderRadius: '12px', padding: '14px', fontSize: '15px', fontWeight: '600', cursor: 'pointer', marginTop: '10px' },
+  authSwitch: { marginTop: '24px', textAlign: 'center', fontSize: '14px', color: '#64748b' },
+  switchLink: { color: '#ff9800', fontWeight: '600', cursor: 'pointer', textDecoration: 'underline' },
+  errorAlert: { backgroundColor: '#fee2e2', border: '1px solid #fca5a5', color: '#991b1b', padding: '12px 16px', borderRadius: '12px', fontSize: '13px', marginBottom: '20px', textAlign: 'center' },
+  successAlert: { backgroundColor: '#d1fae5', border: '1px solid #6ee7b7', color: '#065f46', padding: '12px 16px', borderRadius: '12px', fontSize: '13px', marginBottom: '20px', textAlign: 'center' },
   dashboardCard: { backgroundColor: 'rgba(17,24,39,0.75)', borderRadius: '24px', padding: '40px', width: '100%', border: '1px solid #374151', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' },
   dbProfile: { display: 'flex', alignItems: 'center', gap: '16px' },
-  dbAvatar: { width: '56px', height: '56px', borderRadius: '50%', background: 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '24px', color: '#ffffff' },
+  dbAvatar: { width: '56px', height: '56px', borderRadius: '50%', background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '24px', color: '#ffffff' },
   dbName: { fontSize: '22px', fontWeight: '700', color: '#ffffff' },
   dbEmail: { fontSize: '14px', color: '#9ca3af' },
   logoutBtn: { backgroundColor: 'transparent', border: '1px solid #ef4444', color: '#ef4444', padding: '8px 16px', borderRadius: '10px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' },
@@ -275,7 +320,7 @@ const styles = {
   roleTitle: { fontSize: '18px', fontWeight: '600', color: '#ffffff', marginBottom: '12px' },
   roleBadgeContainer: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' },
   roleLabel: { fontSize: '15px', color: '#9ca3af' },
-  roleBadge: { padding: '6px 14px', borderRadius: '8px', fontSize: '14px', fontWeight: '700', backgroundColor: '#ff9800', color: '#ffffff' },
+  roleBadge: { padding: '6px 14px', borderRadius: '8px', fontSize: '14px', fontWeight: '700', backgroundColor: '#2563eb', color: '#ffffff' },
   footer: { textAlign: 'center', padding: '24px', borderTop: '1px solid #1f2937', fontSize: '12px', color: '#4b5563', backgroundColor: 'rgba(3,7,18,0.7)' },
   dashboardLayout: {
     display: 'flex',

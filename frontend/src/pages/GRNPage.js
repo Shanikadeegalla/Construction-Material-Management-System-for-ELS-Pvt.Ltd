@@ -435,7 +435,7 @@ const styles = {
     marginBottom: '10px',
   },
   orangeBtn: {
-    backgroundColor: '#ff9800',
+    backgroundColor: '#2563eb',
     color: 'white',
     border: 'none',
     borderRadius: '6px',
@@ -444,7 +444,7 @@ const styles = {
     fontWeight: '600',
     cursor: 'pointer',
     alignSelf: 'flex-start',
-    boxShadow: '0 4px 10px rgba(255, 152, 0, 0.25)',
+    boxShadow: '0 4px 10px rgba(37, 99, 235, 0.25)',
   },
   historyTitle: {
     fontSize: '20px',

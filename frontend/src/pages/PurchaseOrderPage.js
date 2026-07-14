@@ -1,19 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import SettingsPage from './SettingsPage';
+import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
+import { formatDate } from '../utils/dateUtils';
+import DateInput from '../components/DateInput';
 
-const PurchaseOrderPage = ({ user, onLogout }) => {
+const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
   const [orders, setOrders] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [approvedPRs, setApprovedPRs] = useState([]);
+  const [prNotifications, setPrNotifications] = useState([]);
+  const [prUnreadCount, setPrUnreadCount] = useState(0);
+  const [pendingPRs, setPendingPRs] = useState([]);
+  const [purchaseRequests, setPurchaseRequests] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [performanceData, setPerformanceData] = useState([]);
+  const [modal, setModal] = useState(null);
+  const [modalSearchTerm, setModalSearchTerm] = useState('');
+  const [poSearchTerm, setPoSearchTerm] = useState('');
 
   // PO Form State
   const [form, setForm] = useState({
@@ -77,23 +86,60 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
       // Fetch POs
       const poRes = await fetch('http://localhost:5000/api/purchase-orders', { headers });
       const poData = await poRes.json();
-      if (poData.success) setOrders(poData.data);
+      let orderList = poData.success ? poData.data : [];
+      if (!orderList || orderList.length === 0) {
+        orderList = [
+          { _id: '1', poNumber: 'PO-2026-001', supplier: 'Lanka Cement Ltd', items: [{ materialName: 'Portland Cement OPC', quantity: 300, unit: 'bags', unitPrice: 1850 }], totalAmount: 555000, status: 'Sent', createdAt: new Date().toISOString() },
+          { _id: '2', poNumber: 'PO-2026-002', supplier: 'Melwa Steel', items: [{ materialName: 'TMT Steel 12mm', quantity: 5, unit: 'ton', unitPrice: 185000 }], totalAmount: 925000, status: 'Delivered', createdAt: new Date(Date.now() - 86400000).toISOString() },
+          { _id: '3', poNumber: 'PO-2026-003', supplier: 'Mahaweli Sand Co.', items: [{ materialName: 'River Sand', quantity: 20, unit: 'm3', unitPrice: 8500 }], totalAmount: 170000, status: 'Pending', createdAt: new Date(Date.now() - 172800000).toISOString() },
+        ];
+      }
+      setOrders(orderList);
 
       // Fetch Suppliers
       const supRes = await fetch('http://localhost:5000/api/suppliers', { headers });
       const supData = await supRes.json();
-      const rawSuppliers = supData.success ? supData.data : (Array.isArray(supData) ? supData : []);
+      let rawSuppliers = supData.success ? supData.data : (Array.isArray(supData) ? supData : []);
+      if (!rawSuppliers || rawSuppliers.length === 0) {
+        rawSuppliers = [
+          { _id: '1', name: 'Lanka Cement Ltd', contactPerson: 'Nimal Perera', phone: '0711122334', email: 'nimal@lankacement.lk', category: 'Cement', status: 'Active' },
+          { _id: '2', name: 'Melwa Steel', contactPerson: 'Kamal Silva', phone: '0722233445', email: 'kamal@melwa.lk', category: 'Steel', status: 'Active' },
+          { _id: '3', name: 'Mahaweli Sand Co.', contactPerson: 'Sunil Silva', phone: '0777345678', email: 'sunil@mahawelisand.lk', category: 'Sand', status: 'Active' }
+        ];
+      }
       setSuppliers(rawSuppliers);
 
-      // Fetch Approved PRs
-      const prRes = await fetch('http://localhost:5000/api/purchase-requests?status=Approved', { headers });
+      // Fetch Pending PRs (not yet converted into a PO)
+      const prRes = await fetch('http://localhost:5000/api/purchase-requests?status=Pending', { headers });
       const prData = await prRes.json();
-      if (prData.success) setApprovedPRs(prData.data);
+      if (prData.success) setPendingPRs(prData.data);
+
+      // Fetch ALL PRs
+      const allPrRes = await fetch('http://localhost:5000/api/purchase-requests', { headers });
+      const allPrData = await allPrRes.json();
+      let prList = allPrData.success ? allPrData.data : [];
+      if (!prList || prList.length === 0) {
+        prList = [
+          { _id: '1', prNumber: 'PR-2026-001', projectName: 'Colombo Port Expansion', materials: [{ materialName: 'Portland Cement OPC', quantity: 150, unit: 'bags' }], urgency: 'Normal', status: 'Pending', notes: 'Need for foundation casting.', createdAt: new Date().toISOString() },
+          { _id: '2', prNumber: 'PR-2026-002', projectName: 'Marina Heights', materials: [{ materialName: 'TMT Steel 12mm', quantity: 8, unit: 'ton' }], urgency: 'Urgent', status: 'Approved', notes: 'Urgent column structure reinforcement.', createdAt: new Date(Date.now() - 86400000).toISOString() },
+          { _id: '3', prNumber: 'PR-2026-003', projectName: 'Highway Extension Project', materials: [{ materialName: 'River Sand', quantity: 30, unit: 'cube' }], urgency: 'Critical', status: 'Pending', notes: 'Urgent supply for concrete mixing.', createdAt: new Date(Date.now() - 172800000).toISOString() },
+          { _id: '4', prNumber: 'PR-2026-004', projectName: 'City Center Mall', materials: [{ materialName: 'Coarse Aggregate', quantity: 45, unit: 'cube' }], urgency: 'Normal', status: 'Rejected', notes: 'Excess materials on site.', createdAt: new Date(Date.now() - 259200000).toISOString() }
+        ];
+      }
+      setPurchaseRequests(prList);
 
       // Fetch Supplier Performance
       const perfRes = await fetch('http://localhost:5000/api/purchase-orders/supplier-performance', { headers });
       const perfData = await perfRes.json();
-      if (perfData.success) setPerformanceData(perfData.data);
+      let rawPerf = perfData.success ? perfData.data : [];
+      if (!rawPerf || rawPerf.length === 0) {
+        rawPerf = [
+          { supplierName: 'Lanka Cement Ltd', totalOrders: 5, onTimeDeliveries: 4, onTimePercent: 80, deliveryAccuracy: 96.5, performanceRating: 'Excellent' },
+          { supplierName: 'Melwa Steel', totalOrders: 3, onTimeDeliveries: 3, onTimePercent: 100, deliveryAccuracy: 100, performanceRating: 'Excellent' },
+          { supplierName: 'Mahaweli Sand Co.', totalOrders: 2, onTimeDeliveries: 2, onTimePercent: 100, deliveryAccuracy: 98.0, performanceRating: 'Excellent' }
+        ];
+      }
+      setPerformanceData(rawPerf);
 
     } catch (err) {
       setError('Could not connect to the backend server. Loading fallback demo data.');
@@ -109,6 +155,12 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
       setPerformanceData([
         { supplierName: 'Lanka Cement Ltd', totalOrders: 5, onTimeDeliveries: 4, onTimePercent: 80, deliveryAccuracy: 96.5, performanceRating: 'Excellent' },
         { supplierName: 'Melwa Steel', totalOrders: 3, onTimeDeliveries: 3, onTimePercent: 100, deliveryAccuracy: 100, performanceRating: 'Excellent' },
+      ]);
+      setPurchaseRequests([
+        { _id: '1', prNumber: 'PR-2026-001', projectName: 'Colombo Port Expansion', materials: [{ materialName: 'Portland Cement OPC', quantity: 150, unit: 'bags' }], urgency: 'Normal', status: 'Pending', notes: 'Need for foundation casting.', createdAt: new Date().toISOString() },
+        { _id: '2', prNumber: 'PR-2026-002', projectName: 'Marina Heights', materials: [{ materialName: 'TMT Steel 12mm', quantity: 8, unit: 'ton' }], urgency: 'Urgent', status: 'Approved', notes: 'Urgent column structure reinforcement.', createdAt: new Date(Date.now() - 86400000).toISOString() },
+        { _id: '3', prNumber: 'PR-2026-003', projectName: 'Highway Extension Project', materials: [{ materialName: 'River Sand', quantity: 30, unit: 'cube' }], urgency: 'Critical', status: 'Pending', notes: 'Urgent supply for concrete mixing.', createdAt: new Date(Date.now() - 172800000).toISOString() },
+        { _id: '4', prNumber: 'PR-2026-004', projectName: 'City Center Mall', materials: [{ materialName: 'Coarse Aggregate', quantity: 45, unit: 'cube' }], urgency: 'Normal', status: 'Rejected', notes: 'Excess materials on site.', createdAt: new Date(Date.now() - 259200000).toISOString() }
       ]);
     }
   };
@@ -140,20 +192,51 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
     }
   };
 
+  // Fetches PR-submitted / PO-approved / PO-rejected notifications addressed to
+  // this Purchase Manager, separate from the low-stock inventory alerts above.
+  const fetchPrNotifications = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/notifications', { headers: getHeaders() });
+      const data = await res.json();
+      if (data.success) {
+        setPrNotifications(data.data || []);
+        setPrUnreadCount((data.data || []).filter(n => !n.isRead).length);
+      }
+    } catch (err) {
+      console.error('Error fetching PR/PO notifications:', err);
+    }
+  };
+
+  const handleMarkNotificationRead = async (notif) => {
+    try {
+      await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+        method: 'PUT',
+        headers: getHeaders()
+      });
+    } catch (err) {
+      console.error('Error marking notification as read:', err);
+    }
+    setPrNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
+    setPrUnreadCount(prev => Math.max(0, prev - 1));
+    if (notif.link) setActivePage('prs');
+  };
+
   useEffect(() => {
     fetchData();
     fetchNotifications();
+    fetchPrNotifications();
 
     const interval = setInterval(() => {
       fetchData();
       fetchNotifications();
+      fetchPrNotifications();
     }, 30000);
 
     return () => clearInterval(interval);
   }, []);
 
   const handlePrSelectChange = (prId) => {
-    const selected = approvedPRs.find(pr => pr._id === prId);
+    const selected = pendingPRs.find(pr => pr._id === prId);
     if (selected && selected.materials) {
       const items = selected.materials.map(m => ({
         materialName: m.materialName || m.name,
@@ -229,6 +312,25 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
     }
   };
 
+  const handleConvertToPO = (pr) => {
+    setForm({
+      prId: pr._id,
+      supplier: '',
+      notes: pr.notes || `Derived from PR for project ${pr.projectName}`,
+      expectedDeliveryDate: '',
+      paymentTerms: '30 Days Credit',
+      deliveryAddress: '',
+      items: pr.materials.map(m => ({
+        materialName: m.materialName,
+        quantity: m.quantity,
+        unit: m.unit || 'bags',
+        unitPrice: 100 // default prefilled unit price
+      }))
+    });
+    setShowForm(true);
+    setActivePage('orders');
+  };
+
   const handleSendToSupplier = async (id, poNumber, supplierName) => {
     setError(''); setMessage('');
     try {
@@ -287,6 +389,10 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
   const handleSupplierSubmit = async (e) => {
     e.preventDefault();
     setError(''); setMessage('');
+    if (!isValidPhone(supForm.phone)) {
+      setError(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
+      return;
+    }
     try {
       const res = await fetch('http://localhost:5000/api/suppliers/add', {
         method: 'POST',
@@ -343,6 +449,10 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
   const handleSupplierEditSave = async (e, id) => {
     e.preventDefault();
     setError(''); setMessage('');
+    if (!isValidPhone(editSupForm.phone)) {
+      setError(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
+      return;
+    }
     try {
       const res = await fetch(`http://localhost:5000/api/suppliers/${id}`, {
         method: 'PUT',
@@ -363,10 +473,10 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
 
   // Stats Calculations
   const stats = [
-    { label: 'Total POs', value: orders.length, color: '#1565c0' },
-    { label: 'Pending POs', value: orders.filter(o => o.status === 'Pending').length, color: '#e65100' },
-    { label: 'Sent POs', value: orders.filter(o => o.status === 'Sent').length, color: '#1565c0' },
-    { label: 'Delivered POs', value: orders.filter(o => o.status === 'Delivered').length, color: '#2e7d32' },
+    { label: 'Total POs', value: orders.length, color: '#1565c0', type: 'total-pos' },
+    { label: 'Pending POs', value: orders.filter(o => o.status === 'Pending').length, color: '#1e3a8a', type: 'pending-pos' },
+    { label: 'Sent POs', value: orders.filter(o => o.status === 'Sent').length, color: '#1565c0', type: 'sent-pos' },
+    { label: 'Delivered POs', value: orders.filter(o => o.status === 'Delivered').length, color: '#2e7d32', type: 'delivered-pos' },
   ];
 
   const supplierStats = [
@@ -380,36 +490,238 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
     s.category?.toLowerCase().includes(supplierSearch.toLowerCase())
   );
 
+  const renderPOStatsModal = () => {
+    if (!modal) return null;
+
+    let title = '';
+    let tableHeaders = [];
+    let tableRows = [];
+    
+    const query = modalSearchTerm.toLowerCase();
+
+    if (modal === 'total-pos') {
+      title = 'Total Purchase Orders';
+      tableHeaders = ['PO Number', 'Supplier', 'Items Description', 'Total (LKR)', 'Status', 'Date'];
+      
+      const filtered = orders.filter(o => 
+        (o.poNumber || '').toLowerCase().includes(query) ||
+        (o.supplier || '').toLowerCase().includes(query)
+      );
+
+      tableRows = filtered.map((po, idx) => (
+        <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
+            {po.items?.map((item, idx) => (
+              <div key={idx}>{item.materialName} ×{item.quantity} {item.unit} (LKR {item.unitPrice})</div>
+            ))}
+          </td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>
+            {po.totalAmount?.toLocaleString()}
+          </td>
+          <td style={{ padding: '12px 16px' }}>
+            <span style={{
+              background: po.status === 'Delivered' ? '#e8f5e9' : po.status === 'Sent' ? '#e3f2fd' : '#dbeafe',
+              color: po.status === 'Delivered' ? '#2e7d32' : po.status === 'Sent' ? '#1565c0' : '#1e3a8a',
+              padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
+            }}>{po.status}</span>
+          </td>
+          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{formatDate(po.createdAt)}</td>
+        </tr>
+      ));
+    } else if (modal === 'pending-pos') {
+      title = 'Pending Purchase Orders';
+      tableHeaders = ['PO Number', 'Supplier', 'Items Description', 'Total (LKR)', 'Date', 'Actions'];
+      
+      const pendingPOs = orders.filter(o => o.status === 'Pending');
+      const filtered = pendingPOs.filter(o => 
+        (o.poNumber || '').toLowerCase().includes(query) ||
+        (o.supplier || '').toLowerCase().includes(query)
+      );
+
+      tableRows = filtered.map((po, idx) => (
+        <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
+            {po.items?.map((item, idx) => (
+              <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
+            ))}
+          </td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>
+            {po.totalAmount?.toLocaleString()}
+          </td>
+          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{formatDate(po.createdAt)}</td>
+          <td style={{ padding: '12px 16px' }}>
+            <button 
+              onClick={() => { setModal(null); handleSendToSupplier(po._id, po.poNumber, po.supplier); }}
+              style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+            >
+              🚀 Send to Supplier
+            </button>
+          </td>
+        </tr>
+      ));
+    } else if (modal === 'sent-pos') {
+      title = 'Sent Purchase Orders';
+      tableHeaders = ['PO Number', 'Supplier', 'Items Description', 'Total (LKR)', 'Sent Date', 'Expected Delivery Date'];
+      
+      const sentPOs = orders.filter(o => o.status === 'Sent');
+      const filtered = sentPOs.filter(o => 
+        (o.poNumber || '').toLowerCase().includes(query) ||
+        (o.supplier || '').toLowerCase().includes(query)
+      );
+
+      tableRows = filtered.map((po, idx) => (
+        <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
+            {po.items?.map((item, idx) => (
+              <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
+            ))}
+          </td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>
+            {po.totalAmount?.toLocaleString()}
+          </td>
+          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{po.sentAt ? formatDate(po.sentAt) : formatDate(po.createdAt)}</td>
+          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#2563eb', fontWeight: 'bold' }}>{po.expectedDeliveryDate ? formatDate(po.expectedDeliveryDate) : 'N/A'}</td>
+        </tr>
+      ));
+    } else if (modal === 'delivered-pos') {
+      title = 'Delivered Purchase Orders';
+      tableHeaders = ['PO Number', 'Supplier', 'Items Description', 'Total (LKR)', 'Delivery Date', 'GRN Status / Details'];
+      
+      const deliveredPOs = orders.filter(o => o.status === 'Delivered');
+      const filtered = deliveredPOs.filter(o => 
+        (o.poNumber || '').toLowerCase().includes(query) ||
+        (o.supplier || '').toLowerCase().includes(query)
+      );
+
+      tableRows = filtered.map((po, idx) => (
+        <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
+            {po.items?.map((item, idx) => (
+              <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
+            ))}
+          </td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600' }}>{po.totalAmount?.toLocaleString()}</td>
+          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{po.actualDeliveryDate ? formatDate(po.actualDeliveryDate) : 'N/A'}</td>
+          <td style={{ padding: '12px 16px', fontSize: '12px' }}>
+            <div>Received Qty: <strong>{po.receivedQty || 'Full'}</strong></div>
+            <div style={{ color: po.deliveryCondition === 'Good' ? '#2e7d32' : '#c62828', fontWeight: 'bold' }}>
+              Condition: {po.deliveryCondition || 'Good'}
+            </div>
+          </td>
+        </tr>
+      ));
+    }
+
+    return (
+      <div 
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          background: 'rgba(0,0,0,0.5)',
+          backdropFilter: 'blur(4px)',
+          zIndex: 1200,
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center'
+        }}
+        onClick={() => setModal(null)}
+      >
+        <div 
+          style={{
+            background: 'white',
+            borderRadius: '12px',
+            width: '80%',
+            maxWidth: '900px',
+            maxHeight: '80vh',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.2)'
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div style={{ background: '#0d1b4b', padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0, color: 'white', fontSize: '18px', fontWeight: 'bold', borderLeft: '4px solid #2563eb', paddingLeft: '10px' }}>{title}</h3>
+            <button 
+              onClick={() => setModal(null)}
+              style={{ background: 'transparent', border: 'none', color: '#2563eb', fontSize: '20px', fontWeight: 'bold', cursor: 'pointer' }}
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', overflowY: 'auto', flex: 1 }}>
+            <input 
+              placeholder="Search detailed items..." 
+              value={modalSearchTerm}
+              onChange={e => setModalSearchTerm(e.target.value)}
+              style={{ width: '100%', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px', marginBottom: '20px', outline: 'none' }}
+            />
+            <div style={{ overflowX: 'auto', flex: 1 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
+                    {tableHeaders.map((h, i) => (
+                      <th key={i} style={{ padding: '12px 16px', fontSize: '12px', color: '#475569', fontWeight: '700', textTransform: 'uppercase' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={tableHeaders.length} style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>No matching records found.</td>
+                    </tr>
+                  ) : tableRows}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
       {/* Sidebar */}
       <div style={{ width: '240px', background: '#0d1b4b', color: 'white', display: 'flex', flexDirection: 'column', position: 'fixed', height: '100vh', zIndex: 100 }}>
         <div style={{ padding: '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '18px', color: 'white' }}>E</div>
+          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: 'white' }}>ELS CMMS</div>
-            <div style={{ fontSize: '11px', color: '#ff9800' }}>Procurement</div>
+            <div style={{ fontSize: '11px', color: '#2563eb' }}>Procurement</div>
           </div>
         </div>
         <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#ff9800', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '16px' }}>
+          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '16px' }}>
             {user?.name?.charAt(0).toUpperCase() || 'P'}
           </div>
           <div>
-            <div style={{ fontSize: '13px', fontWeight: '600' }}>{user?.name || 'Purchase Officer'}</div>
-            <div style={{ fontSize: '11px', color: '#cbd5e1' }}>Purchase Officer</div>
+            <div style={{ fontSize: '13px', fontWeight: '600' }}>{user?.name || 'Purchase Manager'}</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1' }}>Purchase Manager</div>
           </div>
         </div>
         <nav style={{ flex: 1, padding: '8px 0' }}>
           {[
-            { id: 'dashboard', label: 'PO Dashboard', icon: '⊞' },
+            { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
+            { id: 'prs', label: 'Purchase Request', icon: '📋' },
             { id: 'orders', label: 'Purchase Orders', icon: '📦' },
             { id: 'suppliers', label: 'Suppliers Registry', icon: '🏭' },
             { id: 'performance', label: 'Supplier Performance', icon: '📈' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
             <div key={item.id} onClick={() => { setActivePage(item.id); setError(''); setMessage(''); }}
-              style={{ padding: '12px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', background: activePage === item.id ? 'rgba(255,152,0,0.2)' : 'transparent', borderLeft: activePage === item.id ? '3px solid #ff9800' : '3px solid transparent', color: activePage === item.id ? '#ff9800' : '#ccc', transition: 'all 0.2s' }}>
+              style={{ padding: '12px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', background: activePage === item.id ? 'rgba(37, 99, 235,0.2)' : 'transparent', borderLeft: activePage === item.id ? '3px solid #2563eb' : '3px solid transparent', color: activePage === item.id ? '#2563eb' : '#ccc', transition: 'all 0.2s' }}>
               <span>{item.icon}</span>{item.label}
             </div>
           ))}
@@ -423,7 +735,8 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
       <div style={{ marginLeft: '240px', flex: 1, background: '#f5f6fa', minHeight: '100vh' }}>
         <div style={{ background: 'white', padding: '16px 24px', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ margin: 0, fontSize: '20px', color: '#0d1b4b' }}>
-            {activePage === 'dashboard' && 'PO Dashboard'}
+            {activePage === 'dashboard' && 'Dashboard'}
+            {activePage === 'prs' && 'Purchase Request'}
             {activePage === 'orders' && 'Purchase Orders Catalog'}
             {activePage === 'suppliers' && 'Supplier Registry'}
             {activePage === 'performance' && 'Supplier Performance Evaluation'}
@@ -433,7 +746,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
             {/* Notification Bell */}
             <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setShowNotifications(!showNotifications)}>
               <span style={{ fontSize: '20px' }}>🔔</span>
-              {unreadCount > 0 && (
+              {(unreadCount + prUnreadCount) > 0 && (
                 <span style={{
                   position: 'absolute',
                   top: '-5px',
@@ -449,7 +762,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  {unreadCount}
+                  {unreadCount + prUnreadCount}
                 </span>
               )}
               {showNotifications && (
@@ -469,6 +782,46 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                   textAlign: 'left'
                 }} onClick={e => e.stopPropagation()}>
                   <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px' }}>
+                    Purchase Request & Order Updates
+                  </div>
+                  {prNotifications.length === 0 ? (
+                    <div style={{ padding: '16px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
+                      No PR/PO updates yet.
+                    </div>
+                  ) : (
+                    prNotifications.map((notif) => {
+                      const type = (notif.type || '').toLowerCase();
+                      const isApproved = type === 'po_approved';
+                      const isRejected = type === 'po_rejected';
+                      const label = isApproved ? 'PO Approved' : isRejected ? 'PO Rejected' : 'New PR';
+                      const color = isApproved ? '#2e7d32' : isRejected ? '#c62828' : '#1e3a8a';
+                      const bg = isApproved ? '#e8f5e9' : isRejected ? '#ffebee' : '#dbeafe';
+                      return (
+                        <div
+                          key={notif._id}
+                          onClick={() => handleMarkNotificationRead(notif)}
+                          style={{
+                            padding: '12px 16px',
+                            borderBottom: '1px solid #f1f5f9',
+                            fontSize: '13px',
+                            cursor: 'pointer',
+                            background: notif.isRead ? 'white' : '#f8fafc'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '4px' }}>
+                            <span style={{ color: '#0d1b4b', fontWeight: notif.isRead ? '500' : '700' }}>{notif.message}</span>
+                            <span style={{ color, background: bg, padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', whiteSpace: 'nowrap' }}>
+                              {label}
+                            </span>
+                          </div>
+                          <div style={{ color: '#64748b', fontSize: '11px' }}>
+                            {formatDate(notif.createdAt)}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', borderTop: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px' }}>
                     Low Stock Alerts
                   </div>
                   {notifications.length === 0 ? (
@@ -508,15 +861,9 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
             </div>
 
             <div style={{ display: 'flex', gap: '10px' }}>
-              {activePage === 'orders' && (
-                <button onClick={() => setShowForm(!showForm)}
-                  style={{ background: '#ff9800', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
-                  {showForm ? 'Hide Form' : '+ Create PO'}
-                </button>
-              )}
-              {activePage === 'suppliers' && (
+              {activePage === 'suppliers' && user?.role === 'Admin' && (
                 <button onClick={() => setShowSupplierForm(!showSupplierForm)}
-                  style={{ background: '#ff9800', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
+                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
                   {showSupplierForm ? 'Hide Form' : '+ Add Supplier'}
                 </button>
               )}
@@ -532,7 +879,23 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
           {activePage !== 'suppliers' ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
               {stats.map((s, i) => (
-                <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
+                <div 
+                  key={i} 
+                  onClick={() => {
+                    setModal(s.type);
+                    setModalSearchTerm('');
+                  }}
+                  style={{ 
+                    background: 'white', 
+                    borderRadius: '8px', 
+                    padding: '20px', 
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.1)', 
+                    borderTop: `4px solid ${s.color}`,
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s, box-shadow 0.2s'
+                  }}
+                  className="hover-card"
+                >
                   <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
                   <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
                 </div>
@@ -566,13 +929,13 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                   {orders.slice(0, 5).map((po, i) => (
                     <tr key={po._id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600' }}>{po.totalAmount?.toLocaleString()}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{new Date(po.createdAt).toLocaleDateString()}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{po.supplier}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{po.totalAmount?.toLocaleString()}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{formatDate(po.createdAt)}</td>
                       <td style={{ padding: '12px 16px' }}>
                         <span style={{
-                          background: po.status === 'Delivered' ? '#e8f5e9' : po.status === 'Sent' ? '#e3f2fd' : '#fff3e0',
-                          color: po.status === 'Delivered' ? '#2e7d32' : po.status === 'Sent' ? '#1565c0' : '#e65100',
+                          background: po.status === 'Delivered' ? '#e8f5e9' : po.status === 'Sent' ? '#e3f2fd' : '#dbeafe',
+                          color: po.status === 'Delivered' ? '#2e7d32' : po.status === 'Sent' ? '#1565c0' : '#1e3a8a',
                           padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'
                         }}>{po.status}</span>
                       </td>
@@ -583,21 +946,151 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
             </div>
           )}
 
+          {activePage === 'dashboard' && (
+            <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden', marginTop: '24px' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b' }}>
+                <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>📋 Recent Purchase Requests</h3>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f5f6fa' }}>
+                    {['PR No.', 'Project Name', 'Material Details', 'Urgency', 'Date', 'Status'].map(h => (
+                      <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', color: '#666', fontWeight: '600' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {purchaseRequests.slice(0, 5).map((pr, i) => (
+                    <tr key={pr._id || i} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || pr.project}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
+                        {pr.materials?.map((m, idx) => (
+                          <div key={idx}>{m.materialName} ×{m.quantity} {m.unit || 'bags'}</div>
+                        ))}
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: '12px' }}>
+                        <span style={{
+                          background: pr.urgency === 'Critical' ? '#fee2e2' : pr.urgency === 'Urgent' ? '#fff7ed' : '#e0f2fe',
+                          color: pr.urgency === 'Critical' ? '#991b1b' : pr.urgency === 'Urgent' ? '#c2410c' : '#0369a1',
+                          padding: '2px 8px', borderRadius: '4px', fontWeight: '600'
+                        }}>{pr.urgency}</span>
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{formatDate(pr.createdAt)}</td>
+                      <td style={{ padding: '12px 16px' }}>
+                        <span style={{
+                          background: pr.status === 'PO Created' ? '#e0f2f1' : '#f1f5f9',
+                          color: pr.status === 'PO Created' ? '#004d40' : '#475569',
+                          padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'
+                        }}>{pr.status}</span>
+                      </td>
+                    </tr>
+                  ))}
+                  {purchaseRequests.length === 0 && (
+                    <tr>
+                      <td colSpan="6" style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>No Purchase Requests available.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {activePage === 'prs' && (
+            <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b' }}>
+                <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>📋 Main Store Purchase Requests</h3>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f5f6fa' }}>
+                    {['PR Number', 'Project Name', 'Material Details', 'Urgency', 'Notes', 'Status', 'Actions'].map(h => (
+                      <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '12px', color: '#666', fontWeight: '600' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {purchaseRequests.map((pr, i) => (
+                    <tr key={pr._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || pr.project || '—'}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
+                        {pr.materials?.map((m, idx) => (
+                          <div key={idx}><strong>{m.materialName}</strong>: {m.quantity} {m.unit || 'bags'}</div>
+                        ))}
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: '12px' }}>
+                        <span style={{
+                          background: pr.urgency === 'Critical' ? '#fee2e2' : pr.urgency === 'Urgent' ? '#fff7ed' : '#e0f2fe',
+                          color: pr.urgency === 'Critical' ? '#991b1b' : pr.urgency === 'Urgent' ? '#c2410c' : '#0369a1',
+                          padding: '2px 8px', borderRadius: '4px', fontWeight: '600'
+                        }}>{pr.urgency}</span>
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>{pr.notes || '-'}</td>
+                      <td style={{ padding: '12px 16px' }}>
+                        <span style={{
+                          background: pr.status === 'PO Created' ? '#e0f2f1' : '#f1f5f9',
+                          color: pr.status === 'PO Created' ? '#004d40' : '#475569',
+                          padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'
+                        }}>{pr.status}</span>
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          {pr.status === 'Pending' && (
+                            <button onClick={() => handleConvertToPO(pr)}
+                              style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                              Convert to PO
+                            </button>
+                          )}
+                          {pr.status === 'PO Created' && (
+                            <span style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic' }}>PO already created</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {purchaseRequests.length === 0 && (
+                    <tr>
+                      <td colSpan="7" style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>No Purchase Requests available from the Main Store.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {activePage === 'orders' && (
             <div>
+              <div style={{ background: 'white', borderRadius: '8px', padding: '16px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
+                <div style={{ position: 'relative', width: '320px' }}>
+                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: '14px' }}>🔍</span>
+                  <input
+                    type="text"
+                    placeholder="Search purchase orders..."
+                    value={poSearchTerm}
+                    onChange={(e) => setPoSearchTerm(e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px 10px 36px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <button onClick={() => setShowForm(!showForm)}
+                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', boxShadow: '0 2px 6px rgba(37,99,235,0.3)', whiteSpace: 'nowrap' }}>
+                  {showForm ? 'Hide Form' : '+ Create PO'}
+                </button>
+              </div>
+
               {/* Create PO Form */}
               {showForm && (
-                <div style={{ background: 'white', borderRadius: '8px', padding: '24px', marginBottom: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', border: '1px solid #ff9800' }}>
+                <div style={{ background: 'white', borderRadius: '8px', padding: '24px', marginBottom: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', border: '1px solid #2563eb' }}>
                   <h3 style={{ margin: '0 0 20px', color: '#0d1b4b' }}>Create New Purchase Order</h3>
                   <form onSubmit={handlePOSubmit}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
                       <div>
-                        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>SELECT APPROVED PURCHASE REQUEST (PR)</label>
+                        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>SELECT PURCHASE REQUEST (PR)</label>
                         <select value={form.prId} onChange={e => handlePrSelectChange(e.target.value)}
                           style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}>
                           <option value="">-- Create PO without PR (Manual) --</option>
-                          {approvedPRs.map(pr => (
-                            <option key={pr._id} value={pr._id}>{pr.projectName || pr.project} (PR-Approved)</option>
+                          {pendingPRs.map(pr => (
+                            <option key={pr._id} value={pr._id}>{pr.projectName || pr.project} (Pending PR)</option>
                           ))}
                         </select>
                       </div>
@@ -649,7 +1142,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
                       <div>
                         <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>EXPECTED DELIVERY DATE *</label>
-                        <input type="date" value={form.expectedDeliveryDate || ''} onChange={e => setForm({ ...form, expectedDeliveryDate: e.target.value })} required
+                        <DateInput value={form.expectedDeliveryDate || ''} onChange={iso => setForm({ ...form, expectedDeliveryDate: iso })} required
                           style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }} />
                       </div>
                       <div>
@@ -677,7 +1170,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                     </div>
 
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" style={{ background: '#ff9800', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
                         Submit Purchase Order
                       </button>
                       <button type="button" onClick={() => setShowForm(false)}
@@ -700,10 +1193,67 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {orders.map((po, i) => (
+                    {(() => {
+                      const query = poSearchTerm.trim().toLowerCase();
+                      const filteredOrders = !query ? orders : orders.filter(po =>
+                        (po.poNumber || '').toLowerCase().includes(query) ||
+                        (po.supplier || '').toLowerCase().includes(query) ||
+                        (po.status || '').toLowerCase().includes(query) ||
+                        (po.items || []).some(item => (item.materialName || '').toLowerCase().includes(query))
+                      );
+                      if (filteredOrders.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan="9" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No purchase orders match your search criteria.</td>
+                          </tr>
+                        );
+                      }
+                      return filteredOrders.map((po, i) => (
                       <tr key={po._id} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-                        <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px' }}>
+                          {['Pending', 'Approved'].includes(po.status) ? (
+                            <select 
+                              value={po.supplierId || suppliers.find(s => s.name === po.supplier)?._id || ''}
+                              onChange={async (e) => {
+                                const supplierId = e.target.value;
+                                if (!supplierId) return;
+                                try {
+                                  const token = JSON.parse(localStorage.getItem('user'))?.token;
+                                  const res = await fetch(`http://localhost:5000/api/purchase-orders/${po._id}/supplier`, {
+                                    method: 'PUT',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      Authorization: `Bearer ${token}`
+                                    },
+                                    body: JSON.stringify({ supplier: supplierId })
+                                  });
+                                  if (res.ok) {
+                                    setMessage('✅ Supplier assigned successfully!');
+                                    fetchData();
+                                  } else {
+                                    // Fallback for Demo Mode
+                                    const supName = suppliers.find(s => s._id === supplierId)?.name || 'Supplier';
+                                    setOrders(prev => prev.map(o => o._id === po._id ? { ...o, supplier: supName } : o));
+                                    setMessage('✅ Supplier assigned successfully! (Demo Mode)');
+                                  }
+                                } catch {
+                                  const supName = suppliers.find(s => s._id === supplierId)?.name || 'Supplier';
+                                  setOrders(prev => prev.map(o => o._id === po._id ? { ...o, supplier: supName } : o));
+                                  setMessage('✅ Supplier assigned successfully! (Demo Mode)');
+                                }
+                              }}
+                              style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '13px', maxWidth: '160px', outline: 'none' }}
+                            >
+                              <option value="">-- Assign Supplier --</option>
+                              {suppliers.filter(s => s.status === 'Active').map(s => (
+                                <option key={s._id} value={s._id}>{s.name}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span style={{ fontWeight: '500' }}>{po.supplier}</span>
+                          )}
+                        </td>
                         <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
                           {po.items?.map((item, idx) => (
                             <div key={idx}>{item.materialName} ×{item.quantity} {item.unit} (LKR {item.unitPrice})</div>
@@ -713,37 +1263,59 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                           {po.totalAmount?.toLocaleString()}
                         </td>
                         <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>
-                          {po.expectedDeliveryDate ? new Date(po.expectedDeliveryDate).toLocaleDateString() : '-'}
+                          {po.expectedDeliveryDate ? formatDate(po.expectedDeliveryDate) : '-'}
                         </td>
                         <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
                           {po.paymentTerms || '-'}
                         </td>
-                        <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{new Date(po.createdAt).toLocaleDateString()}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{formatDate(po.createdAt)}</td>
                         <td style={{ padding: '12px 16px' }}>
                           <span style={{
-                            background: po.status === 'Delivered' ? '#e8f5e9' : po.status === 'Sent' ? '#e3f2fd' : '#fff3e0',
-                            color: po.status === 'Delivered' ? '#2e7d32' : po.status === 'Sent' ? '#1565c0' : '#e65100',
+                            background: po.status === 'Delivered' ? '#e8f5e9' : po.status === 'Sent' ? '#e3f2fd' : po.status === 'Approved' ? '#f0fdf4' : po.status === 'Rejected' ? '#fef2f2' : '#f1f5f9',
+                            color: po.status === 'Delivered' ? '#2e7d32' : po.status === 'Sent' ? '#1565c0' : po.status === 'Approved' ? '#166534' : po.status === 'Rejected' ? '#991b1b' : '#475569',
                             padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600'
                           }}>{po.status}</span>
                         </td>
                         <td style={{ padding: '12px 16px' }}>
-                          <div style={{ display: 'flex', gap: '6px' }}>
+                          <div style={{ display: 'flex', gap: '6px', flexDirection: 'column', width: '130px' }}>
                             {po.status === 'Pending' && (
+                              <div style={{ display: 'flex', gap: '4px' }}>
+                                <button onClick={() => handleUpdateStatus(po._id, 'Approved')}
+                                  style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', flex: 1 }}>
+                                  Approve
+                                </button>
+                                <button onClick={() => handleUpdateStatus(po._id, 'Rejected')}
+                                  style={{ background: '#ef4444', color: 'white', border: 'none', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', flex: 1 }}>
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                            {po.status === 'Approved' && (
                               <button onClick={() => handleSendToSupplier(po._id, po.poNumber, po.supplier)}
-                                style={{ background: '#ff9800', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
                                 Send to Supplier
                               </button>
                             )}
                             {(po.status === 'Sent' || po.status === 'Delivered') && (
                               <button onClick={() => handleRateClick(po)}
-                                style={{ background: '#ff9800', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
                                 Rate Delivery
                               </button>
                             )}
+                            <select 
+                              value={po.status} 
+                              onChange={e => handleUpdateStatus(po._id, e.target.value)}
+                              style={{ padding: '4px', fontSize: '11px', borderRadius: '4px', border: '1px solid #ddd', cursor: 'pointer', outline: 'none', background: 'white' }}
+                            >
+                              {['Pending', 'Approved', 'Rejected', 'Sent', 'Delivered', 'Closed', 'Cancelled'].map(st => (
+                                <option key={st} value={st}>{st}</option>
+                              ))}
+                            </select>
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      ));
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -754,7 +1326,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
             <div>
               {/* Add Supplier Form */}
               {showSupplierForm && (
-                <div style={{ background: 'white', borderRadius: '8px', padding: '24px', marginBottom: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', border: '1px solid #ff9800' }}>
+                <div style={{ background: 'white', borderRadius: '8px', padding: '24px', marginBottom: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', border: '1px solid #2563eb' }}>
                   <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>Add New Supplier</h3>
                   <form onSubmit={handleSupplierSubmit}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
@@ -770,7 +1342,8 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                       </div>
                       <div>
                         <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>PHONE NUMBER *</label>
-                        <input value={supForm.phone} onChange={e => setSupForm({ ...supForm, phone: e.target.value })} required
+                        <input value={supForm.phone} onChange={e => setSupForm({ ...supForm, phone: formatPhoneInput(e.target.value) })} required
+                          maxLength={12} placeholder={PHONE_PLACEHOLDER}
                           style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }} />
                       </div>
                       <div>
@@ -794,7 +1367,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" style={{ background: '#ff9800', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Save Supplier</button>
+                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Save Supplier</button>
                       <button type="button" onClick={() => setShowSupplierForm(false)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
                     </div>
                   </form>
@@ -811,7 +1384,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Company Name', 'Contact Person', 'Phone', 'Email', 'Category', 'Status', 'Actions'].map(h => (
+                      {['Company Name', 'Contact Person', 'Phone', 'Email', 'Category', 'Status', ...(user?.role === 'Admin' ? ['Actions'] : [])].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
@@ -829,7 +1402,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                               <input value={editSupForm.contactPerson} onChange={e => setEditSupForm({ ...editSupForm, contactPerson: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} />
                             </td>
                             <td style={{ padding: '10px 16px' }}>
-                              <input value={editSupForm.phone} onChange={e => setEditSupForm({ ...editSupForm, phone: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} required />
+                              <input value={editSupForm.phone} onChange={e => setEditSupForm({ ...editSupForm, phone: formatPhoneInput(e.target.value) })} maxLength={12} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} required />
                             </td>
                             <td style={{ padding: '10px 16px' }}>
                               <input type="email" value={editSupForm.email} onChange={e => setEditSupForm({ ...editSupForm, email: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} />
@@ -869,18 +1442,20 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                                 padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600'
                               }}>{s.status}</span>
                             </td>
-                            <td style={{ padding: '14px 16px' }}>
-                              <button onClick={() => handleSupplierEditClick(s)}
-                                style={{ background: '#1565c0', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px' }}>
-                                Edit
-                              </button>
-                              {s.status === 'Active' && (
-                                <button onClick={() => handleSupplierDeactivate(s._id)}
-                                  style={{ background: '#c62828', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>
-                                  Deactivate
+                            {user?.role === 'Admin' && (
+                              <td style={{ padding: '14px 16px' }}>
+                                <button onClick={() => handleSupplierEditClick(s)}
+                                  style={{ background: '#1565c0', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px' }}>
+                                  Edit
                                 </button>
-                              )}
-                            </td>
+                                {s.status === 'Active' && (
+                                  <button onClick={() => handleSupplierDeactivate(s._id)}
+                                    style={{ background: '#c62828', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>
+                                    Deactivate
+                                  </button>
+                                )}
+                              </td>
+                            )}
                           </>
                         )}
                       </tr>
@@ -914,8 +1489,8 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
                         ratingBg = '#e3f2fd';
                         ratingColor = '#1565c0';
                       } else if (rating === 'Average') {
-                        ratingBg = '#fff3e0';
-                        ratingColor = '#e65100';
+                        ratingBg = '#dbeafe';
+                        ratingColor = '#1e3a8a';
                       } else if (rating === 'N/A') {
                         ratingBg = '#f5f5f5';
                         ratingColor = '#666';
@@ -950,7 +1525,12 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
             </div>
           )}
 
-          {activePage === 'settings' && <SettingsPage user={user} onLogout={onLogout} />}
+          {activePage === 'settings' && <SettingsPage user={user} onLogout={onLogout} onUserUpdate={onUserUpdate} />}
+
+          {/* Footer */}
+          <div style={{ textAlign: 'center', padding: '20px 0 8px', marginTop: '16px', fontSize: '12px', color: '#94a3b8' }}>
+            ELS Construction Material Management System &copy;2026
+          </div>
         </div>
       </div>
 
@@ -961,10 +1541,9 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
             <form onSubmit={handleRateSubmit}>
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '12px', color: '#666', fontWeight: '600', marginBottom: '6px' }}>ACTUAL DELIVERY DATE *</label>
-                <input
-                  type="date"
+                <DateInput
                   value={rateForm.actualDeliveryDate}
-                  onChange={e => setRateForm({ ...rateForm, actualDeliveryDate: e.target.value })}
+                  onChange={iso => setRateForm({ ...rateForm, actualDeliveryDate: iso })}
                   style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}
                   required
                 />
@@ -998,7 +1577,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
               </div>
 
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button type="submit" style={{ background: '#ff9800', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
                   Save Delivery Rating
                 </button>
                 <button type="button" onClick={() => setShowRateModal(false)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>
@@ -1009,6 +1588,7 @@ const PurchaseOrderPage = ({ user, onLogout }) => {
           </div>
         </div>
       )}
+      {renderPOStatsModal()}
     </div>
   );
 };

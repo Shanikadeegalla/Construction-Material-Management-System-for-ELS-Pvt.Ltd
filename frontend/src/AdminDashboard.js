@@ -18,7 +18,7 @@ const AdminDashboard = ({ user, onLogout }) => {
     { name: 'Admin User', action: 'Created User', module: 'User Management', time: new Date(Date.now() - 2*60*60*1000), status: 'Success' },
     { name: 'Director User', action: 'BOM Approved', module: 'BOM Approvals', time: new Date(Date.now() - 4*60*60*1000), status: 'Success' },
     { name: 'Unknown', action: 'Failed Login', module: 'Authentication', time: new Date(Date.now() - 6*60*60*1000), status: 'Failed' },
-    { name: 'Purchase Officer', action: 'Created PO', module: 'Purchase Orders', time: new Date(Date.now() - 8*60*60*1000), status: 'Success' },
+    { name: 'Purchase Manager', action: 'Created PO', module: 'Purchase Orders', time: new Date(Date.now() - 8*60*60*1000), status: 'Success' },
   ]);
 
   useEffect(() => {
@@ -52,7 +52,7 @@ const AdminDashboard = ({ user, onLogout }) => {
         { _id: '1', name: 'John Smith', email: 'john@els.com', role: 'ProjectManager', status: true, createdAt: new Date().toISOString() },
         { _id: '2', name: 'Sarah Johnson', email: 'sarah@els.com', role: 'Director', status: true, createdAt: new Date().toISOString() },
         { _id: '3', name: 'Mike Davis', email: 'mike@els.com', role: 'MainStoreOfficer', status: false, createdAt: new Date().toISOString() },
-        { _id: '4', name: 'Emily Brown', email: 'emily@els.com', role: 'PurchaseOfficer', status: true, createdAt: new Date().toISOString() },
+        { _id: '4', name: 'Emily Brown', email: 'emily@els.com', role: 'PurchaseManager', status: true, createdAt: new Date().toISOString() },
       ]);
     }
   };
@@ -208,7 +208,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                         <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}>
                           <option value="Director">Director</option>
                           <option value="ProjectManager">Project Manager</option>
-                          <option value="PurchaseOfficer">Purchase Officer</option>
+                          <option value="PurchaseManager">Purchase Manager</option>
                           <option value="MainStoreOfficer">Main Store Officer</option>
                           <option value="SiteStoreOfficer">Site Store Officer</option>
                         </select>

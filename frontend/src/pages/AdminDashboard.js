@@ -8,128 +8,90 @@ import {
   Bell, 
   Mail, 
   Pencil, 
-  UserMinus, 
-  UserPlus, 
-  Key, 
-  Search, 
+  UserMinus,
+  UserPlus,
+  Key,
+  Search,
   ChevronRight, 
   X, 
   CheckCircle2, 
   AlertTriangle,
-  Lock,
-  Plus
+  Plus,
+  Truck,
+  Package
 } from 'lucide-react';
 import SettingsPage from './SettingsPage';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
+import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort } from '../utils/dateUtils';
+import DateInput from '../components/DateInput';
 
+// Taxonomy of gate-able actions in the app, grouped by module. This mirrors the
+// backend's Permission collection (role + action -> Full/View/Partial/Approve/None).
+// Live values are always fetched from the API (see dbPermissions/getPermissionLevel) —
+// this constant only defines the structure and labels shown in the matrix.
+// Actions marked "not yet enforced" have no server-side route gate; the entry exists
+// so Admins can see/configure intent, but toggling it has no functional effect today.
 const MODULES_MATRIX = [
   {
     category: "User Management",
     actions: [
-      {
-        name: "Create/Edit Users",
-        permissions: { Admin: "Full", Director: "None", ProjectManager: "None", PurchaseOfficer: "None", StoreOfficer: "None", SiteStorekeeper: "None" }
-      },
-      {
-        name: "View User List",
-        permissions: { Admin: "Full", Director: "View", ProjectManager: "None", PurchaseOfficer: "None", StoreOfficer: "None", SiteStorekeeper: "None" }
-      },
-      {
-        name: "Audit Logs",
-        permissions: { Admin: "Full", Director: "View", ProjectManager: "None", PurchaseOfficer: "None", StoreOfficer: "None", SiteStorekeeper: "None" }
-      }
+      { name: "Create/Edit Users" },
+      { name: "View User List" },
+      { name: "Audit Logs" }
     ]
   },
   {
     category: "Project Management",
     actions: [
-      {
-        name: "Create Project",
-        permissions: { Admin: "Full", Director: "Approve", ProjectManager: "Full", PurchaseOfficer: "None", StoreOfficer: "None", SiteStorekeeper: "None" }
-      },
-      {
-        name: "View Projects",
-        permissions: { Admin: "Full", Director: "View", ProjectManager: "Partial", PurchaseOfficer: "View", StoreOfficer: "None", SiteStorekeeper: "None" }
-      },
-      {
-        name: "BOM Creation",
-        permissions: { Admin: "Full", ProjectManager: "Full", Director: "None", PurchaseOfficer: "None", StoreOfficer: "None", SiteStorekeeper: "None" }
-      },
-      {
-        name: "BOM Approval",
-        permissions: { Admin: "Full", Director: "Approve", ProjectManager: "None", PurchaseOfficer: "None", StoreOfficer: "None", SiteStorekeeper: "None" }
-      }
+      { name: "Create Project" },
+      { name: "View Projects" },
+      { name: "BOM Creation" },
+      { name: "BOM Approval" }
     ]
   },
   {
     category: "Procurement",
     actions: [
-      {
-        name: "Create PR",
-        permissions: { Admin: "Full", ProjectManager: "Full", StoreOfficer: "Partial", Director: "None", PurchaseOfficer: "None", SiteStorekeeper: "None" }
-      },
-      {
-        name: "Approve PR",
-        permissions: { Admin: "Full", ProjectManager: "Approve", Director: "None", PurchaseOfficer: "None", StoreOfficer: "None", SiteStorekeeper: "None" }
-      },
-      {
-        name: "Create PO",
-        permissions: { Admin: "Full", PurchaseOfficer: "Full", Director: "None", ProjectManager: "None", StoreOfficer: "None", SiteStorekeeper: "None" }
-      },
-      {
-        name: "Approve PO",
-        permissions: { Admin: "Full", Director: "Approve", ProjectManager: "None", PurchaseOfficer: "None", StoreOfficer: "None", SiteStorekeeper: "None" }
-      },
-      {
-        name: "Supplier Management",
-        permissions: { Admin: "Full", PurchaseOfficer: "Full", Director: "View", ProjectManager: "None", StoreOfficer: "None", SiteStorekeeper: "None" }
-      }
+      { name: "Create PR" },
+      { name: "Approve PR" },
+      { name: "Create PO" },
+      { name: "Approve PO" },
+      { name: "Manage PO Lifecycle" },
+      { name: "Supplier Management" }
     ]
   },
   {
     category: "Inventory & Stores",
     actions: [
-      {
-        name: "Create GRN",
-        permissions: { Admin: "Full", StoreOfficer: "Full", SiteStorekeeper: "Partial", Director: "None", ProjectManager: "None", PurchaseOfficer: "None" }
-      },
-      {
-        name: "View Stock",
-        permissions: { Admin: "Full", Director: "View", ProjectManager: "Partial", PurchaseOfficer: "View", StoreOfficer: "Full", SiteStorekeeper: "Partial" }
-      },
-      {
-        name: "Issue Materials",
-        permissions: { Admin: "Full", StoreOfficer: "Full", Director: "None", ProjectManager: "None", PurchaseOfficer: "None", SiteStorekeeper: "None" }
-      },
-      {
-        name: "Stock Adjustments",
-        permissions: { Admin: "Full", StoreOfficer: "Full", Director: "None", ProjectManager: "None", PurchaseOfficer: "None", SiteStorekeeper: "None" }
-      }
+      { name: "Create GRN" },
+      { name: "View Stock", notEnforced: true },
+      { name: "Issue Materials" },
+      { name: "Stock Adjustments", notEnforced: true },
+      { name: "Manage Materials" },
+      { name: "Manage Item Master" },
+      { name: "Log Material Usage" },
+      { name: "Confirm Material Receipt" }
     ]
   },
   {
     category: "Reports & Analytics",
     actions: [
-      {
-        name: "View Reports",
-        permissions: { Admin: "Full", Director: "Full", ProjectManager: "Partial", PurchaseOfficer: "Partial", StoreOfficer: "Partial", SiteStorekeeper: "None" }
-      },
-      {
-        name: "Export PDF/Excel",
-        permissions: { Admin: "Full", Director: "Full", ProjectManager: "Partial", PurchaseOfficer: "Partial", StoreOfficer: "None", SiteStorekeeper: "None" }
-      }
+      { name: "View Reports" },
+      { name: "Export PDF/Excel", notEnforced: true }
+    ]
+  },
+  {
+    category: "System Administration",
+    actions: [
+      { name: "Manage Roles & Permissions", notEnforced: true }
     ]
   }
 ];
 
-const ALL_MODULE_ACTIONS = [
-  "Create/Edit Users", "View User List", "Audit Logs",
-  "Create Project", "View Projects", "BOM Creation", "BOM Approval",
-  "Create PR", "Approve PR", "Create PO", "Approve PO", "Supplier Management",
-  "Create GRN", "View Stock", "Issue Materials", "Stock Adjustments",
-  "View Reports", "Export PDF/Excel"
-];
+const ALL_MODULE_ACTIONS = MODULES_MATRIX.flatMap(cat => cat.actions.map(a => a.name));
 
 const AdminDashboard = ({ user, onLogout }) => {
   const [activePage, setActivePage] = useState('dashboard');
@@ -155,6 +117,7 @@ const AdminDashboard = ({ user, onLogout }) => {
   const [rolesViewMode, setRolesViewMode] = useState('module'); // 'module' | 'role'
   const [matrixModuleFilter, setMatrixModuleFilter] = useState('All');
   const [matrixSelectedRole, setMatrixSelectedRole] = useState('All');
+  const [rolesSubTab, setRolesSubTab] = useState('roles'); // 'roles' | 'permissions'
 
   // Role CRUD States
   const [dbRoles, setDbRoles] = useState([]);
@@ -172,7 +135,299 @@ const AdminDashboard = ({ user, onLogout }) => {
   const [permissionFormLevel, setPermissionFormLevel] = useState('None');
   const [selectedModulesList, setSelectedModulesList] = useState([]);
   const [roleSearchTerm, setRoleSearchTerm] = useState('');
-  const [roleToDelete, setRoleToDelete] = useState(null);
+
+  // Supplier Registry state
+  const emptySupplierForm = {
+    supplierId: '', contactPerson: '', phone: '', email: '', address: '',
+    status: 'Active',
+    bankName: '', accountNumber: '', bankBranch: '',
+    documents: { idPhoto: null }
+  };
+  const [suppliers, setSuppliers] = useState([]);
+  const [showSupplierForm, setShowSupplierForm] = useState(false);
+  const [supplierSearch, setSupplierSearch] = useState('');
+  const [editingSupplierId, setEditingSupplierId] = useState(null);
+  const [supForm, setSupForm] = useState(emptySupplierForm);
+  const [docUploading, setDocUploading] = useState({});
+
+  // Master Material state
+  const MATERIAL_CATEGORY_OPTIONS = [
+    'Cement & Concrete', 'Aggregates', 'Road Construction', 'Bridge Construction',
+    'Reinforcement Steel', 'Structural Steel', 'Railway Materials', 'Drainage & Culvert',
+    'Geotechnical', 'Formwork & Scaffolding', 'Fasteners & Hardware', 'Waterproofing & Joints',
+    'Safety Materials', 'Survey & Site', 'Miscellaneous', 'Other'
+  ];
+  const MATERIAL_UNIT_OPTIONS = ['Bag', 'Piece', 'Kg', 'Ton', 'Meter', 'm³', 'm²', 'Cum', 'Litre', 'Roll', 'Sheet', 'Set', 'Coil'];
+  const emptyMaterialForm = {
+    materialCode: '', materialName: '', category: 'Cement & Concrete', unit: 'Bag',
+    estimatedUnitCost: '', description: '', status: 'Active'
+  };
+  const [materialMasterList, setMaterialMasterList] = useState([]);
+  const [showMaterialForm, setShowMaterialForm] = useState(false);
+  const [materialSearch, setMaterialSearch] = useState('');
+  const [editingMaterialId, setEditingMaterialId] = useState(null);
+  const [materialForm, setMaterialForm] = useState(emptyMaterialForm);
+
+  const fetchMaterialMaster = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/item-master', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMaterialMasterList(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching material master:', err);
+    }
+  };
+
+  const openMaterialForm = () => {
+    if (showMaterialForm && !editingMaterialId) {
+      setShowMaterialForm(false);
+      return;
+    }
+    setEditingMaterialId(null);
+    const nextCode = `MAT-${String(materialMasterList.length + 1).padStart(4, '0')}`;
+    setMaterialForm({ ...emptyMaterialForm, materialCode: nextCode });
+    setShowMaterialForm(true);
+  };
+
+  const handleMaterialFormSubmit = async (e) => {
+    e.preventDefault();
+    if (!materialForm.materialCode.trim() || !materialForm.materialName.trim() || !materialForm.category || !materialForm.unit) {
+      showErrorMessage('Please fill in Material Code, Name, Category, and Unit.');
+      return;
+    }
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const url = editingMaterialId
+        ? `http://localhost:5000/api/item-master/${editingMaterialId}`
+        : 'http://localhost:5000/api/item-master';
+      const res = await fetch(url, {
+        method: editingMaterialId ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          ...materialForm,
+          estimatedUnitCost: Number(materialForm.estimatedUnitCost) || 0
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showSuccessMessage(`✅ Material ${editingMaterialId ? 'updated' : 'created'} successfully!`);
+        setShowMaterialForm(false);
+        setEditingMaterialId(null);
+        setMaterialForm(emptyMaterialForm);
+        fetchMaterialMaster();
+      } else {
+        showErrorMessage(`❌ ${data.message || 'Failed to save material.'}`);
+      }
+    } catch (err) {
+      showErrorMessage('❌ Error connecting to server.');
+    }
+  };
+
+  const handleMaterialEditClick = (item) => {
+    setEditingMaterialId(item._id);
+    setMaterialForm({
+      materialCode: item.materialCode || '',
+      materialName: item.materialName || '',
+      category: item.category || 'Cement & Concrete',
+      unit: item.unit || 'Bag',
+      estimatedUnitCost: item.estimatedUnitCost ?? '',
+      description: item.description || '',
+      status: item.status || 'Active'
+    });
+    setShowMaterialForm(true);
+  };
+
+  const handleToggleMaterialStatus = async (item) => {
+    const newStatus = item.status === 'Active' ? 'Inactive' : 'Active';
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`http://localhost:5000/api/item-master/${item._id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: newStatus })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showSuccessMessage(`✅ Material ${newStatus === 'Active' ? 'activated' : 'deactivated'} successfully!`);
+        fetchMaterialMaster();
+      } else {
+        showErrorMessage(`❌ ${data.message || 'Failed to update status.'}`);
+      }
+    } catch (err) {
+      showErrorMessage('❌ Error connecting to server.');
+    }
+  };
+
+  const fetchSuppliers = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/suppliers', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      let rawSuppliers = data.success ? data.data : (Array.isArray(data) ? data : []);
+      if (!rawSuppliers || rawSuppliers.length === 0) {
+        rawSuppliers = [
+          { _id: '1', supplierId: 'SUP-0001', contactPerson: 'Lanka Cement Ltd', phone: '0711122334', email: 'nimal@lankacement.lk', categories: ['Cement'], status: 'Active', rating: 4.5 },
+          { _id: '2', supplierId: 'SUP-0002', contactPerson: 'Melwa Steel', phone: '0722233445', email: 'kamal@melwa.lk', categories: ['Steel'], status: 'Active', rating: 4 },
+          { _id: '3', supplierId: 'SUP-0003', contactPerson: 'Mahaweli Sand Co.', phone: '0777345678', email: 'sunil@mahawelisand.lk', categories: ['Sand', 'Aggregate'], status: 'Active', rating: 3.5 }
+        ];
+      }
+      setSuppliers(rawSuppliers);
+    } catch (err) {
+      setSuppliers([
+        { _id: '1', supplierId: 'SUP-0001', contactPerson: 'Lanka Cement Ltd', phone: '0711122334', email: 'nimal@lankacement.lk', categories: ['Cement'], status: 'Active', rating: 4.5 },
+        { _id: '2', supplierId: 'SUP-0002', contactPerson: 'Melwa Steel', phone: '0722233445', email: 'kamal@melwa.lk', categories: ['Steel'], status: 'Active', rating: 4 },
+        { _id: '3', supplierId: 'SUP-0003', contactPerson: 'Mahaweli Sand Co.', phone: '0777345678', email: 'sunil@mahawelisand.lk', categories: ['Sand', 'Aggregate'], status: 'Active', rating: 3.5 }
+      ]);
+    }
+  };
+
+  const openSupplierForm = async () => {
+    if (showSupplierForm && !editingSupplierId) {
+      setShowSupplierForm(false);
+      return;
+    }
+    setEditingSupplierId(null);
+    setSupForm(emptySupplierForm);
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/suppliers/next-id', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setSupForm(prev => ({ ...prev, supplierId: data.supplierId || '' }));
+    } catch (err) {
+      setSupForm(prev => ({ ...prev, supplierId: `SUP-${String(suppliers.length + 1).padStart(4, '0')}` }));
+    }
+    setShowSupplierForm(true);
+  };
+
+  const handleSupplierDocUpload = async (docType, file) => {
+    if (!file) return;
+    const isValid = /\.(pdf|jpe?g)$/i.test(file.name);
+    if (!isValid) {
+      alert('Only PDF or JPG files are allowed.');
+      return;
+    }
+    setDocUploading(prev => ({ ...prev, [docType]: true }));
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const formData = new FormData();
+      formData.append('document', file);
+      const res = await fetch('http://localhost:5000/api/suppliers/upload-document', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success) {
+        const doc = { url: data.url, filename: data.filename };
+        setSupForm(prev => ({ ...prev, documents: { ...prev.documents, [docType]: doc } }));
+      } else {
+        alert(data.message || 'Failed to upload document.');
+      }
+    } catch (err) {
+      alert('Error uploading document.');
+    } finally {
+      setDocUploading(prev => ({ ...prev, [docType]: false }));
+    }
+  };
+
+  const handleSupplierSubmit = async (e) => {
+    e.preventDefault();
+    if (!supForm.supplierId || !supForm.phone) {
+      alert('Please fill in Supplier ID and Phone.');
+      return;
+    }
+    if (!isValidPhone(supForm.phone)) {
+      alert(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
+      return;
+    }
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const url = editingSupplierId ? `http://localhost:5000/api/suppliers/${editingSupplierId}` : 'http://localhost:5000/api/suppliers';
+      const res = await fetch(url, {
+        method: editingSupplierId ? 'PUT' : 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(supForm)
+      });
+      const data = await res.json();
+      if (res.ok && (data.success || data.supplier)) {
+        showSuccessMessage(editingSupplierId ? '✅ Supplier updated successfully!' : '✅ Supplier registered successfully!');
+        setShowSupplierForm(false);
+        setEditingSupplierId(null);
+        setSupForm(emptySupplierForm);
+        fetchSuppliers();
+      } else {
+        showErrorMessage(`❌ ${data.message || 'Failed to save supplier.'}`);
+      }
+    } catch {
+      showErrorMessage('❌ Error connecting to server.');
+    }
+  };
+
+  const handleSupplierEditClick = (supplier) => {
+    setEditingSupplierId(supplier._id);
+    setSupForm({
+      supplierId: supplier.supplierId || '',
+      contactPerson: supplier.contactPerson || '',
+      phone: supplier.phone || '',
+      email: supplier.email || '',
+      address: supplier.address || '',
+      status: supplier.status || 'Active',
+      bankName: supplier.bankName || '',
+      accountNumber: supplier.accountNumber || '',
+      bankBranch: supplier.bankBranch || '',
+      documents: {
+        idPhoto: supplier.documents?.idPhoto || null
+      }
+    });
+    setShowSupplierForm(true);
+  };
+
+  const handleSupplierDeactivate = async (id) => {
+    if (!window.confirm('Are you sure you want to deactivate this supplier?')) return;
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`http://localhost:5000/api/suppliers/${id}/deactivate`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showSuccessMessage('✅ Supplier deactivated successfully!');
+        fetchSuppliers();
+      }
+    } catch {
+      setSuppliers(prev => prev.map(s => s._id === id ? { ...s, status: 'Inactive' } : s));
+    }
+  };
+
+  const handleSupplierActivate = async (id) => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`http://localhost:5000/api/suppliers/${id}/activate`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showSuccessMessage('✅ Supplier activated successfully!');
+        fetchSuppliers();
+      }
+    } catch {
+      setSuppliers(prev => prev.map(s => s._id === id ? { ...s, status: 'Active' } : s));
+    }
+  };
 
   const getBadgeStyle = (level) => {
     switch (level) {
@@ -225,11 +480,11 @@ const AdminDashboard = ({ user, onLogout }) => {
       log.userName || log.userId?.name || 'System',
       log.action || '',
       log.module || '',
-      new Date(log.timestamp || log.time).toLocaleString(),
+      formatDateTime(log.timestamp || log.time),
       log.status || ''
     ]);
 
-    doc.autoTable({
+    autoTable(doc, {
       startY: 32,
       head: [tableColumn],
       body: tableRows,
@@ -304,13 +559,13 @@ const AdminDashboard = ({ user, onLogout }) => {
                       <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#1e3a5f' }}>{u.name}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#475569' }}>{u.email}</td>
                       <td style={{ padding: '12px 16px' }}>
-                        <span style={{ background: rColor.bg, color: rColor.text, padding: '2px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase' }}>
-                          {u.role}
+                        <span style={{ background: rColor.bg, color: rColor.text, padding: '2px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', display: 'inline-block', minWidth: '110px', textAlign: 'center' }}>
+                          {formatRoleLabel(u.role)}
                         </span>
                       </td>
                       <td style={{ padding: '12px 16px' }}>{getStatusBadge(u.status)}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>
-                        {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'N/A'}
+                        {u.createdAt ? formatDate(u.createdAt) : 'N/A'}
                       </td>
                       {activeStatsModal === 'deactivated' && (
                         <td style={{ padding: '12px 16px' }}>
@@ -372,20 +627,18 @@ const AdminDashboard = ({ user, onLogout }) => {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
             <div>
               <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>Start Date</label>
-              <input 
-                type="date" 
-                value={statsLogStartDate} 
-                onChange={e => setStatsLogStartDate(e.target.value)} 
-                style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '13px', width: '100%', boxSizing: 'border-box' }} 
+              <DateInput
+                value={statsLogStartDate}
+                onChange={iso => setStatsLogStartDate(iso)}
+                style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '13px', width: '100%', boxSizing: 'border-box' }}
               />
             </div>
             <div>
               <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>End Date</label>
-              <input 
-                type="date" 
-                value={statsLogEndDate} 
-                onChange={e => setStatsLogEndDate(e.target.value)} 
-                style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '13px', width: '100%', boxSizing: 'border-box' }} 
+              <DateInput
+                value={statsLogEndDate}
+                onChange={iso => setStatsLogEndDate(iso)}
+                style={{ padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '13px', width: '100%', boxSizing: 'border-box' }}
               />
             </div>
             <div>
@@ -403,7 +656,7 @@ const AdminDashboard = ({ user, onLogout }) => {
             </div>
             <button 
               onClick={() => exportLogsToPDF(filteredList)} 
-              style={{ background: '#ff9800', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px', transition: 'all 0.2s', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '13px', transition: 'all 0.2s', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
               Export PDF
             </button>
@@ -435,7 +688,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                     <td style={{ padding: '12px 16px', fontSize: '12px', color: '#334155' }}>{log.action}</td>
                     <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>{log.module}</td>
                     <td style={{ padding: '12px 16px', fontSize: '12px', color: '#475569' }}>
-                      {new Date(log.timestamp || log.time).toLocaleString()}
+                      {formatDateTime(log.timestamp || log.time)}
                     </td>
                     <td style={{ padding: '12px 16px' }}>
                       <span style={{ 
@@ -500,15 +753,15 @@ const AdminDashboard = ({ user, onLogout }) => {
           onClick={(e) => e.stopPropagation()}
         >
           <div style={{ background: '#0d1b4b', color: 'white', padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700', borderLeft: '4px solid #ff9800', paddingLeft: '12px' }}>{drawerTitle}</h3>
+            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700', borderLeft: '4px solid #2563eb', paddingLeft: '12px' }}>{drawerTitle}</h3>
             <button 
               onClick={() => setActiveStatsModal(null)} 
-              style={{ background: 'transparent', border: 'none', color: '#ff9800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', borderRadius: '50%', transition: 'all 0.2s' }}
+              style={{ background: 'transparent', border: 'none', color: '#2563eb', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', borderRadius: '50%', transition: 'all 0.2s' }}
               className="close-drawer-btn"
             >
               <style>{`
                 .close-drawer-btn:hover {
-                  background-color: rgba(255, 152, 0, 0.15);
+                  background-color: rgba(37, 99, 235, 0.15);
                   transform: scale(1.1);
                 }
               `}</style>
@@ -526,25 +779,38 @@ const AdminDashboard = ({ user, onLogout }) => {
   };
 
   // New User Form State
-  const [newUser, setNewUser] = useState({ 
-    name: '', 
-    email: '', 
-    password: '', 
-    role: 'MainStoreOfficer', 
-    phone: '+94 77 123 4567' 
-  });
-  
+  const emptyUserForm = {
+    name: '',
+    username: '',
+    email: '',
+    password: '',
+    role: '',
+    employeeId: '',
+    gender: '',
+    phone: '',
+    alternatePhone: '',
+    avatarUrl: ''
+  };
+  const [newUser, setNewUser] = useState(emptyUserForm);
+
   // Edit User Form State
-  const [editForm, setEditForm] = useState({ 
-    name: '', 
-    email: '', 
-    role: 'MainStoreOfficer', 
-    phone: '+94 77 123 4567',
-    status: true 
+  const [editForm, setEditForm] = useState({
+    name: '',
+    username: '',
+    email: '',
+    role: '',
+    employeeId: '',
+    gender: '',
+    phone: '',
+    alternatePhone: '',
+    avatarUrl: '',
+    status: true
   });
   const [isEditing, setIsEditing] = useState(false);
-  const [passwordResetOpen, setPasswordResetOpen] = useState(false);
-  const [newPasswordVal, setNewPasswordVal] = useState('');
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState('');
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
   const [resetPasswordUser, setResetPasswordUser] = useState(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -554,43 +820,6 @@ const AdminDashboard = ({ user, onLogout }) => {
 
   const [message, setMessage] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date());
-
-  // Roles & Permissions state
-  const [rolesPermissions, setRolesPermissions] = useState({
-    Admin: [
-      { name: 'Access Dashboard', enabled: true },
-      { name: 'Manage Users', enabled: true },
-      { name: 'Configure Settings', enabled: true },
-      { name: 'View Audit Logs', enabled: true }
-    ],
-    Director: [
-      { name: 'View Reports', enabled: true },
-      { name: 'Approve Purchase Orders', enabled: true },
-      { name: 'View Inventory', enabled: true },
-      { name: 'Approve Budget', enabled: true }
-    ],
-    ProjectManager: [
-      { name: 'Create BOM', enabled: true },
-      { name: 'Approve Purchase Requests', enabled: true },
-      { name: 'View Inventory', enabled: true },
-      { name: 'Request Material', enabled: true }
-    ],
-    PurchaseOfficer: [
-      { name: 'Create Purchase Orders', enabled: true },
-      { name: 'View GRN', enabled: true },
-      { name: 'Manage Suppliers', enabled: true },
-      { name: 'View Inventory', enabled: true }
-    ],
-    MainStoreOfficer: [
-      { name: 'Issue Material', enabled: true },
-      { name: 'View Low Stock', enabled: true },
-      { name: 'Create GRN', enabled: true }
-    ],
-    SiteStoreOfficer: [
-      { name: 'Log Usage', enabled: true },
-      { name: 'View Inventory', enabled: true }
-    ]
-  });
 
   // Notifications state
   const [notifications, setNotifications] = useState([]);
@@ -635,6 +864,8 @@ const AdminDashboard = ({ user, onLogout }) => {
     fetchNotifications();
     fetchRoles();
     fetchPermissions();
+    fetchSuppliers();
+    fetchMaterialMaster();
 
     const interval = setInterval(() => {
       fetchUsers();
@@ -642,6 +873,8 @@ const AdminDashboard = ({ user, onLogout }) => {
       fetchNotifications();
       fetchRoles();
       fetchPermissions();
+      fetchSuppliers();
+      fetchMaterialMaster();
     }, 30000);
 
     return () => clearInterval(interval);
@@ -654,23 +887,37 @@ const AdminDashboard = ({ user, onLogout }) => {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      if (data.success) {
-        // Hydrate users with local phone numbers
-        const mappedUsers = data.data.map(u => ({
+      let userList = data.success ? data.data : [];
+      if (!userList || userList.length < 8) {
+        userList = [
+          { _id: '1', name: 'John Smith', email: 'john@els.com', role: 'ProjectManager', status: true, phone: '+94 77 987 6543', createdAt: new Date(Date.now() - 30*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 2*60*60*1000).toISOString() },
+          { _id: '2', name: 'Sarah Johnson', email: 'sarah@els.com', role: 'Director', status: true, phone: '+94 77 123 4567', createdAt: new Date(Date.now() - 60*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 4*60*60*1000).toISOString() },
+          { _id: '3', name: 'Mike Davis', email: 'mike@els.com', role: 'MainStoreOfficer', status: false, phone: '+94 77 444 5555', createdAt: new Date(Date.now() - 10*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 24*60*60*1000).toISOString() },
+          { _id: '4', name: 'Emily Brown', email: 'emily@els.com', role: 'PurchaseManager', status: true, phone: '+94 77 888 9999', createdAt: new Date(Date.now() - 15*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 12*60*60*1000).toISOString() },
+          { _id: '5', name: 'Ruwan Perera', email: 'ruwan@els.com', role: 'SiteStoreOfficer', status: true, phone: '+94 77 555 6666', createdAt: new Date(Date.now() - 20*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 6*60*60*1000).toISOString() },
+          { _id: '6', name: 'Admin Principal', email: 'admin@els.com', role: 'Admin', status: true, phone: '+94 77 777 7777', createdAt: new Date(Date.now() - 100*24*60*60*1000).toISOString(), lastLogin: new Date().toISOString() },
+          { _id: '7', name: 'Kanishka Silva', email: 'kanishka@els.com', role: 'ProjectManager', status: true, phone: '+94 77 333 4444', createdAt: new Date(Date.now() - 40*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 1*24*60*60*1000).toISOString() },
+          { _id: '8', name: 'Nishan Fernando', email: 'nishan@els.com', role: 'SiteStoreOfficer', status: true, phone: '+94 77 222 1111', createdAt: new Date(Date.now() - 12*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 3*60*60*1000).toISOString() }
+        ];
+      } else {
+        userList = userList.map(u => ({
           ...u,
           phone: u.phone || '+94 77 ' + Math.floor(1000000 + Math.random() * 9000000),
           lastLogin: u.lastLogin || new Date(Date.now() - Math.random() * 5 * 24 * 60 * 60 * 1000).toISOString()
         }));
-        setUsers(mappedUsers);
       }
+      setUsers(userList);
     } catch (err) {
-      const mockUsers = [
+      setUsers([
         { _id: '1', name: 'John Smith', email: 'john@els.com', role: 'ProjectManager', status: true, phone: '+94 77 987 6543', createdAt: new Date(Date.now() - 30*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 2*60*60*1000).toISOString() },
         { _id: '2', name: 'Sarah Johnson', email: 'sarah@els.com', role: 'Director', status: true, phone: '+94 77 123 4567', createdAt: new Date(Date.now() - 60*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 4*60*60*1000).toISOString() },
         { _id: '3', name: 'Mike Davis', email: 'mike@els.com', role: 'MainStoreOfficer', status: false, phone: '+94 77 444 5555', createdAt: new Date(Date.now() - 10*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 24*60*60*1000).toISOString() },
-        { _id: '4', name: 'Emily Brown', email: 'emily@els.com', role: 'PurchaseOfficer', status: true, phone: '+94 77 888 9999', createdAt: new Date(Date.now() - 15*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 12*60*60*1000).toISOString() },
-      ];
-      setUsers(mockUsers);
+        { _id: '4', name: 'Emily Brown', email: 'emily@els.com', role: 'PurchaseManager', status: true, phone: '+94 77 888 9999', createdAt: new Date(Date.now() - 15*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 12*60*60*1000).toISOString() },
+        { _id: '5', name: 'Ruwan Perera', email: 'ruwan@els.com', role: 'SiteStoreOfficer', status: true, phone: '+94 77 555 6666', createdAt: new Date(Date.now() - 20*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 6*60*60*1000).toISOString() },
+        { _id: '6', name: 'Admin Principal', email: 'admin@els.com', role: 'Admin', status: true, phone: '+94 77 777 7777', createdAt: new Date(Date.now() - 100*24*60*60*1000).toISOString(), lastLogin: new Date().toISOString() },
+        { _id: '7', name: 'Kanishka Silva', email: 'kanishka@els.com', role: 'ProjectManager', status: true, phone: '+94 77 333 4444', createdAt: new Date(Date.now() - 40*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 1*24*60*60*1000).toISOString() },
+        { _id: '8', name: 'Nishan Fernando', email: 'nishan@els.com', role: 'SiteStoreOfficer', status: true, phone: '+94 77 222 1111', createdAt: new Date(Date.now() - 12*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 3*60*60*1000).toISOString() }
+      ]);
     }
   };
 
@@ -681,17 +928,10 @@ const AdminDashboard = ({ user, onLogout }) => {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      if (data.success) {
-        setAuditLogs(data.data);
-      }
+      setAuditLogs(data.success && Array.isArray(data.data) ? data.data : []);
     } catch (err) {
-      setAuditLogs([
-        { userName: 'Admin User', action: 'User Login', module: 'Authentication', timestamp: new Date(Date.now() - 30*60*1000).toISOString(), status: 'Success' },
-        { userName: 'Admin User', action: 'Created User', module: 'User Management', timestamp: new Date(Date.now() - 2*60*60*1000).toISOString(), status: 'Success' },
-        { userName: 'Director User', action: 'BOM Approved', module: 'BOM Approvals', timestamp: new Date(Date.now() - 4*60*60*1000).toISOString(), status: 'Success' },
-        { userName: 'Purchase Officer', action: 'Created PO', module: 'Purchase Orders', timestamp: new Date(Date.now() - 8*60*60*1000).toISOString(), status: 'Success' },
-        { userName: 'Store Officer', action: 'Login Attempt', module: 'Authentication', timestamp: new Date(Date.now() - 10*60*60*1000).toISOString(), status: 'Failed' }
-      ]);
+      console.error('Error fetching audit logs:', err);
+      setAuditLogs([]);
     }
   };
 
@@ -829,29 +1069,6 @@ const AdminDashboard = ({ user, onLogout }) => {
     }
   };
 
-  const handleDeleteRoleConfirm = async () => {
-    if (!roleToDelete) return;
-    try {
-      const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/roles/${roleToDelete._id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (data.success) {
-        showSuccessMessage('✅ Role deleted successfully!');
-        fetchRoles();
-        fetchPermissions();
-      } else {
-        showErrorMessage(`❌ ${data.message || 'Failed to delete role'}`);
-      }
-    } catch (err) {
-      showErrorMessage('❌ Error connecting to server');
-    } finally {
-      setRoleToDelete(null);
-    }
-  };
-
   const handleSavePermission = async () => {
     if (!selectedPermissionCell) return;
     try {
@@ -946,22 +1163,102 @@ const AdminDashboard = ({ user, onLogout }) => {
     setMatrixSelectedRole('All');
   };
 
+  const openAddUserForm = async () => {
+    setSelectedUser(null);
+    setIsEditing(false);
+    setAvatarPreview('');
+    setNewUser(emptyUserForm);
+    setUserViewMode('details');
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/auth/next-employee-id', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.employeeId) {
+        setNewUser(prev => ({ ...prev, employeeId: data.employeeId }));
+      }
+    } catch (err) {
+      // Employee ID stays blank; admin can type one in manually.
+    }
+  };
+
+  const handlePhotoFile = async (file, isEdit) => {
+    if (!file || !file.type.startsWith('image/')) {
+      showErrorMessage('❌ Please select a valid image file.');
+      return;
+    }
+    setAvatarPreview(URL.createObjectURL(file));
+    setAvatarUploading(true);
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const formData = new FormData();
+      formData.append('avatar', file);
+      const res = await fetch('http://localhost:5000/api/auth/upload-avatar', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (isEdit) {
+          setEditForm(prev => ({ ...prev, avatarUrl: data.avatarUrl }));
+        } else {
+          setNewUser(prev => ({ ...prev, avatarUrl: data.avatarUrl }));
+        }
+      } else {
+        showErrorMessage('❌ Failed to upload photo.');
+      }
+    } catch (err) {
+      showErrorMessage('❌ Error uploading photo.');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const passwordChecks = (password) => ({
+    length: password.length >= 8,
+    upper: /[A-Z]/.test(password),
+    lower: /[a-z]/.test(password),
+    number: /[0-9]/.test(password),
+    special: /[^A-Za-z0-9]/.test(password)
+  });
+
+  const isPasswordStrong = (password) => Object.values(passwordChecks(password)).every(Boolean);
+
   const handleAddUser = async (e) => {
     e.preventDefault();
+    if (!newUser.role) {
+      showErrorMessage('❌ Please select a workspace role.');
+      return;
+    }
+    if (!isPasswordStrong(newUser.password)) {
+      showErrorMessage('❌ Password does not meet all requirements.');
+      return;
+    }
+    if (!isValidPhone(newUser.phone)) {
+      showErrorMessage(`❌ Primary phone must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
+      return;
+    }
+    if (newUser.alternatePhone && !isValidPhone(newUser.alternatePhone)) {
+      showErrorMessage(`❌ Alternate phone must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
+      return;
+    }
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const res = await fetch('http://localhost:5000/api/auth/register', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}` 
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify(newUser)
       });
       const data = await res.json();
       if (data.success) {
         showSuccessMessage(`✅ User "${newUser.name}" added successfully!`);
-        setNewUser({ name: '', email: '', password: '', role: 'MainStoreOfficer', phone: '+94 77 123 4567' });
+        setNewUser(emptyUserForm);
+        setAvatarPreview('');
         setUserViewMode('list');
         fetchUsers();
         fetchAuditLogs();
@@ -999,19 +1296,33 @@ const AdminDashboard = ({ user, onLogout }) => {
 
   const handleEditClick = (u) => {
     setSelectedUser(u);
-    setEditForm({ 
-      name: u.name, 
-      email: u.email, 
-      role: u.role, 
-      phone: u.phone || '+94 77 123 4567',
-      status: u.status !== false 
+    setEditForm({
+      name: u.name,
+      username: u.username || '',
+      email: u.email,
+      role: u.role,
+      employeeId: u.employeeId || '',
+      gender: u.gender || '',
+      phone: u.phone || '',
+      alternatePhone: u.alternatePhone || '',
+      avatarUrl: u.avatarUrl || '',
+      status: u.status !== false
     });
+    setAvatarPreview(u.avatarUrl || '');
     setIsEditing(true);
     setUserViewMode('details');
   };
 
   const handleEditSave = async (e) => {
     e.preventDefault();
+    if (!isValidPhone(editForm.phone)) {
+      showErrorMessage(`❌ Primary phone must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
+      return;
+    }
+    if (editForm.alternatePhone && !isValidPhone(editForm.alternatePhone)) {
+      showErrorMessage(`❌ Alternate phone must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
+      return;
+    }
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
 
@@ -1053,33 +1364,6 @@ const AdminDashboard = ({ user, onLogout }) => {
       }
     } catch (err) {
       showErrorMessage('❌ Error connecting to server');
-    }
-  };
-
-  const handlePasswordReset = async () => {
-    if (!newPasswordVal) {
-      showErrorMessage('Please enter a valid password.');
-      return;
-    }
-    try {
-      const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/auth/users/${selectedUser._id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ newPassword: newPasswordVal })
-      });
-      if (res.ok) {
-        showSuccessMessage('🔑 Password reset completed successfully!');
-        setPasswordResetOpen(false);
-        setNewPasswordVal('');
-      } else {
-        showErrorMessage('❌ Failed to reset password.');
-      }
-    } catch (err) {
-      showErrorMessage('❌ Network error resetting password.');
     }
   };
 
@@ -1137,13 +1421,6 @@ const AdminDashboard = ({ user, onLogout }) => {
     setTimeout(() => setMessage(''), 5000);
   };
 
-  const togglePermission = (role, permIdx) => {
-    const updated = { ...rolesPermissions };
-    updated[role][permIdx].enabled = !updated[role][permIdx].enabled;
-    setRolesPermissions(updated);
-    showSuccessMessage(`🛡️ Permissions updated for ${role}!`);
-  };
-
   const filteredUsers = users.filter(u =>
     u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     u.email?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -1157,12 +1434,14 @@ const AdminDashboard = ({ user, onLogout }) => {
     return nameMatch && statusMatch && moduleMatch;
   });
 
+  const formatRoleLabel = (role) => (role || '').replace(/([a-z])([A-Z])/g, '$1 $2');
+
   const getRoleColor = (role) => {
     switch (role) {
       case 'Admin': return { bg: '#e0f2fe', text: '#0369a1' };
       case 'Director': return { bg: '#faf5ff', text: '#7e22ce' };
       case 'ProjectManager': return { bg: '#ecfdf5', text: '#047857' };
-      case 'PurchaseOfficer': return { bg: '#fff7ed', text: '#c2410c' };
+      case 'PurchaseManager': return { bg: '#fff7ed', text: '#c2410c' };
       default: return { bg: '#f1f5f9', text: '#475569' };
     }
   };
@@ -1191,9 +1470,9 @@ const AdminDashboard = ({ user, onLogout }) => {
     gap: '12px',
     fontSize: '14px',
     fontWeight: activePage === page ? '600' : '500',
-    backgroundColor: activePage === page ? 'rgba(255,152,0,0.2)' : 'transparent',
-    borderLeft: activePage === page ? '3px solid #ff9800' : '3px solid transparent',
-    color: activePage === page ? '#ff9800' : '#ccc',
+    backgroundColor: activePage === page ? 'rgba(37, 99, 235,0.2)' : 'transparent',
+    borderLeft: activePage === page ? '3px solid #2563eb' : '3px solid transparent',
+    color: activePage === page ? '#2563eb' : '#ccc',
     transition: 'all 0.2s ease',
     marginBottom: '6px'
   });
@@ -1205,10 +1484,17 @@ const AdminDashboard = ({ user, onLogout }) => {
     if (activePage === 'users') {
       parts = ['User Management', userViewMode === 'details' ? (selectedUser ? 'User Details' : 'Create User') : 'User Account Directory'];
     }
-    if (activePage === 'roles') parts = ['Roles Management', 'System Role Profiles'];
-    if (activePage === 'permissions') parts = ['Permissions Matrix', 'Workspace Access Matrix'];
+    if (activePage === 'suppliers') {
+      parts = ['Supplier Management', 'Supplier Registry Directory'];
+    }
+    if (activePage === 'material-management') {
+      parts = ['Material Management', 'Master Material Catalog'];
+    }
+    if (activePage === 'roles-permissions') {
+      parts = ['Roles & Permissions', rolesSubTab === 'roles' ? 'System Role Profiles' : 'Workspace Access Matrix'];
+    }
     if (activePage === 'activity') parts = ['Activity Log', 'System Audit Trails'];
-    if (activePage === 'settings') parts = ['System Settings', 'User Preferences'];
+    if (activePage === 'settings') parts = ['Settings', 'User Preferences'];
 
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>
@@ -1233,7 +1519,7 @@ const AdminDashboard = ({ user, onLogout }) => {
             <h3 style={{ color: '#0d1b4b', margin: 0, fontSize: '18px', fontWeight: '700' }}>
               {editingRole ? `Edit Role: ${editingRole.name}` : 'Create New Role'}
             </h3>
-            <button onClick={() => setShowRoleModal(false)} style={{ background: 'transparent', border: 'none', color: '#ff9800', cursor: 'pointer' }}>
+            <button onClick={() => setShowRoleModal(false)} style={{ background: 'transparent', border: 'none', color: '#2563eb', cursor: 'pointer' }}>
               <X size={20} />
             </button>
           </div>
@@ -1299,7 +1585,7 @@ const AdminDashboard = ({ user, onLogout }) => {
 
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', borderTop: '1px solid #e2e8f0', paddingTop: '16px', marginTop: 'auto' }}>
               <button type="button" onClick={() => setShowRoleModal(false)} style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Cancel</button>
-              <button type="submit" style={{ background: '#ff9800', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
+              <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
                 Save
               </button>
             </div>
@@ -1318,7 +1604,7 @@ const AdminDashboard = ({ user, onLogout }) => {
             <h3 style={{ color: '#0d1b4b', margin: 0, fontSize: '18px', fontWeight: '700' }}>
               🔍 Role Details: {viewingRole.name}
             </h3>
-            <button onClick={() => setShowRoleViewModal(false)} style={{ background: 'transparent', border: 'none', color: '#ff9800', cursor: 'pointer' }}>
+            <button onClick={() => setShowRoleViewModal(false)} style={{ background: 'transparent', border: 'none', color: '#2563eb', cursor: 'pointer' }}>
               <X size={20} />
             </button>
           </div>
@@ -1379,7 +1665,7 @@ const AdminDashboard = ({ user, onLogout }) => {
         <div style={{ background: 'white', padding: '32px', borderRadius: '16px', width: '400px', boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1', paddingBottom: '16px', marginBottom: '20px' }}>
             <h3 style={{ color: '#0d1b4b', margin: 0, fontSize: '17px', fontWeight: '700' }}>✏️ Edit Permission Badge</h3>
-            <button onClick={() => setShowPermissionCellModal(false)} style={{ background: 'transparent', border: 'none', color: '#ff9800', cursor: 'pointer' }}>
+            <button onClick={() => setShowPermissionCellModal(false)} style={{ background: 'transparent', border: 'none', color: '#2563eb', cursor: 'pointer' }}>
               <X size={20} />
             </button>
           </div>
@@ -1410,7 +1696,7 @@ const AdminDashboard = ({ user, onLogout }) => {
 
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', borderTop: '1px solid #e2e8f0', paddingTop: '16px', marginTop: '8px' }}>
               <button onClick={() => setShowPermissionCellModal(false)} style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Cancel</button>
-              <button onClick={handleSavePermission} style={{ background: '#ff9800', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Save Permission</button>
+              <button onClick={handleSavePermission} style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Save Permission</button>
             </div>
           </div>
         </div>
@@ -1432,14 +1718,14 @@ const AdminDashboard = ({ user, onLogout }) => {
             style={{ width: '38px', height: '38px', objectFit: 'contain' }} 
           />
           <div>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: '#ff9800' }}>ELS Construction</div>
+            <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
             <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Admin Panel</div>
           </div>
         </div>
 
         {/* Current user context */}
         <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#ff9800', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '16px', color: 'white' }}>
+          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '16px', color: 'white' }}>
             {user?.name?.charAt(0).toUpperCase() || 'A'}
           </div>
           <div style={{ overflow: 'hidden' }}>
@@ -1453,10 +1739,11 @@ const AdminDashboard = ({ user, onLogout }) => {
           {[
             { id: 'dashboard', label: 'Dashboard', icon: <Monitor size={18} /> },
             { id: 'users', label: 'User Management', icon: <Users size={18} /> },
-            { id: 'roles', label: 'Roles', icon: <ShieldAlert size={18} /> },
-            { id: 'permissions', label: 'Permissions', icon: <Lock size={18} /> },
+            { id: 'suppliers', label: 'Supplier Registry', icon: <Truck size={18} /> },
+            { id: 'material-management', label: 'Material Management', icon: <Package size={18} /> },
+            { id: 'roles-permissions', label: 'Roles & Permissions', icon: <ShieldAlert size={18} /> },
             { id: 'activity', label: 'Activity Log', icon: <Clock size={18} /> },
-            { id: 'settings', label: 'System Settings', icon: <Settings size={18} /> }
+            { id: 'settings', label: 'Settings', icon: <Settings size={18} /> }
           ].map(item => (
             <div key={item.id} onClick={() => {
               setActivePage(item.id);
@@ -1489,10 +1776,11 @@ const AdminDashboard = ({ user, onLogout }) => {
           <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e3a5f' }}>
             {activePage === 'dashboard' && 'Dashboard Overview'}
             {activePage === 'users' && 'User Management Console'}
-            {activePage === 'roles' && 'Roles Management'}
-            {activePage === 'permissions' && 'Permissions Matrix'}
+            {activePage === 'suppliers' && 'Supplier Partner Registry'}
+            {activePage === 'material-management' && 'Master Material Management'}
+            {activePage === 'roles-permissions' && 'Roles & Permissions'}
             {activePage === 'activity' && 'Activity Logs & Audit Trails'}
-            {activePage === 'settings' && 'System Settings & Controls'}
+            {activePage === 'settings' && 'Settings & Controls'}
           </h2>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
@@ -1552,7 +1840,7 @@ const AdminDashboard = ({ user, onLogout }) => {
             {/* Time display */}
             <div style={{ fontSize: '13px', color: '#64748b', fontWeight: '500', textAlign: 'right' }}>
               <div style={{ fontWeight: '600', color: '#1e3a5f' }}>{currentTime.toLocaleTimeString()}</div>
-              <div style={{ fontSize: '11px' }}>{currentTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
+              <div style={{ fontSize: '11px' }}>{formatDateWeekdayShort(currentTime)}</div>
             </div>
 
           </div>
@@ -1624,7 +1912,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                   .clickable-stat-card:hover {
                     transform: translateY(-3px);
                     box-shadow: 0 10px 20px rgba(0, 0, 0, 0.08) !important;
-                    border-color: #ff9800 !important;
+                    border-color: #2563eb !important;
                   }
                 `}</style>
               </div>
@@ -1656,23 +1944,82 @@ const AdminDashboard = ({ user, onLogout }) => {
                   )}
                 </div>
 
-                {/* System Stats / Chart Wrapper info */}
-                <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div>
-                    <h3 style={{ margin: '0 0 16px', color: '#1e3a5f', fontSize: '16px', fontWeight: '700' }}>Admin Quick Links</h3>
-                    <p style={{ fontSize: '13px', color: '#64748b', lineHeight: '1.6', marginBottom: '20px' }}>Use these links to quickly jump to common management configurations and user credentials directories.</p>
+                {/* Newly Created Users */}
+                <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h3 style={{ margin: 0, color: '#1e3a5f', fontSize: '16px', fontWeight: '700' }}>Newly Created Users</h3>
+                    <span onClick={() => { setActivePage('users'); setUserViewMode('list'); }} style={{ fontSize: '12px', color: '#2563eb', fontWeight: '600', cursor: 'pointer' }}>View All</span>
                   </div>
-                  
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <button onClick={() => { setActivePage('users'); setUserViewMode('list'); }} style={{ width: '100%', padding: '12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '600', fontSize: '14px', cursor: 'pointer', transition: 'background 0.2s' }}>
-                      👥 Manage User Accounts
-                    </button>
-                    <button onClick={() => setActivePage('roles')} style={{ width: '100%', padding: '12px', background: '#f1f5f9', color: '#1e3a5f', border: '1px solid #cbd5e1', borderRadius: '8px', fontWeight: '600', fontSize: '14px', cursor: 'pointer', transition: 'all 0.2s' }}>
-                      🛡️ Edit Role Permissions
-                    </button>
-                  </div>
+                  {[...users]
+                    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+                    .slice(0, 5).length === 0 ? (
+                    <div style={{ color: '#94a3b8', fontSize: '14px', textAlign: 'center', padding: '40px' }}>No users yet.</div>
+                  ) : (
+                    [...users]
+                      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+                      .slice(0, 5)
+                      .map((u, i, arr) => {
+                        const rColor = getRoleColor(u.role);
+                        return (
+                          <div key={u._id || i} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: i === arr.length - 1 ? 'none' : '1px solid #f1f5f9', cursor: 'pointer' }}
+                            onClick={() => { setSelectedUser(u); setIsEditing(false); setActivePage('users'); setUserViewMode('details'); }}>
+                            <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '700', color: '#94a3b8', flexShrink: 0 }}>
+                              {u.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: '600', fontSize: '13px', color: '#0f172a' }}>{u.name}</div>
+                              <div style={{ fontSize: '12px', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
+                            </div>
+                            <span style={{ background: rColor.bg, color: rColor.text, padding: '4px 10px', borderRadius: '8px', fontSize: '10px', fontWeight: '700', flexShrink: 0, display: 'inline-block', minWidth: '110px', textAlign: 'center' }}>
+                              {formatRoleLabel(u.role)}
+                            </span>
+                          </div>
+                        );
+                      })
+                  )}
                 </div>
 
+              </div>
+
+              {/* User Distribution Pie Chart */}
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', marginTop: '24px' }}>
+                <h3 style={{ margin: '0 0 20px', color: '#1e3a5f', fontSize: '16px', fontWeight: '700' }}>User Distribution</h3>
+                {(() => {
+                  const roleSlices = [
+                    { key: 'Director', label: 'Director', color: '#2a78d6' },
+                    { key: 'ProjectManager', label: 'Project Manager', color: '#1baf7a' },
+                    { key: 'PurchaseManager', label: 'Purchase Manager', color: '#eda100' },
+                    { key: 'MainStoreOfficer', label: 'Main Store', color: '#008300' },
+                    { key: 'SiteStoreOfficer', label: 'Site Store', color: '#4a3aa7' }
+                  ];
+                  const chartData = roleSlices
+                    .map(r => ({ name: r.label, value: users.filter(u => u.role === r.key).length, color: r.color }))
+                    .filter(d => d.value > 0);
+                  if (chartData.length === 0) {
+                    return <div style={{ color: '#94a3b8', fontSize: '14px', textAlign: 'center', padding: '40px' }}>No users yet.</div>;
+                  }
+                  return (
+                    <ResponsiveContainer width="100%" height={320}>
+                      <PieChart>
+                        <Pie
+                          data={chartData}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={110}
+                          label={({ name, value, percent }) => `${name}: ${value} (${(percent * 100).toFixed(0)}%)`}
+                        >
+                          {chartData.map((entry) => (
+                            <Cell key={entry.name} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(value, name) => [`${value} user${value === 1 ? '' : 's'}`, name]} />
+                        <Legend verticalAlign="bottom" height={36} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -1693,7 +2040,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                     </div>
 
                     {/* Add New User Button */}
-                    <button onClick={() => { setSelectedUser(null); setIsEditing(false); setUserViewMode('details'); }}
+                    <button onClick={openAddUserForm}
                       style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '12px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(37,99,235,0.2)' }}>
                       <Plus size={16} /> Add New User
                     </button>
@@ -1704,7 +2051,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                     <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                       <thead>
                         <tr style={{ background: '#1e3a5f', color: 'white' }}>
-                          {['Name', 'Email Address', 'Workspace Role', 'Status', 'Last Login', 'Actions'].map(h => (
+                          {['Name', 'Email Address', 'Workspace Role', 'Status', 'Actions'].map(h => (
                             <th key={h} style={{ padding: '16px 20px', fontSize: '13px', fontWeight: '600', letterSpacing: '0.5px' }}>{h}</th>
                           ))}
                         </tr>
@@ -1712,7 +2059,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                       <tbody>
                         {filteredUsers.length === 0 ? (
                           <tr>
-                            <td colSpan="6" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No users match your search.</td>
+                            <td colSpan="5" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No users match your search.</td>
                           </tr>
                         ) : (
                           filteredUsers.map((u, i) => {
@@ -1724,24 +2071,14 @@ const AdminDashboard = ({ user, onLogout }) => {
                                 </td>
                                 <td style={{ padding: '16px 20px', fontSize: '13px', color: '#475569' }}>{u.email}</td>
                                 <td style={{ padding: '16px 20px' }}>
-                                  <span style={{ background: rColor.bg, color: rColor.text, padding: '4px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', textTransform: 'uppercase' }}>
-                                    {u.role}
+                                  <span style={{ background: rColor.bg, color: rColor.text, padding: '4px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', display: 'inline-block', minWidth: '130px', textAlign: 'center' }}>
+                                    {formatRoleLabel(u.role)}
                                   </span>
                                 </td>
                                 <td style={{ padding: '16px 20px' }}>{getStatusBadge(u.status)}</td>
-                                <td style={{ padding: '16px 20px', fontSize: '13px', color: '#64748b' }}>
-                                  {u.lastLogin ? new Date(u.lastLogin).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : 'N/A'}
-                                </td>
                                 <td style={{ padding: '16px 20px', display: 'flex', gap: '8px' }}>
                                   <button onClick={() => handleEditClick(u)} style={{ background: '#eff6ff', color: '#2563eb', border: 'none', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                     <Pencil size={12} /> Edit
-                                  </button>
-
-                                  <button onClick={() => handleToggleStatus(u)} style={{ background: u.status !== false ? '#fef2f2' : '#ecfdf5', color: u.status !== false ? '#ef4444' : '#10b981', border: 'none', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', minWidth: '95px' }}>
-                                    {u.status !== false ? 'Deactivate' : 'Activate'}
-                                  </button>
-                                  <button onClick={() => handleResetPasswordClick(u)} style={{ background: '#fff7ed', color: '#ea580c', border: 'none', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    <Key size={12} /> Reset PW
                                   </button>
                                 </td>
                               </tr>
@@ -1773,8 +2110,8 @@ const AdminDashboard = ({ user, onLogout }) => {
                         </h2>
                         
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-                          <span style={{ fontSize: '12px', background: '#eff6ff', color: '#2563eb', padding: '4px 8px', borderRadius: '6px', fontWeight: '700', textTransform: 'uppercase' }}>
-                            {selectedUser ? selectedUser.role : newUser.role}
+                          <span style={{ fontSize: '12px', background: '#eff6ff', color: '#2563eb', padding: '4px 8px', borderRadius: '6px', fontWeight: '700', display: 'inline-block', minWidth: '130px', textAlign: 'center' }}>
+                            {formatRoleLabel(selectedUser ? selectedUser.role : newUser.role)}
                           </span>
                           {selectedUser && (
                             <span style={{ fontSize: '12px', background: selectedUser.status !== false ? '#dcfce7' : '#fee2e2', color: selectedUser.status !== false ? '#15803d' : '#b91c1c', padding: '4px 8px', borderRadius: '9999px', fontWeight: '700' }}>
@@ -1794,69 +2131,105 @@ const AdminDashboard = ({ user, onLogout }) => {
                         <button onClick={() => handleToggleStatus(selectedUser)} style={{ background: selectedUser.status !== false ? '#fef2f2' : '#ecfdf5', color: selectedUser.status !== false ? '#ef4444' : '#10b981', border: '1px solid #ef444430', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <UserMinus size={14} /> {selectedUser.status !== false ? 'Deactivate User' : 'Activate User'}
                         </button>
-                        <button onClick={() => setPasswordResetOpen(!passwordResetOpen)} style={{ background: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <button onClick={() => handleResetPasswordClick(selectedUser)} style={{ background: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <Key size={14} /> Password Reset
                         </button>
                       </div>
                     )}
                   </div>
 
-                  {/* Password Reset Modal section */}
-                  {passwordResetOpen && (
-                    <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '12px', padding: '20px', marginBottom: '24px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      <div style={{ fontWeight: '700', color: '#b45309', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Lock size={16} /> Reset User Password
-                      </div>
-                      <div style={{ display: 'flex', gap: '12px' }}>
-                        <input type="password" placeholder="Enter new password (min 6 characters)" value={newPasswordVal} onChange={e => setNewPasswordVal(e.target.value)}
-                          style={{ flex: 1, padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px' }} />
-                        <button onClick={handlePasswordReset} style={{ background: '#d97706', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
-                          Confirm Reset
-                        </button>
-                        <button onClick={() => setPasswordResetOpen(false)} style={{ background: 'transparent', border: '1px solid #cbd5e1', padding: '10px 16px', borderRadius: '8px', cursor: 'pointer', color: '#64748b', fontSize: '13px' }}>
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
                   {/* Form Container */}
                   <div style={{ background: 'white', borderRadius: '16px', padding: '32px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
-                    <form onSubmit={selectedUser ? handleEditSave : handleAddUser}>
-                      
+                    <form onSubmit={selectedUser ? handleEditSave : handleAddUser} autoComplete="off">
+
+                      {/* Profile Photo Upload */}
+                      <div style={{ marginBottom: '32px' }}>
+                        <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Profile Photo</label>
+                        <div
+                          onDragOver={e => { e.preventDefault(); if (!selectedUser || isEditing) setIsDraggingPhoto(true); }}
+                          onDragLeave={() => setIsDraggingPhoto(false)}
+                          onDrop={e => {
+                            e.preventDefault();
+                            setIsDraggingPhoto(false);
+                            if (selectedUser && !isEditing) return;
+                            if (e.dataTransfer.files?.[0]) handlePhotoFile(e.dataTransfer.files[0], !!selectedUser);
+                          }}
+                          style={{ border: `2px dashed ${isDraggingPhoto ? '#2563eb' : '#cbd5e1'}`, borderRadius: '12px', padding: '20px', display: 'flex', alignItems: 'center', gap: '20px', background: isDraggingPhoto ? '#eff6ff' : '#f8fafc', transition: 'all 0.2s' }}
+                        >
+                          <div style={{ width: '64px', height: '64px', borderRadius: '50%', overflow: 'hidden', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '22px', color: '#94a3b8', fontWeight: '700' }}>
+                            {avatarPreview ? (
+                              <img src={avatarPreview.startsWith('blob:') ? avatarPreview : `http://localhost:5000${avatarPreview}`} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                              (selectedUser ? selectedUser.name : newUser.name || '?').charAt(0).toUpperCase()
+                            )}
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: '600', fontSize: '14px', color: '#334155' }}>Upload Photo</div>
+                            <div style={{ fontSize: '13px', color: '#94a3b8', margin: '2px 0 10px' }}>Drag image here</div>
+                            <label style={{ display: 'inline-block', padding: '8px 16px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: (selectedUser && !isEditing) ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: '600', color: '#334155' }}>
+                              {avatarUploading ? 'Uploading...' : 'Choose File'}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                style={{ display: 'none' }}
+                                disabled={selectedUser && !isEditing}
+                                onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0], !!selectedUser)}
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '32px' }}>
-                        
+
                         {/* Left Column */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                           <div>
-                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Full Name</label>
-                            <input 
-                              type="text" 
-                              value={selectedUser ? editForm.name : newUser.name} 
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Full Name *</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. Nimal Perera"
+                              value={selectedUser ? editForm.name : newUser.name}
                               onChange={e => selectedUser ? setEditForm({...editForm, name: e.target.value}) : setNewUser({...newUser, name: e.target.value})}
-                              required 
+                              required
                               disabled={selectedUser && !isEditing}
                               style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', fontWeight: '500', outline: 'none' }}
                             />
                           </div>
                           <div>
-                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Email Address</label>
-                            <input 
-                              type="email" 
-                              value={selectedUser ? editForm.email : newUser.email} 
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Email Address *</label>
+                            <input
+                              type="email"
+                              placeholder="e.g. nimal@els.com"
+                              value={selectedUser ? editForm.email : newUser.email}
                               onChange={e => selectedUser ? setEditForm({...editForm, email: e.target.value}) : setNewUser({...newUser, email: e.target.value})}
-                              required 
+                              required
+                              autoComplete="off"
                               disabled={selectedUser && !isEditing}
                               style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', fontWeight: '500', outline: 'none' }}
                             />
                           </div>
                           <div>
-                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Phone Number</label>
-                            <input 
-                              type="text" 
-                              value={selectedUser ? editForm.phone : newUser.phone} 
-                              onChange={e => selectedUser ? setEditForm({...editForm, phone: e.target.value}) : setNewUser({...newUser, phone: e.target.value})}
-                              required 
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Primary Phone *</label>
+                            <input
+                              type="text"
+                              placeholder={`e.g. ${PHONE_PLACEHOLDER}`}
+                              maxLength={12}
+                              value={selectedUser ? editForm.phone : newUser.phone}
+                              onChange={e => selectedUser ? setEditForm({...editForm, phone: formatPhoneInput(e.target.value)}) : setNewUser({...newUser, phone: formatPhoneInput(e.target.value)})}
+                              required
+                              disabled={selectedUser && !isEditing}
+                              style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', fontWeight: '500', outline: 'none' }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Alternate Phone</label>
+                            <input
+                              type="text"
+                              placeholder={`e.g. ${PHONE_PLACEHOLDER}`}
+                              maxLength={12}
+                              value={selectedUser ? editForm.alternatePhone : newUser.alternatePhone}
+                              onChange={e => selectedUser ? setEditForm({...editForm, alternatePhone: formatPhoneInput(e.target.value)}) : setNewUser({...newUser, alternatePhone: formatPhoneInput(e.target.value)})}
                               disabled={selectedUser && !isEditing}
                               style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', fontWeight: '500', outline: 'none' }}
                             />
@@ -1866,55 +2239,90 @@ const AdminDashboard = ({ user, onLogout }) => {
                         {/* Right Column */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                           <div>
-                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Workspace Role</label>
-                            <select 
-                              value={selectedUser ? editForm.role : newUser.role}
-                              onChange={e => selectedUser ? setEditForm({...editForm, role: e.target.value}) : setNewUser({...newUser, role: e.target.value})}
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Employee ID *</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. EMP-0001"
+                              value={selectedUser ? editForm.employeeId : newUser.employeeId}
+                              onChange={e => selectedUser ? setEditForm({...editForm, employeeId: e.target.value}) : setNewUser({...newUser, employeeId: e.target.value})}
+                              required
+                              disabled={selectedUser && !isEditing}
+                              style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', fontWeight: '500', outline: 'none' }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Gender</label>
+                            <select
+                              value={selectedUser ? editForm.gender : newUser.gender}
+                              onChange={e => selectedUser ? setEditForm({...editForm, gender: e.target.value}) : setNewUser({...newUser, gender: e.target.value})}
                               disabled={selectedUser && !isEditing}
                               style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', fontWeight: '500', outline: 'none', cursor: 'pointer' }}
                             >
+                              <option value="">-- Select Gender --</option>
+                              <option value="Male">Male</option>
+                              <option value="Female">Female</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Workspace Role *</label>
+                            <select
+                              value={selectedUser ? editForm.role : newUser.role}
+                              onChange={e => selectedUser ? setEditForm({...editForm, role: e.target.value}) : setNewUser({...newUser, role: e.target.value})}
+                              required
+                              disabled={selectedUser && !isEditing}
+                              style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', fontWeight: '500', outline: 'none', cursor: 'pointer' }}
+                            >
+                              <option value="">-- Select Role --</option>
                               <option value="Director">Director</option>
                               <option value="ProjectManager">Project Manager</option>
-                              <option value="PurchaseOfficer">Purchase Officer</option>
+                              <option value="PurchaseManager">Purchase Manager</option>
                               <option value="MainStoreOfficer">Main Store Officer</option>
                               <option value="SiteStoreOfficer">Site Store Officer</option>
                             </select>
                           </div>
-                          <div>
-                            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Phone Number (Alt)</label>
-                            <input 
-                              type="text" 
-                              value={selectedUser ? editForm.phone : newUser.phone}
-                              disabled
-                              style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#f8fafc', fontSize: '14px', color: '#64748b', outline: 'none' }}
-                            />
-                          </div>
                           {selectedUser ? (
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                              <div>
-                                <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Created Date</label>
-                                <div style={{ padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#f8fafc', fontSize: '13px', color: '#64748b' }}>
-                                  {new Date(selectedUser.createdAt).toLocaleDateString()}
-                                </div>
-                              </div>
-                              <div>
-                                <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Last Login</label>
-                                <div style={{ padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#f8fafc', fontSize: '13px', color: '#64748b' }}>
-                                  {selectedUser.lastLogin ? new Date(selectedUser.lastLogin).toLocaleDateString() : 'N/A'}
-                                </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Created Date</label>
+                              <div style={{ padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#f8fafc', fontSize: '13px', color: '#64748b' }}>
+                                {formatDate(selectedUser.createdAt)}
                               </div>
                             </div>
                           ) : (
                             <div>
-                              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Create Password</label>
-                              <input 
-                                type="password" 
-                                placeholder="•••••••• (min 6 chars)"
-                                value={newUser.password}
-                                onChange={e => setNewUser({...newUser, password: e.target.value})}
-                                required
-                                style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', outline: 'none' }}
-                              />
+                              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>Create Password *</label>
+                              <div style={{ position: 'relative' }}>
+                                <input
+                                  type={showCreatePassword ? 'text' : 'password'}
+                                  placeholder="Enter a strong password"
+                                  value={newUser.password}
+                                  onChange={e => setNewUser({...newUser, password: e.target.value})}
+                                  required
+                                  autoComplete="new-password"
+                                  style={{ width: '100%', boxSizing: 'border-box', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', outline: 'none' }}
+                                />
+                              </div>
+                              {newUser.password && (
+                                <span onClick={() => setShowCreatePassword(!showCreatePassword)} style={{ display: 'inline-block', marginTop: '6px', fontSize: '12px', color: '#2563eb', fontWeight: '600', cursor: 'pointer', userSelect: 'none' }}>
+                                  {showCreatePassword ? '🙈 Hide Password' : '👁 Show Password'}
+                                </span>
+                              )}
+                              <div style={{ marginTop: '10px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px' }}>
+                                {[
+                                  ['length', '8+ characters'],
+                                  ['upper', 'Uppercase'],
+                                  ['lower', 'Lowercase'],
+                                  ['number', 'Number'],
+                                  ['special', 'Special Character']
+                                ].map(([key, label]) => {
+                                  const passed = passwordChecks(newUser.password)[key];
+                                  return (
+                                    <div key={key} style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', color: passed ? '#16a34a' : '#94a3b8' }}>
+                                      <span>{passed ? '✓' : '○'}</span> {label}
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -1944,9 +2352,47 @@ const AdminDashboard = ({ user, onLogout }) => {
             </div>
           )}
 
-          {/* ROLES PAGE */}
-          {activePage === 'roles' && (
+          {/* ROLES & PERMISSIONS PAGE */}
+          {activePage === 'roles-permissions' && (
             <div>
+              {/* Secondary Sub-Tabs */}
+              <div style={{ display: 'flex', background: '#f1f5f9', padding: '4px', borderRadius: '10px', width: 'fit-content', marginBottom: '24px', border: '1px solid #cbd5e1' }}>
+                <button 
+                  onClick={() => setRolesSubTab('roles')} 
+                  style={{
+                    padding: '10px 20px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '14px',
+                    backgroundColor: rolesSubTab === 'roles' ? '#0d1b4b' : 'transparent',
+                    color: rolesSubTab === 'roles' ? '#ffffff' : '#475569',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  🎭 Role Profiles
+                </button>
+                <button 
+                  onClick={() => setRolesSubTab('permissions')} 
+                  style={{
+                    padding: '10px 20px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: '600',
+                    fontSize: '14px',
+                    backgroundColor: rolesSubTab === 'permissions' ? '#0d1b4b' : 'transparent',
+                    color: rolesSubTab === 'permissions' ? '#ffffff' : '#475569',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  🔒 Access Permissions Matrix
+                </button>
+              </div>
+
+              {rolesSubTab === 'roles' ? (
+                <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                 <div style={{ position: 'relative', width: '320px' }}>
                   <Search size={18} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
@@ -1966,76 +2412,71 @@ const AdminDashboard = ({ user, onLogout }) => {
               </div>
 
               <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col style={{ width: '20%' }} />
+                    <col style={{ width: '35%' }} />
+                    <col style={{ width: '15%' }} />
+                    <col style={{ width: '30%' }} />
+                  </colgroup>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Role Name', 'Description', 'Number of Users', 'Status', 'Actions'].map(h => (
-                        <th key={h} style={{ padding: '16px 20px', fontSize: '13px', fontWeight: '600' }}>{h}</th>
-                      ))}
+                      <th style={{ padding: '16px 24px', fontSize: '13px', fontWeight: '600', letterSpacing: '0.5px' }}>Role Name</th>
+                      <th style={{ padding: '16px 24px', fontSize: '13px', fontWeight: '600', letterSpacing: '0.5px' }}>Description</th>
+                      <th style={{ padding: '16px 24px', fontSize: '13px', fontWeight: '600', letterSpacing: '0.5px', textAlign: 'center' }}>Status</th>
+                      <th style={{ padding: '16px 24px', fontSize: '13px', fontWeight: '600', letterSpacing: '0.5px' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {dbRoles.filter(r => r.name.toLowerCase().includes(roleSearchTerm.toLowerCase())).length === 0 ? (
                       <tr>
-                        <td colSpan={5} style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No roles found.</td>
+                        <td colSpan={4} style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No roles found.</td>
                       </tr>
                     ) : (
                       dbRoles.filter(r => r.name.toLowerCase().includes(roleSearchTerm.toLowerCase())).map((role, idx) => (
-                        <tr key={role._id || idx} style={{ borderBottom: '1px solid #f1f5f9', background: idx % 2 === 0 ? 'white' : '#f8fafc' }}>
-                          <td style={{ padding: '16px 20px', fontSize: '14px', fontWeight: '700', color: '#0d1b4b' }}>{role.name}</td>
-                          <td style={{ padding: '16px 20px', fontSize: '13px', color: '#475569' }}>{role.description || 'No description provided.'}</td>
-                          <td style={{ padding: '16px 20px', fontSize: '13px', color: '#1e3a5f', fontWeight: '600' }}>{role.userCount || 0}</td>
-                          <td style={{ padding: '16px 20px' }}>
-                            <span style={{ 
-                              padding: '4px 10px', 
-                              borderRadius: '9999px', 
-                              fontSize: '11px', 
-                              fontWeight: '700', 
-                              backgroundColor: role.status === 'Active' ? '#dcfce7' : '#fee2e2', 
-                              color: role.status === 'Active' ? '#166534' : '#991b1b' 
+                        <tr key={role._id || idx} style={{ borderBottom: '1px solid #f1f5f9', background: idx % 2 === 0 ? 'white' : '#f8fafc' }} className="table-row">
+                          <td style={{ padding: '18px 24px', fontSize: '14px', fontWeight: '700', color: '#0d1b4b', verticalAlign: 'middle' }}>{role.name}</td>
+                          <td style={{ padding: '18px 24px', verticalAlign: 'middle', fontSize: '13px', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={role.description || 'No description provided.'}>
+                            {role.description || 'No description provided.'}
+                          </td>
+                          <td style={{ padding: '18px 24px', verticalAlign: 'middle', textAlign: 'center' }}>
+                            <span style={{
+                              display: 'inline-block',
+                              minWidth: '72px',
+                              padding: '4px 10px',
+                              borderRadius: '9999px',
+                              fontSize: '11px',
+                              fontWeight: '700',
+                              backgroundColor: role.status === 'Active' ? '#dcfce7' : '#fee2e2',
+                              color: role.status === 'Active' ? '#166534' : '#991b1b'
                             }}>
                               {role.status || 'Active'}
                             </span>
                           </td>
-                          <td style={{ padding: '16px 20px', display: 'flex', gap: '8px' }}>
-                            <button 
-                              onClick={() => {
-                                setViewingRole(role);
-                                setShowRoleViewModal(true);
-                              }}
-                              style={{ background: '#f1f5f9', color: '#1e3a5f', border: 'none', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
-                            >
-                              View
-                            </button>
-                            <button 
-                              onClick={() => handleEditRoleClick(role)}
-                              style={{ background: '#eff6ff', color: '#2563eb', border: 'none', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
-                            >
-                              Edit
-                            </button>
-                            <button 
-                              onClick={() => handleToggleRoleStatus(role)}
-                              style={{ background: role.status === 'Active' ? '#fff7ed' : '#ecfdf5', color: role.status === 'Active' ? '#ea580c' : '#10b981', border: 'none', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
-                            >
-                              {role.status === 'Active' ? 'Disable' : 'Enable'}
-                            </button>
-                            <button 
-                              onClick={() => setRoleToDelete(role)}
-                              disabled={role.userCount > 0}
-                              style={{ 
-                                background: role.userCount > 0 ? '#f1f5f9' : '#fef2f2', 
-                                color: role.userCount > 0 ? '#94a3b8' : '#ef4444', 
-                                border: 'none', 
-                                padding: '6px 12px', 
-                                borderRadius: '8px', 
-                                cursor: role.userCount > 0 ? 'not-allowed' : 'pointer', 
-                                fontSize: '12px', 
-                                fontWeight: '600' 
-                              }}
-                              title={role.userCount > 0 ? 'Cannot delete role with assigned users' : 'Delete Role'}
-                            >
-                              Delete
-                            </button>
+                          <td style={{ padding: '18px 24px', verticalAlign: 'middle' }}>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                onClick={() => {
+                                  setViewingRole(role);
+                                  setShowRoleViewModal(true);
+                                }}
+                                style={{ background: '#f1f5f9', color: '#1e3a5f', border: 'none', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+                              >
+                                View
+                              </button>
+                              <button
+                                onClick={() => handleEditRoleClick(role)}
+                                style={{ background: '#eff6ff', color: '#2563eb', border: 'none', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleToggleRoleStatus(role)}
+                                style={{ background: role.status === 'Active' ? '#fff7ed' : '#ecfdf5', color: role.status === 'Active' ? '#ea580c' : '#10b981', border: 'none', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+                              >
+                                {role.status === 'Active' ? 'Disable' : 'Enable'}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -2044,11 +2485,8 @@ const AdminDashboard = ({ user, onLogout }) => {
                 </table>
               </div>
             </div>
-          )}
-
-          {/* PERMISSIONS PAGE */}
-          {activePage === 'permissions' && (
-            <div>
+              ) : (
+                <div>
               {/* View Toggle */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                 <div style={{ display: 'flex', background: '#f1f5f9', padding: '4px', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
@@ -2104,11 +2542,9 @@ const AdminDashboard = ({ user, onLogout }) => {
                       style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '13px', background: 'white', cursor: 'pointer', outline: 'none' }}
                     >
                       <option value="All">All Categories</option>
-                      <option value="User Management">User Management</option>
-                      <option value="Project Management">Project Management</option>
-                      <option value="Procurement">Procurement</option>
-                      <option value="Inventory & Stores">Inventory & Stores</option>
-                      <option value="Reports & Analytics">Reports & Analytics</option>
+                      {MODULES_MATRIX.map(cat => (
+                        <option key={cat.category} value={cat.category}>{cat.category}</option>
+                      ))}
                     </select>
                     <select 
                       value={matrixSelectedRole} 
@@ -2167,7 +2603,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                         const level = document.getElementById('bulkLevelSelect').value;
                         handleBulkEditPermissions(role, level);
                       }}
-                      style={{ background: '#ff9800', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', fontSize: '13px' }}
+                      style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: '600', cursor: 'pointer', fontSize: '13px' }}
                     >
                       Apply to Selected
                     </button>
@@ -2245,6 +2681,9 @@ const AdminDashboard = ({ user, onLogout }) => {
                                     style={{ marginRight: '10px', cursor: 'pointer' }}
                                   />
                                   {act.name}
+                                  {act.notEnforced && (
+                                    <span title="Configurable, but not yet enforced by any backend route." style={{ marginLeft: '8px', fontSize: '10px', fontWeight: '700', color: '#94a3b8', background: '#f1f5f9', padding: '2px 6px', borderRadius: '6px', textTransform: 'uppercase' }}>Not Enforced</span>
+                                  )}
                                 </td>
                                 {dbRoles.filter(r => r.status === 'Active' && (matrixSelectedRole === 'All' || r.name === matrixSelectedRole)).map(role => {
                                   const level = getPermissionLevel(role.name, act.name);
@@ -2287,7 +2726,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                     const activeRoleForView = matrixSelectedRole === 'All' ? (dbRoles.filter(r => r.status === 'Active')[0]?.name || 'Admin') : matrixSelectedRole;
                     return (
                       <div key={catIdx} style={{ background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', padding: '24px' }}>
-                        <h4 style={{ margin: '0 0 16px 0', fontSize: '14px', fontWeight: '700', color: '#0d1b4b', borderBottom: '2px solid #ff9800', paddingBottom: '8px', textTransform: 'uppercase', display: 'inline-block' }}>
+                        <h4 style={{ margin: '0 0 16px 0', fontSize: '14px', fontWeight: '700', color: '#0d1b4b', borderBottom: '2px solid #2563eb', paddingBottom: '8px', textTransform: 'uppercase', display: 'inline-block' }}>
                           📁 {cat.category}
                         </h4>
                         
@@ -2297,7 +2736,12 @@ const AdminDashboard = ({ user, onLogout }) => {
                             return (
                               <div key={actIdx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderRadius: '12px', background: '#f8fafc', border: '1px solid #e2e8f0' }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxWidth: '70%' }}>
-                                  <span style={{ fontSize: '14px', fontWeight: '700', color: '#1e3a5f' }}>{act.name}</span>
+                                  <span style={{ fontSize: '14px', fontWeight: '700', color: '#1e3a5f' }}>
+                                    {act.name}
+                                    {act.notEnforced && (
+                                      <span title="Configurable, but not yet enforced by any backend route." style={{ marginLeft: '8px', fontSize: '10px', fontWeight: '700', color: '#94a3b8', background: '#f1f5f9', padding: '2px 6px', borderRadius: '6px', textTransform: 'uppercase' }}>Not Enforced</span>
+                                    )}
+                                  </span>
                                   <span style={{ fontSize: '13px', color: '#64748b' }}>
                                     {getPermissionDescription(level, act.name)}
                                   </span>
@@ -2326,6 +2770,8 @@ const AdminDashboard = ({ user, onLogout }) => {
                     );
                   })}
                 </div>
+              )}
+            </div>
               )}
             </div>
           )}
@@ -2394,7 +2840,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                         <td style={{ padding: '14px 24px', fontSize: '13px', color: '#334155' }}>{log.action}</td>
                         <td style={{ padding: '14px 24px', fontSize: '13px', color: '#64748b' }}>{log.module}</td>
                         <td style={{ padding: '14px 24px', fontSize: '13px', color: '#475569' }}>
-                          {new Date(log.timestamp || log.time).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'medium' })}
+                          {formatDateTime(log.timestamp || log.time)}
                         </td>
                         <td style={{ padding: '14px 24px' }}>
                           <span style={{ 
@@ -2417,12 +2863,395 @@ const AdminDashboard = ({ user, onLogout }) => {
             </div>
           )}
 
+          {/* SUPPLIERS PAGE */}
+          {activePage === 'suppliers' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              {/* Header card with Add Supplier and Search */}
+              <div style={{ background: 'white', borderRadius: '12px', padding: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03)', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+                <div style={{ position: 'relative', width: '320px' }}>
+                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }}><Search size={18} /></span>
+                  <input
+                    type="text"
+                    placeholder="Search supplier registry..."
+                    value={supplierSearch}
+                    onChange={(e) => setSupplierSearch(e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px 10px 38px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', outline: 'none', background: 'white' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={openSupplierForm}
+                    style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    {showSupplierForm && !editingSupplierId ? '✕ Close Form' : '＋ Add Supplier'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Add/Edit Supplier Form */}
+              {showSupplierForm && (
+                <div style={{ background: 'white', borderRadius: '12px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                  <h3 style={{ margin: '0 0 20px', color: '#0d1b4b', fontSize: '16px', fontWeight: '700' }}>
+                    {editingSupplierId ? '📋 Edit Supplier Partner' : '📋 Register New Supplier Partner'}
+                  </h3>
+                  <form onSubmit={handleSupplierSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Supplier ID *</label>
+                      <input
+                        type="text"
+                        value={supForm.supplierId}
+                        onChange={(e) => setSupForm({ ...supForm, supplierId: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. SUP-0001"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Company/Supplier Name</label>
+                      <input
+                        type="text"
+                        value={supForm.contactPerson}
+                        onChange={(e) => setSupForm({ ...supForm, contactPerson: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. Lanka Cement Ltd"
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Phone Number *</label>
+                      <input
+                        type="text"
+                        maxLength={12}
+                        value={supForm.phone}
+                        onChange={(e) => setSupForm({ ...supForm, phone: formatPhoneInput(e.target.value) })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder={`e.g. ${PHONE_PLACEHOLDER}`}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Email Address</label>
+                      <input
+                        type="email"
+                        value={supForm.email}
+                        onChange={(e) => setSupForm({ ...supForm, email: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. contact@lankacement.lk"
+                      />
+                    </div>
+
+                    <div style={{ gridColumn: 'span 2' }}>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Office Address</label>
+                      <input
+                        type="text"
+                        value={supForm.address}
+                        onChange={(e) => setSupForm({ ...supForm, address: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. 45, Galle Road, Colombo 03"
+                      />
+                    </div>
+
+                    {/* Bank Details */}
+                    <div style={{ gridColumn: 'span 2', borderTop: '1px solid #f1f5f9', paddingTop: '16px' }}>
+                      <h4 style={{ margin: '0 0 12px', color: '#0d1b4b', fontSize: '14px', fontWeight: '700' }}>🏦 Bank Details</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Bank Name</label>
+                          <input type="text" value={supForm.bankName} onChange={(e) => setSupForm({ ...supForm, bankName: e.target.value })}
+                            style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} placeholder="e.g. Commercial Bank" />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Account Number</label>
+                          <input type="text" value={supForm.accountNumber} onChange={(e) => setSupForm({ ...supForm, accountNumber: e.target.value })}
+                            style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} placeholder="e.g. 8001234567" />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Branch</label>
+                          <input type="text" value={supForm.bankBranch} onChange={(e) => setSupForm({ ...supForm, bankBranch: e.target.value })}
+                            style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} placeholder="e.g. Colombo Fort" />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Document Uploads */}
+                    <div style={{ gridColumn: 'span 2', borderTop: '1px solid #f1f5f9', paddingTop: '16px' }}>
+                      <h4 style={{ margin: '0 0 12px', color: '#0d1b4b', fontSize: '14px', fontWeight: '700' }}>📎 Upload Documents <span style={{ fontWeight: '400', color: '#94a3b8', fontSize: '12px' }}>(PDF or JPG)</span></h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px' }}>
+                          <div style={{ fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '8px' }}>ID Photo</div>
+                          {supForm.documents.idPhoto ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
+                              <a href={`http://localhost:5000${supForm.documents.idPhoto.url}`} target="_blank" rel="noreferrer" style={{ color: '#2563eb', textDecoration: 'underline', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                ⬇ {supForm.documents.idPhoto.filename}
+                              </a>
+                              <button type="button" onClick={() => setSupForm(prev => ({ ...prev, documents: { ...prev.documents, idPhoto: null } }))}
+                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: '700' }}>✕</button>
+                            </div>
+                          ) : (
+                            <label style={{ display: 'inline-block', padding: '6px 14px', background: 'white', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600', color: '#334155' }}>
+                              {docUploading.idPhoto ? 'Uploading...' : 'Choose File'}
+                              <input type="file" accept=".pdf,.jpg,.jpeg" style={{ display: 'none' }}
+                                onChange={(e) => e.target.files?.[0] && handleSupplierDocUpload('idPhoto', e.target.files[0])} />
+                            </label>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                      <button type="button" onClick={() => { setShowSupplierForm(false); setEditingSupplierId(null); }} style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
+                      <button type="submit" style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>{editingSupplierId ? 'Save Changes' : 'Submit Partner'}</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {/* Suppliers List Table */}
+              <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#0d1b4b', color: 'white' }}>
+                      {['Supplier ID', 'Company/Supplier Name', 'Phone', 'Email', 'Status', 'Actions'].map(h => (
+                        <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px', fontWeight: '600' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {suppliers.filter(s => {
+                      const q = supplierSearch.toLowerCase();
+                      return s.supplierId?.toLowerCase().includes(q) || s.contactPerson?.toLowerCase().includes(q);
+                    }).map((s, i) => {
+                      return (
+                        <tr key={s._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                          <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#0d1b4b' }}>{s.supplierId}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.contactPerson || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.phone}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.email || '-'}</td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span style={{
+                              background: s.status === 'Active' ? '#e8f5e9' : '#ffebee',
+                              color: s.status === 'Active' ? '#2e7d32' : '#c62828',
+                              padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600'
+                            }}>{s.status}</span>
+                          </td>
+                          <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
+                            <button onClick={() => handleSupplierEditClick(s)}
+                              style={{ background: '#1565c0', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px', fontWeight: 'bold' }}>
+                              Edit
+                            </button>
+                            {s.status === 'Active' ? (
+                              <button onClick={() => handleSupplierDeactivate(s._id)}
+                                style={{ background: '#c62828', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                                Deactivate
+                              </button>
+                            ) : (
+                              <button onClick={() => handleSupplierActivate(s._id)}
+                                style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                                Activate
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {suppliers.filter(s => {
+                      const q = supplierSearch.toLowerCase();
+                      return s.supplierId?.toLowerCase().includes(q) || s.contactPerson?.toLowerCase().includes(q);
+                    }).length === 0 && (
+                      <tr>
+                        <td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No suppliers match your search criteria.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* MATERIAL MANAGEMENT PAGE */}
+          {activePage === 'material-management' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              {/* Header card with Add Material and Search */}
+              <div style={{ background: 'white', borderRadius: '12px', padding: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03)', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+                <div style={{ position: 'relative', width: '320px' }}>
+                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }}><Search size={18} /></span>
+                  <input
+                    type="text"
+                    placeholder="Search master materials..."
+                    value={materialSearch}
+                    onChange={(e) => setMaterialSearch(e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px 10px 38px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', outline: 'none', background: 'white' }}
+                  />
+                </div>
+                <button
+                  onClick={openMaterialForm}
+                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  {showMaterialForm && !editingMaterialId ? '✕ Close Form' : '＋ Add Material'}
+                </button>
+              </div>
+
+              {/* Add/Edit Material Form */}
+              {showMaterialForm && (
+                <div style={{ background: 'white', borderRadius: '12px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                  <h3 style={{ margin: '0 0 20px', color: '#0d1b4b', fontSize: '16px', fontWeight: '700' }}>
+                    {editingMaterialId ? '📦 Edit Master Material' : '📦 Add New Master Material'}
+                  </h3>
+                  <form onSubmit={handleMaterialFormSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Material Code *</label>
+                      <input
+                        type="text"
+                        value={materialForm.materialCode}
+                        onChange={(e) => setMaterialForm({ ...materialForm, materialCode: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. MAT-0001"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Material Name *</label>
+                      <input
+                        type="text"
+                        value={materialForm.materialName}
+                        onChange={(e) => setMaterialForm({ ...materialForm, materialName: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. Portland Cement OPC"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Material Category *</label>
+                      <select
+                        value={materialForm.category}
+                        onChange={(e) => setMaterialForm({ ...materialForm, category: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white' }}
+                        required
+                      >
+                        {MATERIAL_CATEGORY_OPTIONS.map(c => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Unit of Measure *</label>
+                      <select
+                        value={materialForm.unit}
+                        onChange={(e) => setMaterialForm({ ...materialForm, unit: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white' }}
+                        required
+                      >
+                        {MATERIAL_UNIT_OPTIONS.map(u => (
+                          <option key={u} value={u}>{u}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Estimated Unit Cost (LKR) *</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={materialForm.estimatedUnitCost}
+                        onChange={(e) => setMaterialForm({ ...materialForm, estimatedUnitCost: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. 1850"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Status</label>
+                      <select
+                        value={materialForm.status}
+                        onChange={(e) => setMaterialForm({ ...materialForm, status: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white' }}
+                      >
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                      </select>
+                    </div>
+                    <div style={{ gridColumn: 'span 2' }}>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Description (optional)</label>
+                      <input
+                        type="text"
+                        value={materialForm.description}
+                        onChange={(e) => setMaterialForm({ ...materialForm, description: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. 50kg Ordinary Portland Cement bags"
+                      />
+                    </div>
+
+                    <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                      <button type="button" onClick={() => { setShowMaterialForm(false); setEditingMaterialId(null); }} style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
+                      <button type="submit" style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>{editingMaterialId ? 'Save Changes' : 'Add Material'}</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {/* Master Material List Table */}
+              <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#0d1b4b', color: 'white' }}>
+                      {['Material Code', 'Material Name', 'Category', 'Unit', 'Est. Unit Cost (LKR)', 'Status', 'Actions'].map(h => (
+                        <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px', fontWeight: '600' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {materialMasterList.filter(m => {
+                      const q = materialSearch.toLowerCase();
+                      return m.materialCode?.toLowerCase().includes(q) || m.materialName?.toLowerCase().includes(q) || m.category?.toLowerCase().includes(q);
+                    }).map((m, i) => (
+                      <tr key={m._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                        <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#0d1b4b' }}>{m.materialCode}</td>
+                        <td style={{ padding: '14px 16px', fontSize: '13px' }}>{m.materialName}</td>
+                        <td style={{ padding: '14px 16px', fontSize: '13px' }}>{m.category}</td>
+                        <td style={{ padding: '14px 16px', fontSize: '13px' }}>{m.unit}</td>
+                        <td style={{ padding: '14px 16px', fontSize: '13px' }}>{Number(m.estimatedUnitCost || 0).toLocaleString()}</td>
+                        <td style={{ padding: '14px 16px' }}>
+                          <span style={{
+                            background: m.status === 'Active' ? '#e8f5e9' : '#ffebee',
+                            color: m.status === 'Active' ? '#2e7d32' : '#c62828',
+                            padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600'
+                          }}>{m.status}</span>
+                        </td>
+                        <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
+                          <button onClick={() => handleMaterialEditClick(m)}
+                            style={{ background: '#1565c0', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px', fontWeight: 'bold' }}>
+                            Edit
+                          </button>
+                          <button onClick={() => handleToggleMaterialStatus(m)}
+                            style={{ background: m.status === 'Active' ? '#c62828' : '#2e7d32', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                            {m.status === 'Active' ? 'Deactivate' : 'Activate'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {materialMasterList.filter(m => {
+                      const q = materialSearch.toLowerCase();
+                      return m.materialCode?.toLowerCase().includes(q) || m.materialName?.toLowerCase().includes(q) || m.category?.toLowerCase().includes(q);
+                    }).length === 0 && (
+                      <tr>
+                        <td colSpan="7" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No materials match your search criteria.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* SETTINGS PAGE */}
           {activePage === 'settings' && (
             <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '32px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
               <SettingsPage user={user} onLogout={onLogout} />
             </div>
           )}
+
+          {/* Footer */}
+          <div style={{ textAlign: 'center', padding: '20px 0 8px', marginTop: '16px', fontSize: '12px', color: '#94a3b8' }}>
+            ELS Construction Material Management System &copy;2026
+          </div>
 
         </main>
       </div>
@@ -2439,7 +3268,7 @@ const AdminDashboard = ({ user, onLogout }) => {
               </div>
             )}
             
-            <form onSubmit={handleResetPasswordSubmit}>
+            <form onSubmit={handleResetPasswordSubmit} autoComplete="off">
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '600', marginBottom: '6px', textTransform: 'uppercase' }}>New Password</label>
                 <input
@@ -2447,6 +3276,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                   placeholder="Minimum 6 characters"
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
                   style={{ width: '100%', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '8px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
                   required
                 />
@@ -2458,13 +3288,14 @@ const AdminDashboard = ({ user, onLogout }) => {
                   placeholder="Repeat new password"
                   value={confirmPassword}
                   onChange={e => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
                   style={{ width: '100%', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '8px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
                   required
                 />
               </div>
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
                 <button type="button" onClick={() => setResetPasswordUser(null)} style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Cancel</button>
-                <button type="submit" style={{ background: '#ff9800', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px', boxShadow: '0 4px 12px rgba(255,152,0,0.2)' }}>Save Password</button>
+                <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px', boxShadow: '0 4px 12px rgba(37, 99, 235,0.2)' }}>Save Password</button>
               </div>
             </form>
           </div>
@@ -2475,22 +3306,6 @@ const AdminDashboard = ({ user, onLogout }) => {
       {renderRoleModal()}
       {renderRoleViewModal()}
       {renderPermissionCellModal()}
-
-      {roleToDelete && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1100 }}>
-          <div style={{ background: 'white', padding: '32px', borderRadius: '16px', width: '400px', boxSizing: 'border-box', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }}>
-            <h3 style={{ color: '#0d1b4b', marginTop: 0, marginBottom: '16px', fontSize: '18px', fontWeight: '700' }}>⚠️ Delete Role Profile</h3>
-            <p style={{ fontSize: '14px', color: '#475569', marginBottom: '24px', lineHeight: '1.5' }}>
-              Are you sure you want to delete the role <strong>{roleToDelete.name}</strong>? This action will permanently remove the role and all associated permission mappings.
-            </p>
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-              <button onClick={() => setRoleToDelete(null)} style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Cancel</button>
-              <button onClick={handleDeleteRoleConfirm} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>Delete Role</button>
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 };

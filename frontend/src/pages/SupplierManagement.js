@@ -376,7 +376,7 @@ const styles = {
     marginBottom: '24px',
   },
   orangeBtn: {
-    backgroundColor: '#ff9800',
+    backgroundColor: '#2563eb',
     color: 'white',
     border: 'none',
     borderRadius: '6px',
@@ -384,7 +384,7 @@ const styles = {
     fontSize: '14px',
     fontWeight: '600',
     cursor: 'pointer',
-    boxShadow: '0 4px 10px rgba(255,152,0,0.2)',
+    boxShadow: '0 4px 10px rgba(37, 99, 235,0.2)',
   },
   formCard: {
     backgroundColor: 'white',
@@ -536,7 +536,7 @@ const styles = {
     fontSize: '13px',
   },
   saveBtn: {
-    backgroundColor: '#ff9800',
+    backgroundColor: '#2563eb',
     color: 'white',
     border: 'none',
     borderRadius: '4px',
