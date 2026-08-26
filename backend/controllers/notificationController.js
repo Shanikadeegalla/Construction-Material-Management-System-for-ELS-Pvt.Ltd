@@ -36,6 +36,21 @@ export const markAsRead = async (req, res) => {
   }
 };
 
+// @desc    Mark all of the current user's notifications as read
+// @route   PUT /api/notifications/mark-all-read
+// @access  Private
+export const markAllAsRead = async (req, res) => {
+  try {
+    await Notification.updateMany(
+      { recipientId: req.user._id, isRead: false },
+      { isRead: true }
+    );
+    res.status(200).json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // Utility helper to create notification programmatically
 export const createNotificationHelper = async (recipientId, message, type = 'info', link = '') => {
   try {

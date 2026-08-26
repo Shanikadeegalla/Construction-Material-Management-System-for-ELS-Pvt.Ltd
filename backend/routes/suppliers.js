@@ -8,7 +8,9 @@ import {
   updateSupplier,
   deactivateSupplier,
   activateSupplier,
-  getNextSupplierId
+  getNextSupplierId,
+  getSupplierById,
+  getSupplierProfile
 } from '../controllers/supplierController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
@@ -62,9 +64,11 @@ router.route('/')
 router.post('/add', protect, checkPermission('Supplier Management'), createSupplier);
 
 router.route('/:id')
+  .get(protect, getSupplierById)
   .put(protect, checkPermission('Supplier Management'), updateSupplier)
   .delete(protect, checkPermission('Supplier Management'), deactivateSupplier);
 
+router.get('/:id/profile', protect, getSupplierProfile);
 router.put('/:id/deactivate', protect, checkPermission('Supplier Management'), deactivateSupplier);
 router.put('/:id/activate', protect, checkPermission('Supplier Management'), activateSupplier);
 

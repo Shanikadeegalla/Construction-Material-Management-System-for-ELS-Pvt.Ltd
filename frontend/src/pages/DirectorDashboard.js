@@ -53,6 +53,11 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [poActionModal, setPoActionModal] = useState(null); // { action: 'approve' | 'reject', poId }
   const [poActionNote, setPoActionNote] = useState('');
 
+  // Payment (Invoice) Approval state
+  const [invoices, setInvoices] = useState([]);
+  const [invoiceActionModal, setInvoiceActionModal] = useState(null); // { action: 'approve' | 'reject', invoiceId }
+  const [invoiceActionNote, setInvoiceActionNote] = useState('');
+
   // Phase 5 States
   const [showCompareModal, setShowCompareModal] = useState(false);
   const [compareVersions, setCompareVersions] = useState([]);
@@ -68,7 +73,16 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     };
   };
 
+  const hasSession = () => {
+    try {
+      return !!JSON.parse(localStorage.getItem('user'))?.token;
+    } catch {
+      return false;
+    }
+  };
+
   const fetchNotifications = async () => {
+    if (!hasSession()) return;
     try {
       const res = await fetch('http://localhost:5000/api/notifications', {
         headers: getHeaders()
@@ -84,6 +98,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   const fetchData = async () => {
+    if (!hasSession()) return;
     setLoading(true);
     setError('');
     const headers = getHeaders();
@@ -154,6 +169,15 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         { _id: '1', totalAmount: 555000, prId: { projectName: 'Colombo Port Expansion', project: 'Colombo Port Expansion' } },
         { _id: '2', totalAmount: 925000, prId: { projectName: 'Marina Heights', project: 'Marina Heights' } }
       ]);
+    }
+
+    // 2b. Fetch invoices awaiting payment approval
+    try {
+      const res = await fetch('http://localhost:5000/api/invoices', { headers });
+      const data = await res.json();
+      setInvoices(data.success ? data.data : []);
+    } catch {
+      setInvoices([]);
     }
 
     // 3. Fetch Variance (for overall variance stat)
@@ -396,6 +420,65 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  const handleInvoiceApprove = async (invoiceId) => {
+    setMessage('');
+    setError('');
+    try {
+      const res = await fetch(`http://localhost:5000/api/invoices/${invoiceId}/approve-payment`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify({})
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMessage('✅ Invoice approved for payment!');
+        fetchData();
+      } else {
+        throw new Error(data.message);
+      }
+    } catch (err) {
+      setMessage('✅ Invoice approved for payment! (Demo Mode)');
+      setInvoices(prev => prev.map(inv => inv._id === invoiceId ? { ...inv, status: 'Approved', approvedBy: user?.name || 'Director' } : inv));
+    }
+  };
+
+  const openInvoiceActionModal = (invoiceId, action) => {
+    if (action === 'approve') {
+      handleInvoiceApprove(invoiceId);
+      return;
+    }
+    setInvoiceActionModal({ action, invoiceId });
+    setInvoiceActionNote('');
+  };
+
+  const handleInvoiceActionSubmit = async (e) => {
+    e.preventDefault();
+    if (!invoiceActionModal) return;
+    const { invoiceId } = invoiceActionModal;
+
+    setMessage('');
+    setError('');
+    try {
+      const res = await fetch(`http://localhost:5000/api/invoices/${invoiceId}/reject-payment`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify({ rejectionReason: invoiceActionNote })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMessage('❌ Invoice payment rejected and note sent to Main Store.');
+        setInvoiceActionModal(null);
+        fetchData();
+      } else {
+        throw new Error(data.message);
+      }
+    } catch (err) {
+      setMessage('❌ Invoice payment rejected. (Demo Mode)');
+      setInvoices(prev => prev.map(inv => inv._id === invoiceId ? { ...inv, status: 'Rejected', rejectionReason: invoiceActionNote, approvedBy: user?.name || 'Director' } : inv));
+      setInvoiceActionModal(null);
+    }
+  };
+
   const downloadPDF = (bom) => {
     const doc = new jsPDF();
     doc.setFontSize(20);
@@ -432,7 +515,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     doc.text(`Submitted By: ${creator}`, 120, 48);
     doc.text(`Date Created: ${dateStr}`, 120, 54);
 
-    const tableColumn = ["Material Name", "Category", "Unit", "Req Qty", "Unit Cost (LKR)", "Total Cost (LKR)", "Supplier Ref", "Remarks"];
+    const tableColumn = ["Material Name", "Category", "Unit", "Req Qty", "Unit Cost (LKR)", "Total Cost (LKR)"];
     const tableRows = [];
 
     const materials = bom.materials || bom.items || [];
@@ -450,9 +533,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         item.unit || '-',
         qty,
         `LKR ${cost.toLocaleString()}`,
-        `LKR ${total.toLocaleString()}`,
-        item.supplierRef || '-',
-        item.remarks || '-'
+        `LKR ${total.toLocaleString()}`
       ]);
     });
 
@@ -920,8 +1001,8 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         <div style={{ padding: '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
           <div>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: 'white' }}>ELS CMMS</div>
-            <div style={{ fontSize: '11px', color: '#2563eb' }}>Executive Director</div>
+            <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Executive Director</div>
           </div>
         </div>
         <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -938,6 +1019,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             { id: 'dashboard', label: 'Executive Board', icon: '⊞' },
             { id: 'approvals', label: 'BOM Approvals', icon: '📋' },
             { id: 'po-approvals', label: 'PO Approvals', icon: '🧾' },
+            { id: 'payment-approvals', label: 'Payment Approvals', icon: '💰' },
             { id: 'reports', label: 'Variance Reports', icon: '📊' },
             { id: 'analytics', label: 'Analytics Chart', icon: '📈' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
@@ -954,13 +1036,14 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       </div>
 
       {/* Main Content */}
-      <div style={{ marginLeft: '240px', flex: 1, background: '#f5f6fa', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div className="dashboard-content" style={{ marginLeft: '240px', flex: 1, background: '#f5f6fa', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
         {/* Header */}
         <div style={{ background: 'white', padding: '16px 24px', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ margin: 0, fontSize: '20px', color: '#0d1b4b', fontWeight: '700' }}>
             {activePage === 'dashboard' && 'Director Board Summary'}
             {activePage === 'approvals' && 'BOM Approval Registry'}
             {activePage === 'po-approvals' && 'Purchase Order Approval Registry'}
+            {activePage === 'payment-approvals' && 'Invoice & Payment Approval Registry'}
             {activePage === 'reports' && 'Project Material Variance Reports'}
             {activePage === 'analytics' && 'Operational Analytics'}
             {activePage === 'settings' && 'Settings & Preferences'}
@@ -1049,22 +1132,15 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                   { label: 'Budget Utilized (LKR)', value: `Rs. ${budgetUtilized.toLocaleString()}`, color: '#2e7d32', type: 'budget-utilized' },
                   { label: 'Material Variance (Avg)', value: `${aggregateVariance}%`, color: Number(aggregateVariance) > 15 ? '#c62828' : Number(aggregateVariance) > 5 ? '#f59e0b' : '#2e7d32', type: 'material-variance' }
                 ].map((stat, i) => (
-                  <div 
-                    key={i} 
-                    onClick={() => {
-                      setModal(stat.type);
-                      setModalSearchTerm('');
+                  <div
+                    key={i}
+                    style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '20px',
+                      boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+                      borderTop: `4px solid ${stat.color}`
                     }}
-                    style={{ 
-                      background: 'white', 
-                      borderRadius: '8px', 
-                      padding: '20px', 
-                      boxShadow: '0 1px 4px rgba(0,0,0,0.1)', 
-                      borderTop: `4px solid ${stat.color}`,
-                      cursor: 'pointer',
-                      transition: 'transform 0.2s, box-shadow 0.2s'
-                    }}
-                    className="hover-card"
                   >
                     <div style={{ fontSize: '24px', fontWeight: '700', color: stat.color }}>{stat.value}</div>
                     <div style={{ fontSize: '13px', color: '#666', marginTop: '6px' }}>{stat.label}</div>
@@ -1160,8 +1236,8 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                         return (
                           <tr key={po._id || i} style={{ borderBottom: '1px solid #e2e8f0', fontSize: '12px' }}>
                             <td style={{ padding: '8px 12px', fontWeight: '600', color: '#0d1b4b' }}>{po.poNumber || '-'}</td>
-                            <td style={{ padding: '8px 12px' }}>{projName}</td>
-                            <td style={{ padding: '8px 12px' }}>{po.supplier || '-'}</td>
+                            <td style={{ padding: '8px 12px', color: '#334155' }}>{projName}</td>
+                            <td style={{ padding: '8px 12px', color: '#334155' }}>{po.supplier || '-'}</td>
                             <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>{Number(po.totalAmount || 0).toLocaleString()}</td>
                             <td style={{ padding: '8px 12px', textAlign: 'center' }}>
                               <span style={{
@@ -1205,107 +1281,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tbody>
                   </table>
                 </div>
-              </div>
-
-              {/* Budget Utilization Section */}
-              <div style={{ marginTop: '24px', background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
-                <h3 style={{ margin: '0 0 16px', color: '#0d1b4b', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  💰 Real-Time Project Budget Utilization
-                </h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
-                  {getBudgetBreakdown().map((proj, idx) => {
-                    const budget = proj.budget || 0;
-                    const spent = proj.spent || 0;
-                    const remaining = proj.remaining || 0;
-                    const percent = Number(proj.percent) || 0;
-                    
-                    return (
-                      <div key={idx} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px', background: '#f8fafc' }}>
-                        <div style={{ fontWeight: '700', color: '#0d1b4b', fontSize: '14px', marginBottom: '12px' }}>
-                          {proj.projectName}
-                        </div>
-                        
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', marginBottom: '12px' }}>
-                          <div>
-                            <span style={{ color: '#64748b' }}>Allocated:</span>
-                            <div style={{ fontWeight: '600', color: '#0f172a' }}>LKR {budget.toLocaleString()}</div>
-                          </div>
-                          <div>
-                            <span style={{ color: '#64748b' }}>Spent:</span>
-                            <div style={{ fontWeight: '600', color: '#2e7d32' }}>LKR {spent.toLocaleString()}</div>
-                          </div>
-                          <div>
-                            <span style={{ color: '#64748b' }}>Remaining:</span>
-                            <div style={{ fontWeight: '600', color: '#1e3a8a' }}>LKR {remaining.toLocaleString()}</div>
-                          </div>
-                          <div>
-                            <span style={{ color: '#64748b' }}>Utilization:</span>
-                            <div style={{ fontWeight: '700', color: percent > 90 ? '#ef4444' : percent > 50 ? '#f59e0b' : '#2e7d32' }}>{percent}%</div>
-                          </div>
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div style={{ width: '100%', height: '8px', borderRadius: '4px', background: '#e2e8f0', overflow: 'hidden' }}>
-                          <div style={{ 
-                            width: `${Math.min(percent, 100)}%`, 
-                            height: '100%', 
-                            background: percent > 90 ? 'linear-gradient(90deg, #ef4444, #b91c1c)' : percent > 50 ? 'linear-gradient(90deg, #f59e0b, #d97706)' : 'linear-gradient(90deg, #10b981, #059669)',
-                            transition: 'width 0.4s ease'
-                          }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Low Stock Materials Widget */}
-              <div style={{ marginTop: '24px' }}>
-                <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column' }}>
-                  <h3 style={{ margin: '0 0 16px', color: '#c62828', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    ⚠️ Low Stock Materials Alert (Site Stores)
-                  </h3>
-                  <div style={{ overflowX: 'auto', flex: 1 }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                      <thead>
-                        <tr style={{ background: '#fff5f5', borderBottom: '1px solid #feb2b2' }}>
-                          <th style={{ padding: '8px 12px', fontSize: '11px', color: '#9b2c2c', fontWeight: '600' }}>Material</th>
-                          <th style={{ padding: '8px 12px', fontSize: '11px', color: '#9b2c2c', fontWeight: '600' }}>Site Location</th>
-                          <th style={{ padding: '8px 12px', fontSize: '11px', color: '#9b2c2c', fontWeight: '600', textAlign: 'right' }}>Current Stock</th>
-                          <th style={{ padding: '8px 12px', fontSize: '11px', color: '#9b2c2c', fontWeight: '600', textAlign: 'right' }}>Min Stock</th>
-                          <th style={{ padding: '8px 12px', fontSize: '11px', color: '#9b2c2c', fontWeight: '600', textAlign: 'right' }}>Shortage</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {siteMaterials.filter(m => {
-                          const min = m.minimumStock || 10;
-                          return m.quantity < min;
-                        }).map((m, idx) => {
-                          const min = m.minimumStock || 10;
-                          const shortage = min - m.quantity;
-                          const siteName = m.project_id?.projectName || m.projectId?.projectName || m.project_id?.name || m.projectId?.name || 'Site Store';
-                          return (
-                            <tr key={m._id || idx} style={{ borderBottom: '1px solid #fee2e2', fontSize: '12px', background: '#fffafb' }}>
-                              <td style={{ padding: '8px 12px', fontWeight: '600', color: '#991b1b' }}>{m.name}</td>
-                              <td style={{ padding: '8px 12px', color: '#4a5568' }}>{siteName}</td>
-                              <td style={{ padding: '8px 12px', textAlign: 'right' }}>{m.quantity} {m.unit}</td>
-                              <td style={{ padding: '8px 12px', textAlign: 'right' }}>{min} {m.unit}</td>
-                              <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: '700', color: '#e53e3e' }}>-{shortage} {m.unit}</td>
-                            </tr>
-                          );
-                        })}
-                        {siteMaterials.filter(m => m.quantity < (m.minimumStock || 10)).length === 0 && (
-                          <tr>
-                            <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' }}>
-                              ✅ All site stores have healthy stock levels.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
               </div>
 
             </div>
@@ -1449,6 +1424,74 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
           )}
 
+          {activePage === 'payment-approvals' && (
+            <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>Supplier Invoice & Payment Registry</h3>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
+                  <thead>
+                    <tr style={{ background: '#f5f6fa', borderBottom: '2px solid #e2e8f0' }}>
+                      {['Invoice No', 'PO Number', 'Supplier', 'Amount (LKR)', 'Submitted By', 'Invoice Date', 'Status', 'Actions'].map(h => (
+                        <th key={h} style={{ padding: '12px 16px', textAlign: h === 'Actions' ? 'center' : 'left', fontSize: '11px', color: '#475569', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invoices.map((inv, i) => {
+                      const isPending = inv.status === 'Pending Approval';
+                      return (
+                        <tr key={inv._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#0f172a', fontWeight: '600' }}>{inv.invoiceNumber || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{inv.po?.poNumber || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{inv.supplier?.name || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>{Number(inv.amount || 0).toLocaleString()}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{inv.submittedBy || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '12px', color: '#64748b' }}>{formatDate(inv.invoiceDate)}</td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span style={{
+                              display: 'inline-block',
+                              background: inv.status === 'Approved' ? '#e8f5e9' : inv.status === 'Paid' ? '#e0f2f1' : inv.status === 'Rejected' ? '#ffebee' : '#dbeafe',
+                              color: inv.status === 'Approved' ? '#2e7d32' : inv.status === 'Paid' ? '#00695c' : inv.status === 'Rejected' ? '#c62828' : '#1e3a8a',
+                              padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '700', minWidth: '72px', textAlign: 'center'
+                            }}>{inv.status}</span>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                              {isPending ? (
+                                <>
+                                  <button onClick={() => openInvoiceActionModal(inv._id, 'approve')}
+                                    style={{ ...poTableBtnBase, background: '#2e7d32' }}>
+                                    ✓ Approve
+                                  </button>
+                                  <button onClick={() => openInvoiceActionModal(inv._id, 'reject')}
+                                    style={{ ...poTableBtnBase, background: '#c62828' }}>
+                                    ✕ Reject
+                                  </button>
+                                </>
+                              ) : (
+                                <span style={{ fontSize: '12px', color: '#94a3b8' }}>-</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {invoices.length === 0 && (
+                      <tr>
+                        <td colSpan="8" style={{ padding: '30px', textAlign: 'center', color: '#999' }}>
+                          No invoices submitted yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {activePage === 'reports' && <VarianceReport />}
           {activePage === 'analytics' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -1556,7 +1599,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                 <thead>
                   <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                    {['Material Name', 'Category', 'Unit', 'Req Qty', 'Unit Cost (LKR)', 'Total Cost (LKR)', 'Supplier Ref', 'Remarks'].map(h => (
+                    {['Material Name', 'Category', 'Unit', 'Req Qty', 'Unit Cost (LKR)', 'Total Cost (LKR)'].map(h => (
                       <th key={h} style={{ padding: '10px', textAlign: 'left' }}>{h}</th>
                     ))}
                   </tr>
@@ -1574,14 +1617,12 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                         <td style={{ padding: '10px', color: '#334155' }}>{qty}</td>
                         <td style={{ padding: '10px', color: '#334155' }}>LKR {cost.toLocaleString()}</td>
                         <td style={{ padding: '10px', fontWeight: '700', color: '#0d1b4b' }}>LKR {total.toLocaleString()}</td>
-                        <td style={{ padding: '10px', color: '#334155' }}>{item.supplierRef || '-'}</td>
-                        <td style={{ padding: '10px', color: '#334155' }}>{item.remarks || '-'}</td>
                       </tr>
                     );
                   })}
                   {(viewingBom.materials || []).length === 0 && (
                     <tr>
-                      <td colSpan="8" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No items in this BOM.</td>
+                      <td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No items in this BOM.</td>
                     </tr>
                   )}
                 </tbody>
@@ -1600,7 +1641,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               </div>
               <div>
-                <h4 style={{ color: '#0d1b4b', margin: '0 0 10px', fontSize: '13px', fontWeight: '700', borderBottom: '1px solid #cbd5e1', paddingBottom: '6px' }}>📂 COST BREAKDOWN BY CATEGORY</h4>
+                <h4 style={{ color: '#0d1b4b', margin: '0 0 10px', fontSize: '13px', fontWeight: '700', borderBottom: '1px solid #cbd5e1', paddingBottom: '6px' }}>🧾 COST BREAKDOWN (BILL)</h4>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
                   <thead>
                     <tr style={{ background: '#e2e8f0', color: '#334155' }}>
@@ -1938,6 +1979,37 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                   Confirm Reject
                 </button>
                 <button type="button" onClick={() => setPoActionModal(null)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '90px' }}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Invoice payment reject reason modal */}
+      {invoiceActionModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200 }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '10px', width: '420px', boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
+            <h3 style={{ color: '#0d1b4b', marginTop: 0, marginBottom: '16px', fontSize: '18px' }}>
+              Reject Invoice Payment
+            </h3>
+            <form onSubmit={handleInvoiceActionSubmit}>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '700', marginBottom: '6px', textTransform: 'uppercase' }}>
+                  Rejection Reason
+                </label>
+                <textarea
+                  placeholder="Explain why this invoice payment is being rejected"
+                  value={invoiceActionNote}
+                  onChange={e => setInvoiceActionNote(e.target.value)}
+                  required
+                  style={{ width: '100%', height: '100px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical', color: '#0f172a' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button type="submit" style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '110px' }}>
+                  Confirm Reject
+                </button>
+                <button type="button" onClick={() => setInvoiceActionModal(null)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '90px' }}>Cancel</button>
               </div>
             </form>
           </div>

@@ -383,7 +383,7 @@ const buildPOEmailHtml = (po, supplierDoc) => {
       ${po.paymentTerms ? `<p><strong>Payment Terms:</strong> ${escapeHtml(po.paymentTerms)}</p>` : ''}
       ${po.deliveryAddress ? `<p><strong>Delivery Address:</strong> ${escapeHtml(po.deliveryAddress)}</p>` : ''}
       ${po.notes ? `<p><strong>Notes:</strong> ${escapeHtml(po.notes)}</p>` : ''}
-      <p>Regards,<br/>ELS CMMS Procurement Team</p>
+      <p>Regards,<br/>ELS Construction Procurement Team</p>
     </div>`;
 };
 
@@ -417,7 +417,7 @@ export const sendPurchaseOrder = async (req, res) => {
     try {
       await sendMail({
         to: supplierDoc.email,
-        subject: `Purchase Order ${po.poNumber} from ELS CMMS`,
+        subject: `Purchase Order ${po.poNumber} from ELS Construction`,
         html: buildPOEmailHtml(po, supplierDoc)
       });
     } catch (mailErr) {

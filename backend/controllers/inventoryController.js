@@ -3,8 +3,11 @@ import GRN from '../models/GRN.js';
 import PurchaseOrder from '../models/PurchaseOrder.js';
 import TransferLog from '../models/TransferLog.js';
 import MaterialUsage from '../models/MaterialUsage.js';
+import Supplier from '../models/Supplier.js';
+import StockMovement from '../models/StockMovement.js';
 import mongoose from 'mongoose';
 import { encryptDB, decryptDB } from '../utils/cryptoUtils.js';
+import { recordMovement, getDecryptedQuantity } from '../utils/stockService.js';
 
 // @desc    Get all materials (optionally filter by location)
 // @route   GET /api/inventory
@@ -71,6 +74,9 @@ export const updateMaterial = async (req, res) => {
       return res.status(404).json({ message: 'Material not found' });
     }
     const updateData = { ...req.body };
+    // Current stock is always calculated from system transactions (GRN,
+    // MIN, Usage, Stock Adjustment) — this endpoint may never overwrite it.
+    delete updateData.quantity;
     const loc = updateData.location || existing.location;
     if (loc === 'SiteStore') {
       if (updateData.name) updateData.name = encryptDB(updateData.name);
@@ -142,7 +148,7 @@ export const getLowStock = async (req, res) => {
 // @route   POST /api/inventory/grn
 // @access  Private
 export const createGRN = async (req, res) => {
-  const { poReference, supplier, receivedBy, receivedDate, items, notes } = req.body;
+  const { poReference, supplier, supplierId: bodySupplierId, receivedBy, receivedDate, items, notes } = req.body;
 
   if (!supplier || !receivedBy || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ message: 'Missing required GRN information' });
@@ -151,6 +157,7 @@ export const createGRN = async (req, res) => {
   try {
     let grnStatus = 'Completed';
     let poId = null;
+    let supplierId = null;
 
     // 1. Validate against PO if poReference provided
     if (poReference) {
@@ -159,6 +166,9 @@ export const createGRN = async (req, res) => {
         return res.status(400).json({ message: `Purchase Order '${poReference}' not found.` });
       }
       poId = po._id;
+      if (po.supplier) {
+        supplierId = po.supplier;
+      }
 
       // Compare received items against PO ordered items
       let quantitiesMatch = true;
@@ -201,6 +211,17 @@ export const createGRN = async (req, res) => {
       if (allItemsReceived) {
         po.status = 'Delivered';
         await po.save();
+      }
+    }
+
+    // 1b. Resolve supplierId: prefer an explicit id from the frontend, then the
+    // linked PO's supplier, then a case-insensitive name match against Supplier records.
+    if (bodySupplierId && mongoose.Types.ObjectId.isValid(bodySupplierId)) {
+      supplierId = bodySupplierId;
+    } else if (!supplierId) {
+      const matchedSupplier = await Supplier.findOne({ name: new RegExp(`^${supplier}$`, 'i') });
+      if (matchedSupplier) {
+        supplierId = matchedSupplier._id;
       }
     }
 
@@ -253,6 +274,7 @@ export const createGRN = async (req, res) => {
       poReference: poReference || 'N/A',
       poId,
       supplier,
+      supplierId,
       receivedBy,
       receivedDate: receivedDate || new Date(),
       items: resolvedItems,
@@ -262,13 +284,20 @@ export const createGRN = async (req, res) => {
 
     await grn.save();
 
-    // 5. Increment quantities of received items in MainStore
+    // 5. Increment quantities of received items in MainStore, logging each
+    // as a Stock Movement so the ledger stays complete.
     for (const item of resolvedItems) {
       if (item.receivedQty > 0) {
-        await Material.findByIdAndUpdate(
-          item.material,
-          { $inc: { quantity: item.receivedQty } }
-        );
+        const mat = await Material.findById(item.material);
+        if (mat) {
+          await recordMovement({
+            materialDoc: mat,
+            type: 'GRN Receipt',
+            quantityChange: item.receivedQty,
+            reference: grnNumber,
+            performedBy: receivedBy
+          });
+        }
       }
     }
 
@@ -374,13 +403,14 @@ export const createMaterialUsage = async (req, res) => {
 
     await usage.save();
 
-    // Decrement from inventory
-    if (isSite) {
-      material.quantity = encryptDB(String(decQty - Number(quantityUsed)));
-    } else {
-      material.quantity -= Number(quantityUsed);
-    }
-    await material.save();
+    // Decrement from inventory and log the movement.
+    await recordMovement({
+      materialDoc: material,
+      type: 'Usage',
+      quantityChange: -Number(quantityUsed),
+      reference: activityDescription,
+      performedBy: usage.recordedBy
+    });
 
     // Fetch updated inventory to return
     const updatedInventory = await Material.find();
@@ -473,6 +503,109 @@ export const getNotifications = async (req, res) => {
     res.status(200).json({ success: true, count: formatted.length, data: formatted });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get the full stock movement ledger (every GRN receipt, MIN
+//          issue/receipt, usage deduction and stock adjustment), with a
+//          running balance per material, read from the persisted
+//          StockMovement collection.
+// @route   GET /api/inventory/stock-ledger
+// @access  Private
+export const getStockLedger = async (req, res) => {
+  try {
+    const { material, materialId, type, from, to } = req.query;
+
+    const query = {};
+    if (materialId && mongoose.Types.ObjectId.isValid(materialId)) {
+      query.material = materialId;
+    }
+    if (type) {
+      query.type = type;
+    }
+    if (from || to) {
+      query.createdAt = {};
+      if (from) query.createdAt.$gte = new Date(from);
+      if (to) query.createdAt.$lte = new Date(to);
+    }
+
+    const movements = await StockMovement.find(query).sort({ createdAt: -1 });
+
+    let entries = movements.map(m => ({
+      date: m.createdAt,
+      materialId: String(m.material),
+      materialName: m.materialName,
+      unit: m.unit,
+      type: m.type,
+      reference: m.reference,
+      inQty: m.quantityChange > 0 ? m.quantityChange : 0,
+      outQty: m.quantityChange < 0 ? Math.abs(m.quantityChange) : 0,
+      balance: m.balanceAfter,
+      performedBy: m.performedBy,
+      remarks: m.reason ? `${m.reason}${m.notes ? ' — ' + m.notes : ''}` : (m.notes || '')
+    }));
+
+    if (material) {
+      const q = String(material).toLowerCase();
+      entries = entries.filter(e => e.materialName.toLowerCase().includes(q));
+    }
+
+    res.status(200).json({ success: true, count: entries.length, data: entries });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Record an authorized Stock Adjustment (e.g. after a physical
+//          count). The officer enters the counted quantity; the system
+//          computes the +/- delta, applies it and logs the reason.
+// @route   POST /api/inventory/adjustments
+// @access  Private (Stock Adjustments permission)
+export const createStockAdjustment = async (req, res) => {
+  try {
+    const { materialId, physicalCount, reason, notes } = req.body;
+
+    if (!materialId || !mongoose.Types.ObjectId.isValid(materialId)) {
+      return res.status(400).json({ success: false, message: 'A valid material is required.' });
+    }
+    if (physicalCount === undefined || physicalCount === null || isNaN(Number(physicalCount)) || Number(physicalCount) < 0) {
+      return res.status(400).json({ success: false, message: 'Physical count must be a non-negative number.' });
+    }
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ success: false, message: 'A reason is required for every stock adjustment.' });
+    }
+
+    const material = await Material.findById(materialId);
+    if (!material) {
+      return res.status(404).json({ success: false, message: 'Material not found.' });
+    }
+
+    const currentQty = getDecryptedQuantity(material);
+    const delta = Number(physicalCount) - currentQty;
+
+    const count = await StockMovement.countDocuments({ type: 'Adjustment' });
+    const reference = `ADJ-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`;
+    const performedBy = req.user ? req.user.name : 'Main Store Officer';
+
+    const { material: updated, movement } = await recordMovement({
+      materialDoc: material,
+      type: 'Adjustment',
+      quantityChange: delta,
+      reference,
+      performedBy,
+      reason: String(reason).trim(),
+      notes: notes || ''
+    });
+
+    const doc = updated.toObject();
+    if (doc.location === 'SiteStore') {
+      doc.name = decryptDB(doc.name);
+      doc.quantity = Number(decryptDB(doc.quantity)) || 0;
+    }
+
+    res.status(201).json({ success: true, message: 'Stock adjustment recorded successfully!', material: doc, movement });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
   }
 };
 

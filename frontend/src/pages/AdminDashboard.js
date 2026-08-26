@@ -23,7 +23,7 @@ import {
 import SettingsPage from './SettingsPage';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
 import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
@@ -93,7 +93,7 @@ const MODULES_MATRIX = [
 
 const ALL_MODULE_ACTIONS = MODULES_MATRIX.flatMap(cat => cat.actions.map(a => a.name));
 
-const AdminDashboard = ({ user, onLogout }) => {
+const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [activePage, setActivePage] = useState('dashboard');
   const [userViewMode, setUserViewMode] = useState('list'); // 'list', 'details'
   const [selectedUser, setSelectedUser] = useState(null); // User for Details page
@@ -155,7 +155,7 @@ const AdminDashboard = ({ user, onLogout }) => {
     'Cement & Concrete', 'Aggregates', 'Road Construction', 'Bridge Construction',
     'Reinforcement Steel', 'Structural Steel', 'Railway Materials', 'Drainage & Culvert',
     'Geotechnical', 'Formwork & Scaffolding', 'Fasteners & Hardware', 'Waterproofing & Joints',
-    'Safety Materials', 'Survey & Site', 'Miscellaneous', 'Other'
+    'Safety Materials', 'Survey & Site', 'Miscellaneous', 'plumbbing','Other'//change1
   ];
   const MATERIAL_UNIT_OPTIONS = ['Bag', 'Piece', 'Kg', 'Ton', 'Meter', 'm³', 'm²', 'Cum', 'Litre', 'Roll', 'Sheet', 'Set', 'Coil'];
   const emptyMaterialForm = {
@@ -183,14 +183,24 @@ const AdminDashboard = ({ user, onLogout }) => {
     }
   };
 
-  const openMaterialForm = () => {
+  const openMaterialForm = async () => {
     if (showMaterialForm && !editingMaterialId) {
       setShowMaterialForm(false);
       return;
     }
     setEditingMaterialId(null);
-    const nextCode = `MAT-${String(materialMasterList.length + 1).padStart(4, '0')}`;
-    setMaterialForm({ ...emptyMaterialForm, materialCode: nextCode });
+    setMaterialForm(emptyMaterialForm);
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/item-master/next-code', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      const nextCode = data.materialCode || `MAT-${String(materialMasterList.length + 1).padStart(4, '0')}`;
+      setMaterialForm(prev => ({ ...prev, materialCode: nextCode }));
+    } catch (err) {
+      setMaterialForm(prev => ({ ...prev, materialCode: `MAT-${String(materialMasterList.length + 1).padStart(4, '0')}` }));
+    }
     setShowMaterialForm(true);
   };
 
@@ -438,7 +448,7 @@ const AdminDashboard = ({ user, onLogout }) => {
       case 'Approve':
         return { backgroundColor: '#6a1b9a', color: '#ffffff', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', display: 'inline-block' };
       case 'Partial':
-        return { backgroundColor: '#f57f17', color: '#ffffff', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', display: 'inline-block' };
+        return { backgroundColor: '#f5af17', color: '#ffffff', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', display: 'inline-block' };
       case 'None':
       default:
         return { backgroundColor: '#f1f5f9', color: '#94a3b8', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', display: 'inline-block' };
@@ -821,6 +831,9 @@ const AdminDashboard = ({ user, onLogout }) => {
   const [message, setMessage] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date());
 
+  // Dashboard: User Activity Chart range toggle (7 or 30 days)
+  const [activityRange, setActivityRange] = useState(7);
+
   // Notifications state
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -858,7 +871,16 @@ const AdminDashboard = ({ user, onLogout }) => {
     }
   };
 
-  useEffect(() => {
+  const hasSession = () => {
+    try {
+      return !!JSON.parse(localStorage.getItem('user'))?.token;
+    } catch {
+      return false;
+    }
+  };
+
+  const fetchAllDashboardData = () => {
+    if (!hasSession()) return;
     fetchUsers();
     fetchAuditLogs();
     fetchNotifications();
@@ -866,17 +888,11 @@ const AdminDashboard = ({ user, onLogout }) => {
     fetchPermissions();
     fetchSuppliers();
     fetchMaterialMaster();
+  };
 
-    const interval = setInterval(() => {
-      fetchUsers();
-      fetchAuditLogs();
-      fetchNotifications();
-      fetchRoles();
-      fetchPermissions();
-      fetchSuppliers();
-      fetchMaterialMaster();
-    }, 30000);
-
+  useEffect(() => {
+    fetchAllDashboardData();
+    const interval = setInterval(fetchAllDashboardData, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -1769,7 +1785,7 @@ const AdminDashboard = ({ user, onLogout }) => {
       </div>
 
       {/* Main Content wrapper */}
-      <div style={{ marginLeft: '240px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <div className="dashboard-content" style={{ marginLeft: '240px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
         
         {/* Top Navbar */}
         <header style={{ height: '70px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 32px', position: 'sticky', top: 0, zIndex: 5, boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
@@ -1871,17 +1887,8 @@ const AdminDashboard = ({ user, onLogout }) => {
                   { label: 'Deactivated Accounts', value: users.filter(u => u.status === false).length, icon: <UserMinus size={22} />, color: '#ef4444', border: '#cbd5e1', keyType: 'deactivated' },
                   { label: 'System Logs Recorded', value: auditLogs.length, icon: <Clock size={22} />, color: '#6366f1', border: '#cbd5e1', keyType: 'logs' }
                 ].map((stat, i) => (
-                  <div 
-                    key={i} 
-                    onClick={() => {
-                      setActiveStatsModal(stat.keyType);
-                      setStatsSearchTerm('');
-                      if (stat.keyType === 'logs') {
-                        setStatsLogStartDate('');
-                        setStatsLogEndDate('');
-                        setStatsLogActionFilter('All');
-                      }
-                    }}
+                  <div
+                    key={i}
                     style={{
                       background: 'white',
                       borderRadius: '16px',
@@ -1890,11 +1897,8 @@ const AdminDashboard = ({ user, onLogout }) => {
                       border: '1px solid #e2e8f0',
                       display: 'flex',
                       justifyContent: 'space-between',
-                      alignItems: 'center',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease'
+                      alignItems: 'center'
                     }}
-                    className="clickable-stat-card"
                   >
                     <div>
                       <div style={{ fontSize: '13px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</div>
@@ -1905,16 +1909,6 @@ const AdminDashboard = ({ user, onLogout }) => {
                     </div>
                   </div>
                 ))}
-                <style>{`
-                  .clickable-stat-card {
-                    transition: all 0.2s ease;
-                  }
-                  .clickable-stat-card:hover {
-                    transform: translateY(-3px);
-                    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.08) !important;
-                    border-color: #2563eb !important;
-                  }
-                `}</style>
               </div>
 
               {/* Quick Actions & Recent Activity layout */}
@@ -1981,6 +1975,88 @@ const AdminDashboard = ({ user, onLogout }) => {
 
               </div>
 
+              {/* User Activity Chart */}
+              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', marginTop: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                  <h3 style={{ margin: 0, color: '#1e3a5f', fontSize: '16px', fontWeight: '700' }}>User Activity</h3>
+                  <div style={{ display: 'flex', gap: '4px', background: '#f1f5f9', borderRadius: '10px', padding: '4px' }}>
+                    {[7, 30].map(range => (
+                      <button
+                        key={range}
+                        onClick={() => setActivityRange(range)}
+                        style={{
+                          padding: '6px 16px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: activityRange === range ? '#2563eb' : 'transparent',
+                          color: activityRange === range ? 'white' : '#64748b',
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        {range} Days
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {(() => {
+                  const days = [];
+                  const now = new Date();
+                  for (let i = activityRange - 1; i >= 0; i--) {
+                    const d = new Date(now);
+                    d.setDate(d.getDate() - i);
+                    d.setHours(0, 0, 0, 0);
+                    days.push(d);
+                  }
+                  const chartData = days.map(day => {
+                    const nextDay = new Date(day);
+                    nextDay.setDate(nextDay.getDate() + 1);
+                    const count = auditLogs.filter(log => {
+                      const ts = new Date(log.timestamp || log.time);
+                      return ts >= day && ts < nextDay;
+                    }).length;
+                    return {
+                      date: activityRange === 7
+                        ? day.toLocaleDateString('en-US', { weekday: 'short' })
+                        : day.toLocaleDateString('en-US', { day: 'numeric', month: 'short' }),
+                      count
+                    };
+                  });
+                  const totalActivity = chartData.reduce((sum, d) => sum + d.count, 0);
+                  if (totalActivity === 0) {
+                    return <div style={{ color: '#94a3b8', fontSize: '14px', textAlign: 'center', padding: '40px' }}>No activity recorded in the last {activityRange} days.</div>;
+                  }
+                  return (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="activityGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fontSize: 12, fill: '#64748b' }}
+                          axisLine={{ stroke: '#e2e8f0' }}
+                          tickLine={false}
+                          interval={activityRange === 30 ? 3 : 0}
+                        />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} width={30} />
+                        <Tooltip
+                          formatter={(value) => [`${value} activit${value === 1 ? 'y' : 'ies'}`, 'Activity']}
+                          contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px' }}
+                        />
+                        <Area type="monotone" dataKey="count" stroke="#2563eb" strokeWidth={2} fill="url(#activityGradient)" activeDot={{ r: 5 }} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  );
+                })()}
+              </div>
+
               {/* User Distribution Pie Chart */}
               <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', marginTop: '24px' }}>
                 <h3 style={{ margin: '0 0 20px', color: '#1e3a5f', fontSize: '16px', fontWeight: '700' }}>User Distribution</h3>
@@ -2030,18 +2106,18 @@ const AdminDashboard = ({ user, onLogout }) => {
               {/* LIST VIEW */}
               {userViewMode === 'list' && (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                    
+                  <div style={{ background: 'white', borderRadius: '12px', padding: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03)', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
+
                     {/* Search Bar */}
                     <div style={{ position: 'relative', width: '320px' }}>
-                      <Search size={18} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                      <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }}><Search size={18} /></span>
                       <input placeholder="Search users by name or email..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-                        style={{ padding: '12px 16px 12px 42px', border: '1px solid #e2e8f0', borderRadius: '12px', width: '100%', fontSize: '14px', background: 'white', color: '#0f172a', outline: 'none', transition: 'border 0.2s' }} />
+                        style={{ width: '100%', padding: '10px 12px 10px 38px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', outline: 'none', background: 'white', color: '#0f172a' }} />
                     </div>
 
                     {/* Add New User Button */}
                     <button onClick={openAddUserForm}
-                      style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '12px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(37,99,235,0.2)' }}>
+                      style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <Plus size={16} /> Add New User
                     </button>
                   </div>
@@ -2244,10 +2320,11 @@ const AdminDashboard = ({ user, onLogout }) => {
                               type="text"
                               placeholder="e.g. EMP-0001"
                               value={selectedUser ? editForm.employeeId : newUser.employeeId}
-                              onChange={e => selectedUser ? setEditForm({...editForm, employeeId: e.target.value}) : setNewUser({...newUser, employeeId: e.target.value})}
+                              readOnly
                               required
                               disabled={selectedUser && !isEditing}
-                              style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white', fontSize: '14px', color: '#0f172a', fontWeight: '500', outline: 'none' }}
+                              title="Auto-generated by the system and cannot be edited"
+                              style={{ width: '100%', padding: '12px 14px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#f1f5f9', fontSize: '14px', color: '#475569', fontWeight: '500', outline: 'none', cursor: 'not-allowed' }}
                             />
                           </div>
                           <div>
@@ -2900,8 +2977,9 @@ const AdminDashboard = ({ user, onLogout }) => {
                       <input
                         type="text"
                         value={supForm.supplierId}
-                        onChange={(e) => setSupForm({ ...supForm, supplierId: e.target.value })}
-                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        readOnly
+                        title="Auto-generated by the system and cannot be edited"
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f1f5f9', color: '#475569', cursor: 'not-allowed' }}
                         placeholder="e.g. SUP-0001"
                         required
                       />
@@ -3102,8 +3180,9 @@ const AdminDashboard = ({ user, onLogout }) => {
                       <input
                         type="text"
                         value={materialForm.materialCode}
-                        onChange={(e) => setMaterialForm({ ...materialForm, materialCode: e.target.value })}
-                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        readOnly
+                        title="Auto-generated by the system and cannot be edited"
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f1f5f9', color: '#475569', cursor: 'not-allowed' }}
                         placeholder="e.g. MAT-0001"
                         required
                       />
@@ -3244,7 +3323,7 @@ const AdminDashboard = ({ user, onLogout }) => {
           {/* SETTINGS PAGE */}
           {activePage === 'settings' && (
             <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '32px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
-              <SettingsPage user={user} onLogout={onLogout} />
+              <SettingsPage user={user} onLogout={onLogout} onUserUpdate={onUserUpdate} />
             </div>
           )}
 

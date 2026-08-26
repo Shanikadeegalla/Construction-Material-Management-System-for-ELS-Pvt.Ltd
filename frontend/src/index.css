@@ -78,3 +78,56 @@ body.dark-mode .dashboard-layout textarea {
   border-color: var(--border) !important;
 }
 
+/* Retrofit dark mode for dashboard pages that use inline (hardcoded) colors.
+   Inverting lightness + rotating hue back turns the light workspace dark while
+   keeping color relationships (blues, reds, greens, etc.) roughly intact. */
+body.dark-mode .dashboard-content {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* Photos/logos would look like a photo negative under the invert above, so
+   un-invert them back to their normal appearance. */
+body.dark-mode .dashboard-content img {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* The Settings page already computes its own dark palette in JS, so cancel
+   the ancestor invert here to avoid double-inverting it. */
+body.dark-mode .dashboard-content .settings-no-invert {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+body.dark-mode .dashboard-content .settings-no-invert img {
+  filter: none;
+}
+
+/* Purchase Order form field focus state */
+.po-field {
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.po-field:focus {
+  outline: none;
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.po-remove-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.po-remove-btn:hover {
+  background: #fef2f2;
+  color: #c62828;
+  border-color: #fecaca;
+}
+

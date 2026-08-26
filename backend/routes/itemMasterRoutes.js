@@ -3,12 +3,15 @@ import {
   getItemMasters,
   createItemMaster,
   updateItemMaster,
-  deleteItemMaster
+  deleteItemMaster,
+  getNextMaterialCode
 } from '../controllers/itemMasterController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
 
 const router = express.Router();
+
+router.get('/next-code', protect, checkPermission('Manage Item Master'), getNextMaterialCode);
 
 router.route('/')
   .get(protect, getItemMasters)

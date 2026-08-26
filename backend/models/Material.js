@@ -13,13 +13,11 @@ const materialSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    required: true,
-    enum: ['Cement', 'Steel', 'Bricks', 'Sand', 'Gravel', 'Wood', 'Paint', 'Other']
+    required: true
   },
   unit: {
     type: String,
-    required: true,
-    enum: ['kg', 'ton', 'litre', 'piece', 'bag', 'm3']
+    required: true
   },
   quantity: {
     type: mongoose.Schema.Types.Mixed,

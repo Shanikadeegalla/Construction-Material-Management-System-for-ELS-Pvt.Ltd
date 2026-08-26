@@ -154,13 +154,16 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
     }
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
+      // The sidebar/header and business fields (requestedBy, approvedBy, createdBy, etc.)
+      // across the app read `user.name`, not firstName/lastName, so keep it in sync.
+      const combinedName = `${firstName} ${lastName}`.trim();
       const res = await fetch(`http://localhost:5000/api/auth/users/${user._id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ firstName, lastName, phone })
+        body: JSON.stringify({ firstName, lastName, phone, name: combinedName || undefined })
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -346,7 +349,7 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
   };
 
   return (
-    <div style={{ maxWidth: '900px', margin: '0 auto' }}>
+    <div className="settings-no-invert" style={{ maxWidth: '900px', margin: '0 auto' }}>
       {/* Alert Banners */}
       {error && <div style={{ color: '#ef4444', background: darkMode ? '#451a1a' : '#fef2f2', padding: '12px 16px', borderRadius: '8px', marginBottom: '20px', fontSize: '14px', border: '1px solid rgba(239,68,68,0.2)' }}>{error}</div>}
       {message && <div style={{ color: '#22c55e', background: darkMode ? '#143520' : '#f0fdf4', padding: '12px 16px', borderRadius: '8px', marginBottom: '20px', fontSize: '14px', border: '1px solid rgba(34,197,94,0.2)' }}>{message}</div>}
@@ -625,8 +628,9 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
               </div>
             </div>
 
+           
             {/* Change Password form */}
-            <form onSubmit={handleSavePassword}>
+            {false && (<form onSubmit={handleSavePassword}>
               <div style={{ fontWeight: '600', fontSize: '14px', marginBottom: '14px', color: darkMode ? '#2563eb' : '#0d1b4b' }}>Update Password</div>
               
               <div>
@@ -649,8 +653,8 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
               <button type="submit" disabled={loading} style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>
                 Change Password
               </button>
-            </form>
-          </div>
+            </form>)}   
+          </div> 
 
           {/* Preferences Card */}
           <div style={styles.card}>

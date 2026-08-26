@@ -6,7 +6,7 @@ import { formatDate, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 
 function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
-  const [view, setView] = useState('dashboard'); // 'dashboard', 'grn', 'transfer-log', 'purchase-request', 'item-master', 'min', 'approved-boms'
+  const [view, setView] = useState('dashboard'); // 'dashboard', 'inventory', 'grn', 'purchase-request', 'min', 'approved-boms', 'stock-adjustments', 'stock-ledger', 'reports', 'notifications', 'settings'
   const [materials, setMaterials] = useState([]);
   const [projects, setProjects] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -22,24 +22,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [modal, setModal] = useState(null);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
 
-  // Item Master state
-  const [itemMasterList, setItemMasterList] = useState([]);
-  const [showItemMasterForm, setShowItemMasterForm] = useState(false);
-  const [editingItemMasterId, setEditingItemMasterId] = useState(null);
-  const emptyItemMasterForm = {
-    materialCode: '',
-    materialName: '',
-    category: 'Cement & Concrete',
-    unit: 'Bag',
-    estimatedUnitCost: 0,
-    description: '',
-    minimumStock: 10,
-    maximumStock: 100,
-    reorderLevel: 50,
-    status: 'Active'
-  };
-  const [itemMasterForm, setItemMasterForm] = useState(emptyItemMasterForm);
-
   // Material Issuance Notes and Usage charts state
   const [minList, setMinList] = useState([]);
   const [usageLogs, setUsageLogs] = useState([]);
@@ -51,6 +33,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [approvedBoms, setApprovedBoms] = useState([]);
   const [selectedBom, setSelectedBom] = useState(null);
   const [shortageItems, setShortageItems] = useState([]);
+  const [viewBom, setViewBom] = useState(null);
 
   // PR Form State
   const [prForm, setPrForm] = useState({
@@ -67,18 +50,46 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
 
-  // Inline edit state
-  const [editingMaterialId, setEditingMaterialId] = useState(null);
-  const [editQty, setEditQty] = useState('');
+  // Stock Adjustment form state
+  const [adjustmentForm, setAdjustmentForm] = useState({ materialId: '', physicalCount: '', reason: 'Count Correction', notes: '' });
+  const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
 
   // GRN form
   const [grnForm, setGrnForm] = useState({
     supplier: '',
+    supplierId: '',
     poReference: '',
     receivedDate: new Date().toISOString().substring(0, 10),
     notes: '',
     items: [{ material: '', expectedQty: '', receivedQty: '', condition: 'Good' }]
   });
+
+  // Post-GRN "Attach Invoice" step state
+  const [lastCreatedGrn, setLastCreatedGrn] = useState(null);
+  const [supplierPOs, setSupplierPOs] = useState([]);
+  const [invoiceForm, setInvoiceForm] = useState({ po: '', amount: '', invoiceDate: new Date().toISOString().substring(0, 10) });
+  const [invoiceFile, setInvoiceFile] = useState(null);
+  const [invoiceMessage, setInvoiceMessage] = useState('');
+  const [invoiceError, setInvoiceError] = useState('');
+
+  // Purchase Orders (used to prefill GRN creation from a Sent/Delivered PO)
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [selectedGrnPO, setSelectedGrnPO] = useState('');
+
+  // Purchase Requests screen filters
+  const [prSearch, setPrSearch] = useState('');
+  const [prStatusFilter, setPrStatusFilter] = useState('All');
+
+  // Stock Ledger screen
+  const [stockLedger, setStockLedger] = useState([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerTypeFilter, setLedgerTypeFilter] = useState('All');
+
+  // Notifications screen (persisted Notification records, distinct from the
+  // low-stock alert list used by the header bell)
+  const [persistedNotifications, setPersistedNotifications] = useState([]);
+  const [notifFilter, setNotifFilter] = useState('All');
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -89,6 +100,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   };
 
   const fetchNotifications = async () => {
+    if (!hasSession()) return;
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const res = await fetch('http://localhost:5000/api/inventory/notifications', {
@@ -115,23 +127,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
-  const fetchItemMasters = async () => {
-    try {
-      const headers = getHeaders();
-      const res = await fetch('http://localhost:5000/api/item-master', { headers });
-      const data = await res.json();
-      let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
-      if (finalData.success && Array.isArray(finalData.data)) {
-        setItemMasterList(finalData.data);
-      }
-    } catch (err) {
-      console.error('Error fetching item master records:', err);
-    }
-  };
-
   const fetchMINs = async () => {
     try {
       const headers = getHeaders();
@@ -146,6 +141,48 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       }
     } catch (err) {
       console.error('Error fetching Material Issuance Notes:', err);
+    }
+  };
+
+  const fetchPurchaseOrders = async () => {
+    try {
+      const headers = getHeaders();
+      const res = await fetch('http://localhost:5000/api/purchase-orders', { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setPurchaseOrders(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching purchase orders:', err);
+    }
+  };
+
+  const fetchStockLedger = async () => {
+    setLedgerLoading(true);
+    try {
+      const headers = getHeaders();
+      const res = await fetch('http://localhost:5000/api/inventory/stock-ledger', { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setStockLedger(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching stock ledger:', err);
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  const fetchPersistedNotifications = async () => {
+    try {
+      const headers = getHeaders();
+      const res = await fetch('http://localhost:5000/api/notifications', { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setPersistedNotifications(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching notifications:', err);
     }
   };
 
@@ -166,12 +203,21 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
+  const hasSession = () => {
+    try {
+      return !!JSON.parse(localStorage.getItem('user'))?.token;
+    } catch {
+      return false;
+    }
+  };
+
   const fetchData = async () => {
+    if (!hasSession()) return;
     setLoading(true);
     setError('');
     try {
       const headers = getHeaders();
-      
+
       // Fetch materials
       const matRes = await fetch('http://localhost:5000/api/inventory', { headers });
       const matData = await matRes.json();
@@ -210,10 +256,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         setProjects(projData.data);
       }
 
-      // Fetch Item Masters, Material Issuance Notes, and Usage Logs
-      await fetchItemMasters();
+      // Fetch Material Issuance Notes and Usage Logs
       await fetchMINs();
       await fetchUsageLogs();
+      await fetchPurchaseOrders();
+      await fetchPersistedNotifications();
 
       // Fetch Director-Approved BOMs so Main Store can compare planned quantities
       // against current stock and raise a shortage Purchase Request.
@@ -263,6 +310,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (view === 'stock-ledger' || view === 'stock-adjustments') {
+      fetchStockLedger();
+    }
+  }, [view]);
+
   const handleGrnSubmit = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -288,12 +341,13 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         setSuccess(data.message || '✅ GRN processed successfully!');
         setGrnForm({
           supplier: '',
+          supplierId: '',
           poReference: '',
           receivedDate: new Date().toISOString().substring(0, 10),
           notes: '',
           items: [{ material: '', expectedQty: '', receivedQty: '', condition: 'Good' }]
         });
-        setView('dashboard');
+        setLastCreatedGrn(data.grn);
         fetchData();
       } else {
         setError(data.message || 'Failed to submit GRN.');
@@ -303,152 +357,101 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
-  const handleEditQtySave = async (id) => {
-    try {
-      const res = await fetch(`http://localhost:5000/api/inventory/${id}`, {
-        method: 'PUT',
-        headers: getHeaders(),
-        body: JSON.stringify({ quantity: Number(editQty) })
-      });
-      if (res.ok) {
-        setSuccess('✅ Quantity updated successfully!');
-        setEditingMaterialId(null);
-        fetchData();
-      } else {
-        setError('Failed to update quantity.');
-      }
-    } catch (err) {
-      setError('Connection error.');
+  // Once a GRN is recorded, load that supplier's Sent/Delivered POs so the
+  // officer can optionally attach the paper invoice the supplier handed over.
+  useEffect(() => {
+    if (!lastCreatedGrn) {
+      setSupplierPOs([]);
+      return;
     }
-  };
-
-  const handleDeleteMaterial = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this material?')) return;
-    setError(''); setSuccess('');
-    try {
-      const res = await fetch(`http://localhost:5000/api/inventory/${id}`, {
-        method: 'DELETE',
-        headers: getHeaders()
-      });
-      if (res.ok) {
-        setSuccess('✅ Material deleted successfully!');
-        fetchData();
-      } else {
-        setError('Failed to delete material.');
+    (async () => {
+      try {
+        const res = await fetch('http://localhost:5000/api/purchase-orders', { headers: getHeaders() });
+        const data = await res.json();
+        const allPOs = data.success ? data.data : [];
+        setSupplierPOs(allPOs.filter(po => po.supplier === lastCreatedGrn.supplier && ['Sent', 'Delivered'].includes(po.status)));
+      } catch (err) {
+        setSupplierPOs([]);
       }
-    } catch (err) {
-      setError('Connection error.');
-    }
-  };
+    })();
+  }, [lastCreatedGrn]);
 
-  // Item Master Handlers
-  const handleItemMasterSubmit = async (e) => {
+  const handleInvoiceSubmit = async (e) => {
     e.preventDefault();
-    setError(''); setSuccess('');
+    setInvoiceError(''); setInvoiceMessage('');
+    if (!invoiceForm.po || !invoiceForm.amount) {
+      setInvoiceError('Please select the related PO and enter the invoice amount.');
+      return;
+    }
     try {
-      const payload = {
-        ...itemMasterForm,
-        estimatedUnitCost: Number(itemMasterForm.estimatedUnitCost) || 0,
-        reorderLevel: Number(itemMasterForm.reorderLevel)
-      };
+      const fd = new FormData();
+      fd.append('supplier', lastCreatedGrn.supplierId || '');
+      fd.append('po', invoiceForm.po);
+      fd.append('grn', lastCreatedGrn._id);
+      fd.append('amount', invoiceForm.amount);
+      fd.append('invoiceDate', invoiceForm.invoiceDate);
+      if (invoiceFile) fd.append('file', invoiceFile);
 
-      const ciphertext = encryptTransit(JSON.stringify(payload));
-      
-      const url = editingItemMasterId 
-        ? `http://localhost:5000/api/item-master/${editingItemMasterId}`
-        : 'http://localhost:5000/api/item-master';
-      const method = editingItemMasterId ? 'PUT' : 'POST';
-
-      const res = await fetch(url, {
-        method,
-        headers: getHeaders(),
-        body: JSON.stringify({ ciphertext })
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/invoices', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd
       });
       const data = await res.json();
-      let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
-
-      if (res.ok && finalData.success) {
-        setSuccess(`Item Master threshold ${editingItemMasterId ? 'updated' : 'created'} successfully!`);
-        setShowItemMasterForm(false);
-        setEditingItemMasterId(null);
-        setItemMasterForm(emptyItemMasterForm);
-        fetchData();
+      if (res.ok) {
+        setInvoiceMessage('✅ Invoice recorded and sent for Director approval!');
+        setInvoiceForm({ po: '', amount: '', invoiceDate: new Date().toISOString().substring(0, 10) });
+        setInvoiceFile(null);
+        setTimeout(() => {
+          setLastCreatedGrn(null);
+          setInvoiceMessage('');
+          setView('dashboard');
+        }, 1500);
       } else {
-        setError(finalData.message || 'Failed to save item master threshold.');
+        setInvoiceError(data.message || 'Failed to record invoice.');
+      }
+    } catch (err) {
+      setInvoiceError('Connection error occurred.');
+    }
+  };
+
+  // Stock Adjustment: the only sanctioned way to correct current stock
+  // outside of GRN/MIN/Usage transactions (e.g. after a physical count).
+  const handleStockAdjustmentSubmit = async (e) => {
+    e.preventDefault();
+    setError(''); setSuccess('');
+
+    if (!adjustmentForm.materialId || adjustmentForm.physicalCount === '' || !adjustmentForm.reason.trim()) {
+      setError('Please select a material, enter the physical count, and provide a reason.');
+      return;
+    }
+
+    setAdjustmentSubmitting(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/inventory/adjustments', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          materialId: adjustmentForm.materialId,
+          physicalCount: Number(adjustmentForm.physicalCount),
+          reason: adjustmentForm.reason,
+          notes: adjustmentForm.notes
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSuccess('✅ Stock adjustment recorded successfully!');
+        setAdjustmentForm({ materialId: '', physicalCount: '', reason: 'Count Correction', notes: '' });
+        fetchData();
+        fetchStockLedger();
+      } else {
+        setError(data.message || 'Failed to record stock adjustment.');
       }
     } catch (err) {
       setError('Connection error occurred.');
-    }
-  };
-
-  const handleItemMasterDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this master item threshold?')) return;
-    setError(''); setSuccess('');
-    try {
-      const res = await fetch(`http://localhost:5000/api/item-master/${id}`, {
-        method: 'DELETE',
-        headers: getHeaders()
-      });
-      const data = await res.json();
-      let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
-      if (res.ok && finalData.success) {
-        setSuccess('Master item threshold deleted successfully!');
-        fetchData();
-      } else {
-        setError(finalData.message || 'Failed to delete record.');
-      }
-    } catch (err) {
-      setError('Connection error.');
-    }
-  };
-
-  const handleItemMasterEditClick = (item) => {
-    setEditingItemMasterId(item._id);
-    setItemMasterForm({
-      materialCode: item.materialCode,
-      materialName: item.materialName,
-      category: item.category || 'Cement & Concrete',
-      unit: item.unit,
-      estimatedUnitCost: item.estimatedUnitCost || 0,
-      description: item.description || '',
-      minimumStock: item.minimumStock,
-      maximumStock: item.maximumStock,
-      reorderLevel: item.reorderLevel,
-      status: item.status || 'Active'
-    });
-    setShowItemMasterForm(true);
-  };
-
-  const handleItemMasterToggleStatus = async (item) => {
-    setError(''); setSuccess('');
-    const newStatus = item.status === 'Active' ? 'Inactive' : 'Active';
-    try {
-      const payload = { status: newStatus };
-      const ciphertext = encryptTransit(JSON.stringify(payload));
-      const res = await fetch(`http://localhost:5000/api/item-master/${item._id}`, {
-        method: 'PUT',
-        headers: getHeaders(),
-        body: JSON.stringify({ ciphertext })
-      });
-      const data = await res.json();
-      let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
-      if (res.ok && finalData.success) {
-        setSuccess(`Material ${newStatus === 'Active' ? 'activated' : 'deactivated'} successfully!`);
-        fetchData();
-      } else {
-        setError(finalData.message || 'Failed to update status.');
-      }
-    } catch (err) {
-      setError('Connection error.');
+    } finally {
+      setAdjustmentSubmitting(false);
     }
   };
 
@@ -676,6 +679,74 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     window.location.reload();
   };
 
+  // GRN: prefill the form (supplier + item rows) from a selected Sent/Delivered PO
+  const handleGrnPOSelect = (poId) => {
+    setSelectedGrnPO(poId);
+    if (!poId) return;
+    const po = purchaseOrders.find(p => p._id === poId);
+    if (!po) return;
+
+    const matchedSupplier = suppliers.find(s => s._id === (po.supplier?._id || po.supplier));
+    const items = (po.items || []).map(item => {
+      const matchedMaterial = materials.find(m => m.name === item.materialName && m.location === 'MainStore');
+      return {
+        material: matchedMaterial ? matchedMaterial._id : '',
+        materialName: item.materialName,
+        expectedQty: item.quantity,
+        receivedQty: '',
+        condition: 'Good'
+      };
+    });
+
+    setGrnForm({
+      ...grnForm,
+      supplier: matchedSupplier ? matchedSupplier.name : (po.supplier?.name || grnForm.supplier),
+      supplierId: matchedSupplier ? matchedSupplier._id : (po.supplier?._id || ''),
+      poReference: po.poNumber,
+      items: items.length > 0 ? items : grnForm.items
+    });
+  };
+
+  // Notifications
+  const handleMarkNotifRead = async (id) => {
+    try {
+      await fetch(`http://localhost:5000/api/notifications/${id}/read`, {
+        method: 'PUT',
+        headers: getHeaders()
+      });
+      setPersistedNotifications(prev => prev.map(n => n._id === id ? { ...n, isRead: true } : n));
+    } catch (err) {
+      console.error('Error marking notification as read:', err);
+    }
+  };
+
+  const handleMarkAllNotifsRead = async () => {
+    try {
+      await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+        method: 'PUT',
+        headers: getHeaders()
+      });
+      setPersistedNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    } catch (err) {
+      console.error('Error marking all notifications as read:', err);
+    }
+  };
+
+  // Generic CSV export used by Stock Ledger / Reports screens
+  const exportToCSV = (filename, headers, rows) => {
+    const escapeCell = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+    const csvContent = [headers.map(escapeCell).join(','), ...rows.map(row => row.map(escapeCell).join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const handlePrSubmit = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -760,6 +831,50 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     const matchesCategory = categoryFilter === 'All' || m.category === categoryFilter;
     return matchesSearch && matchesCategory;
   });
+
+  // Additional dashboard/report stats
+  const outOfStockItems = mainMaterials.filter(m => m.quantity === 0).length;
+  const reorderRequiredItems = mainMaterials.filter(m => m.quantity > m.minimumStock && m.quantity <= (m.reorderLevel || m.minimumStock)).length;
+  const pendingGRNs = grns.filter(g => g.status === 'Pending' || g.status === 'Partial').length;
+  const pendingPRs = prs.filter(p => p.status === 'Pending').length;
+  const pendingMINs = minList.filter(m => m.status === 'Pending').length;
+  const todayStr = new Date().toISOString().substring(0, 10);
+  const todaysTransfers = transfers.filter(t => String(t.date || '').substring(0, 10) === todayStr).length;
+
+  const materialStatus = (m) => {
+    if (m.quantity === 0) return { label: 'Out of Stock', bg: '#ffebee', color: '#c62828' };
+    if (m.quantity <= m.minimumStock) return { label: 'Low', bg: '#ffebee', color: '#c62828' };
+    if (m.quantity <= (m.reorderLevel || m.minimumStock)) return { label: 'Reorder', bg: '#fff3e0', color: '#b7791f' };
+    return { label: 'Healthy', bg: '#e8f5e9', color: '#2e7d32' };
+  };
+
+  // Category breakdown (by stock value) for the dashboard donut chart
+  const categoryChartData = Object.entries(
+    mainMaterials.reduce((acc, m) => {
+      const cat = m.category || 'Other';
+      acc[cat] = (acc[cat] || 0) + ((m.quantity * m.unitPrice) || 0);
+      return acc;
+    }, {})
+  ).map(([name, value]) => ({ name, value })).filter(c => c.value > 0);
+
+  // Recent activity feed combining GRNs, MIN status changes, and PR submissions
+  const recentActivities = [
+    ...grns.map(g => ({
+      date: g.createdAt || g.receivedDate,
+      icon: '📥',
+      text: `${g.grnNumber} created for ${g.supplier}`
+    })),
+    ...minList.filter(m => ['Issued', 'Approved', 'Received', 'Rejected'].includes(m.status)).map(m => ({
+      date: m.updatedAt || m.issuedAt || m.createdAt,
+      icon: m.status === 'Rejected' ? '⛔' : '🚚',
+      text: `${m.minNumber} ${m.status.toLowerCase()}${m.status === 'Issued' ? ` to ${m.projectName || 'site'}` : ''}`
+    })),
+    ...prs.map(pr => ({
+      date: pr.createdAt,
+      icon: '📝',
+      text: `Purchase Request submitted for ${pr.projectName || pr.project} (${pr.materials?.length || 0} item${pr.materials?.length === 1 ? '' : 's'})`
+    }))
+  ].filter(a => a.date).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6);
 
   const renderStoreStatsModal = () => {
     if (!modal) return null;
@@ -870,6 +985,34 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           </tr>
         );
       });
+    } else if (modal === 'reorder-level') {
+      title = 'Reorder Level Report';
+      tableHeaders = ['Material Name', 'Current Qty', 'Reorder Level', 'Min Stock', 'Actions'];
+
+      const reorderItems = mainMaterials.filter(m => m.quantity > m.minimumStock && m.quantity <= (m.reorderLevel || m.minimumStock));
+      const filtered = reorderItems.filter(m => (m.name || '').toLowerCase().includes(query));
+
+      tableRows = filtered.map((m, idx) => (
+        <tr key={m._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#b7791f' }}>{m.name}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700' }}>{m.quantity} {m.unit}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px' }}>{m.reorderLevel} {m.unit}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px' }}>{m.minimumStock} {m.unit}</td>
+          <td style={{ padding: '12px 16px' }}>
+            <button
+              onClick={() => {
+                setPrForm({ projectName: '', materialName: m.name, unit: m.unit, quantity: (m.maximumStock || m.reorderLevel) - m.quantity, urgency: 'Normal', notes: 'Restock ahead of reorder threshold.' });
+                setShowPrForm(true);
+                setView('purchase-request');
+                setModal(null);
+              }}
+              style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+            >
+              Create PR
+            </button>
+          </td>
+        </tr>
+      ));
     } else if (modal === 'last-grn') {
       title = 'Goods Received Note (GRN) History';
       tableHeaders = ['GRN Number', 'Supplier', 'Received Date', 'Items', 'Status'];
@@ -1007,7 +1150,10 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       <aside style={styles.sidebar}>
         <div style={styles.sidebarHeader}>
           <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
-          <h2 style={styles.sidebarTitle}>ELS CMMS</h2>
+          <div>
+            <div style={styles.sidebarTitle}>ELS Construction</div>
+            <div style={styles.sidebarSubtitle}>Main Store Panel</div>
+          </div>
         </div>
 
         {user && (
@@ -1023,12 +1169,13 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         <nav style={styles.sidebarNav}>
           {[
             { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+            { id: 'inventory', label: 'Inventory', icon: '📦' },
             { id: 'grn', label: 'GRN Incoming', icon: '📥' },
-            { id: 'transfer-log', label: 'Transfer Log', icon: '📋' },
-            { id: 'min', label: 'Material Issuance Notes', icon: '📥' },
+            { id: 'min', label: 'Material Requests (MIN)', icon: '🚚' },
             { id: 'approved-boms', label: 'Approved BOMs', icon: '✅' },
-            { id: 'item-master', label: 'Item Master', icon: '🗂️' },
-            { id: 'purchase-request', label: 'Purchase Request', icon: '📝' },
+            { id: 'stock-adjustments', label: 'Stock Adjustments', icon: '⚖️' },
+            { id: 'stock-ledger', label: 'Stock Ledger', icon: '📜' },
+            { id: 'reports', label: 'Reports & Analytics', icon: '📈' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
             <button
@@ -1047,7 +1194,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       </aside>
 
       {/* Content Area */}
-      <main style={styles.contentArea}>
+      <main className="dashboard-content" style={styles.contentArea}>
         {/* Header bar with low stock notification bell */}
         <div style={{ background: 'white', padding: '16px 24px', borderRadius: '8px', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
           <h2 style={{ margin: 0, fontSize: '18px', color: '#0d1b4b' }}>
@@ -1146,51 +1293,106 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
             {/* Stats row */}
             <div style={styles.statsGrid}>
-              <div 
-                style={{ ...styles.statCard, cursor: 'pointer', transition: 'transform 0.2s' }}
-                onClick={() => { setModal('total-materials'); setModalSearchTerm(''); }}
-                className="hover-card"
-              >
+              <div style={styles.statCard}>
                 <div style={styles.statLabel}>Total Materials</div>
                 <div style={styles.statValue}>{totalSKUs}</div>
               </div>
-              <div 
-                style={{ ...styles.statCard, cursor: 'pointer', transition: 'transform 0.2s' }}
-                onClick={() => { setModal('stock-value'); setModalSearchTerm(''); }}
-                className="hover-card"
-              >
-                <div style={styles.statLabel}>Total Stock Value</div>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>Inventory Value</div>
                 <div style={styles.statValue}>LKR {stockValue.toLocaleString()}</div>
               </div>
-              <div 
-                style={{ 
-                  ...styles.statCard, 
-                  borderLeft: lowStockItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b',
-                  cursor: 'pointer',
-                  transition: 'transform 0.2s'
-                }}
-                onClick={() => { setModal('low-stock'); setModalSearchTerm(''); }}
-                className="hover-card"
-              >
-                <div style={styles.statLabel}>Low Stock Alerts</div>
+              <div style={{ ...styles.statCard, borderLeft: pendingGRNs > 0 ? '4px solid #f59e0b' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Pending GRNs</div>
+                <div style={styles.statValue}>{pendingGRNs}</div>
+              </div>
+              <div style={{ ...styles.statCard, borderLeft: (pendingPRs + pendingMINs) > 0 ? '4px solid #f59e0b' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Pending Requests</div>
+                <div style={styles.statValue}>{pendingPRs + pendingMINs}</div>
+              </div>
+              <div style={{ ...styles.statCard, borderLeft: lowStockItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Low Stock Items</div>
                 <div style={{ ...styles.statValue, color: lowStockItems > 0 ? '#ef4444' : '#0d1b4b' }}>{lowStockItems}</div>
               </div>
-              <div 
-                style={{ ...styles.statCard, cursor: 'pointer', transition: 'transform 0.2s' }}
-                onClick={() => { setModal('frequently-used'); }}
-                className="hover-card"
-              >
-                <div style={styles.statLabel}>Frequently Used</div>
-                <div style={styles.statValue}>View Catalog 📊</div>
+              <div style={{ ...styles.statCard, borderLeft: outOfStockItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Out of Stock</div>
+                <div style={{ ...styles.statValue, color: outOfStockItems > 0 ? '#ef4444' : '#0d1b4b' }}>{outOfStockItems}</div>
               </div>
-              <div 
-                style={{ ...styles.statCard, cursor: 'pointer', transition: 'transform 0.2s' }}
-                onClick={() => { setModal('last-grn'); setModalSearchTerm(''); }}
-                className="hover-card"
-              >
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>Today's Transfers</div>
+                <div style={styles.statValue}>{todaysTransfers}</div>
+              </div>
+              <div style={styles.statCard}>
                 <div style={styles.statLabel}>Last GRN Date</div>
                 <div style={styles.statValue}>{lastGRNDate}</div>
               </div>
+            </div>
+
+            {/* Recent Activity + Category Breakdown */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: '24px' }}>
+              <div style={{ ...styles.tableContainer, padding: '20px' }}>
+                <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>🕘 Recent Activity</h3>
+                {recentActivities.length === 0 ? (
+                  <div style={{ color: '#64748b', fontSize: '13px' }}>No recent activity recorded.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {recentActivities.map((a, i) => (
+                      <div key={i} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', paddingBottom: '10px', borderBottom: i === recentActivities.length - 1 ? 'none' : '1px solid #f1f5f9' }}>
+                        <span style={{ fontSize: '16px' }}>{a.icon}</span>
+                        <div>
+                          <div style={{ fontSize: '13px', color: '#0d1b4b', fontWeight: '500' }}>{a.text}</div>
+                          <div style={{ fontSize: '11px', color: '#94a3b8' }}>{formatDateTime(a.date)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{ ...styles.tableContainer, padding: '20px' }}>
+                <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>📊 Inventory Value by Category</h3>
+                {categoryChartData.length === 0 ? (
+                  <div style={{ color: '#64748b', fontSize: '13px' }}>No stock value recorded yet.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+                    <div style={{ width: '100%', height: '180px' }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie data={categoryChartData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={3} dataKey="value">
+                            {categoryChartData.map((entry, index) => {
+                              const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#3b82f6', '#14b8a6'];
+                              return <Cell key={`cat-cell-${index}`} fill={COLORS[index % COLORS.length]} />;
+                            })}
+                          </Pie>
+                          <Tooltip formatter={(value) => `LKR ${Number(value).toLocaleString()}`} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {categoryChartData.map((c, index) => {
+                        const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#3b82f6', '#14b8a6'];
+                        const pct = stockValue > 0 ? ((c.value / stockValue) * 100).toFixed(1) : '0.0';
+                        return (
+                          <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
+                            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: COLORS[index % COLORS.length] }}></div>
+                            <span style={{ fontWeight: '600', flex: 1 }}>{c.name}</span>
+                            <span style={{ color: '#64748b' }}>{pct}%</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {view === 'inventory' && (
+          <div style={styles.container}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+              <h1 style={{ ...styles.pageTitle, marginBottom: 0 }}>Inventory — Main Store Material List</h1>
+            </div>
+            <div style={{ color: '#64748b', fontSize: '13px', marginBottom: '16px' }}>
+              Generated from the Material Master. Quantities update automatically from GRN receipts, Material Issuance, Usage and Stock Adjustments — they cannot be edited directly here.
             </div>
 
             {/* Filters */}
@@ -1233,58 +1435,33 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                       <th style={styles.th}>Unit</th>
                       <th style={styles.th}>Qty</th>
                       <th style={styles.th}>Min Stock</th>
+                      <th style={styles.th}>Reorder Level</th>
                       <th style={styles.th}>Unit Price (LKR)</th>
-                      <th style={styles.th}>Location</th>
                       <th style={styles.th}>Status</th>
                       <th style={styles.th}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredMaterials.map(m => {
-                      const isLow = m.quantity <= m.minimumStock;
+                      const status = materialStatus(m);
                       return (
-                        <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: isLow ? 'rgba(239,68,68,0.08)' : 'white' }}>
-                          <td style={{ ...styles.tdBold, color: isLow ? '#c62828' : '#0d1b4b' }}>{m.name}</td>
+                        <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: status.label !== 'Healthy' ? 'rgba(239,68,68,0.05)' : 'white' }}>
+                          <td style={{ ...styles.tdBold, color: status.label !== 'Healthy' ? '#c62828' : '#0d1b4b' }}>{m.name}</td>
                           <td style={styles.td}>{m.category}</td>
                           <td style={styles.td}>{m.unit}</td>
-                          <td style={styles.td}>
-                            {editingMaterialId === m._id ? (
-                              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                <input
-                                  type="number"
-                                  value={editQty}
-                                  onChange={e => setEditQty(e.target.value)}
-                                  style={{ width: '70px', padding: '4px' }}
-                                />
-                                <button onClick={() => handleEditQtySave(m._id)} style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>Save</button>
-                                <button onClick={() => setEditingMaterialId(null)} style={{ background: '#ccc', color: '#333', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>X</button>
-                              </div>
-                            ) : (
-                              <span>{m.quantity}</span>
-                            )}
-                          </td>
+                          <td style={styles.td}>{m.quantity}</td>
                           <td style={styles.td}>{m.minimumStock}</td>
+                          <td style={styles.td}>{m.reorderLevel}</td>
                           <td style={styles.td}>{m.unitPrice?.toLocaleString()}</td>
-                          <td style={styles.td}>{m.location}</td>
                           <td style={styles.td}>
-                            {isLow ? (
-                              <span style={{ background: '#ffebee', color: '#c62828', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Low</span>
-                            ) : (
-                              <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>OK</span>
-                            )}
+                            <span style={{ background: status.bg, color: status.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{status.label}</span>
                           </td>
                           <td style={styles.td}>
                             <button
-                              onClick={() => { setEditingMaterialId(m._id); setEditQty(m.quantity); }}
-                              style={{ background: '#1565c0', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px' }}
+                              onClick={() => { setLedgerSearch(m.name); setView('stock-ledger'); }}
+                              style={{ background: '#1565c0', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
                             >
-                              Edit Qty
-                            </button>
-                            <button
-                              onClick={() => handleDeleteMaterial(m._id)}
-                              style={{ background: '#c62828', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
-                            >
-                              Delete
+                              View History
                             </button>
                           </td>
                         </tr>
@@ -1294,85 +1471,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                 </table>
               )}
             </div>
-            {/* Monthly Usage Pie Chart */}
-            {(() => {
-              const filteredUsage = usageLogs.filter(u => {
-                if (!u.usageDate) return false;
-                const dateStr = u.usageDate.substring(0, 7); // 'YYYY-MM'
-                return dateStr === selectedMonth;
-              });
-
-              const usageDataGrouped = [];
-              const usageMap = {};
-              filteredUsage.forEach(u => {
-                const name = u.materialName;
-                const qty = Number(u.actualQty) || 0;
-                usageMap[name] = (usageMap[name] || 0) + qty;
-              });
-              Object.keys(usageMap).forEach(key => {
-                usageDataGrouped.push({ name: key, value: usageMap[key] });
-              });
-
-              return (
-                <div style={{ ...styles.tableContainer, marginTop: '24px', padding: '24px', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h3 style={{ margin: 0, color: '#0d1b4b' }}>📊 Monthly Material Usage Consumption</h3>
-                    <div>
-                      <label style={{ marginRight: '10px', fontSize: '13px', fontWeight: 'bold' }}>Select Month:</label>
-                      <select 
-                        value={selectedMonth} 
-                        onChange={e => setSelectedMonth(e.target.value)}
-                        style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
-                      >
-                        <option value="2026-07">July 2026</option>
-                        <option value="2026-06">June 2026</option>
-                        <option value="2026-05">May 2026</option>
-                        <option value="2026-04">April 2026</option>
-                      </select>
-                    </div>
-                  </div>
-                  {usageDataGrouped.length === 0 ? (
-                    <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>No material consumption recorded for this month.</div>
-                  ) : (
-                    <div style={{ display: 'flex', gap: '40px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <div style={{ width: '320px', height: '240px' }}>
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={usageDataGrouped}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={60}
-                              outerRadius={90}
-                              paddingAngle={4}
-                              dataKey="value"
-                            >
-                              {usageDataGrouped.map((entry, index) => {
-                                const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#3b82f6'];
-                                return <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />;
-                              })}
-                            </Pie>
-                            <Tooltip formatter={(value, name) => [`${value} units`, name]} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-                      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        {usageDataGrouped.map((item, index) => {
-                          const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#3b82f6'];
-                          return (
-                            <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
-                              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: COLORS[index % COLORS.length] }}></div>
-                              <span style={{ fontWeight: '600' }}>{item.name}:</span>
-                              <span>{item.value}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
           </div>
         )}
 
@@ -1383,13 +1481,31 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
             {/* GRN form */}
             <div style={styles.formCard}>
               <h3 style={{ color: '#0d1b4b', marginBottom: '16px' }}>Record New Incoming Goods</h3>
+
+              <div style={{ marginBottom: '16px', maxWidth: '400px' }}>
+                <label style={styles.fieldLabel}>Select Purchase Order (Optional — prefills supplier &amp; items)</label>
+                <select
+                  value={selectedGrnPO}
+                  onChange={e => handleGrnPOSelect(e.target.value)}
+                  style={styles.formSelect}
+                >
+                  <option value="">-- Manual Entry --</option>
+                  {purchaseOrders.filter(po => ['Sent', 'Delivered'].includes(po.status)).map(po => (
+                    <option key={po._id} value={po._id}>{po.poNumber} — {po.supplier?.name || po.supplier} (LKR {Number(po.totalAmount || 0).toLocaleString()})</option>
+                  ))}
+                </select>
+              </div>
+
               <form onSubmit={handleGrnSubmit}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
                   <div>
                     <label style={styles.fieldLabel}>Supplier *</label>
                     <select
                       value={grnForm.supplier}
-                      onChange={e => setGrnForm({ ...grnForm, supplier: e.target.value })}
+                      onChange={e => {
+                        const matched = suppliers.find(s => s.name === e.target.value);
+                        setGrnForm({ ...grnForm, supplier: e.target.value, supplierId: matched ? matched._id : '' });
+                      }}
                       style={styles.formSelect}
                       required
                     >
@@ -1512,6 +1628,65 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               </form>
             </div>
 
+            {/* Attach Invoice (optional, shown right after a GRN is recorded) */}
+            {lastCreatedGrn && (
+              <div style={styles.formCard}>
+                <h3 style={{ color: '#0d1b4b', marginBottom: '4px' }}>Attach Supplier Invoice (Optional)</h3>
+                <p style={{ color: '#666', fontSize: '13px', marginTop: 0, marginBottom: '16px' }}>
+                  GRN {lastCreatedGrn.grnNumber} recorded. If the supplier handed over an invoice with this delivery, record it here for Director payment approval.
+                </p>
+                {invoiceMessage && <div style={{ ...styles.errorAlert, backgroundColor: '#e8f5e9', border: '1px solid #66bb6a', color: '#2e7d32' }}>{invoiceMessage}</div>}
+                {invoiceError && <div style={styles.errorAlert}>{invoiceError}</div>}
+                <form onSubmit={handleInvoiceSubmit}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                    <div>
+                      <label style={styles.fieldLabel}>Related PO *</label>
+                      <select
+                        value={invoiceForm.po}
+                        onChange={e => setInvoiceForm({ ...invoiceForm, po: e.target.value })}
+                        style={styles.formSelect}
+                        required
+                      >
+                        <option value="">-- Select Purchase Order --</option>
+                        {supplierPOs.map(po => (
+                          <option key={po._id} value={po._id}>{po.poNumber}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={styles.fieldLabel}>Invoice Amount (LKR) *</label>
+                      <input
+                        type="number"
+                        value={invoiceForm.amount}
+                        onChange={e => setInvoiceForm({ ...invoiceForm, amount: e.target.value })}
+                        style={styles.formInput}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={styles.fieldLabel}>Invoice Date</label>
+                      <DateInput
+                        value={invoiceForm.invoiceDate}
+                        onChange={iso => setInvoiceForm({ ...invoiceForm, invoiceDate: iso })}
+                        style={styles.formInput}
+                      />
+                    </div>
+                    <div style={{ gridColumn: 'span 2' }}>
+                      <label style={styles.fieldLabel}>Attach Invoice PDF/JPG</label>
+                      <input type="file" accept=".pdf,.jpg,.jpeg" onChange={e => setInvoiceFile(e.target.files[0])} style={styles.formInput} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button type="submit" style={styles.orangeBtn}>Record Invoice</button>
+                    <button type="button" onClick={() => { setLastCreatedGrn(null); setView('dashboard'); }}
+                      style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                      Skip
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
             {/* GRN History */}
             <div style={styles.tableContainer}>
               <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>GRN Processing History</h3>
@@ -1545,41 +1720,120 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           </div>
         )}
 
-        {view === 'transfer-log' && (
+        {view === 'stock-ledger' && (
           <div style={styles.container}>
-            <h1 style={styles.pageTitle}>Stock Transfer Ledger Log</h1>
-            <div style={styles.tableContainer}>
-              <table style={styles.table}>
-                <thead>
-                  <tr style={styles.tableHeaderRow}>
-                    <th style={styles.th}>Date</th>
-                    <th style={styles.th}>Material Name</th>
-                    <th style={styles.th}>Quantity Issued</th>
-                    <th style={styles.th}>From</th>
-                    <th style={styles.th}>To</th>
-                    <th style={styles.th}>Issued By</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {transfers.length === 0 ? (
-                    <tr>
-                      <td colSpan="6" style={{ padding: '24px', textAlign: 'center', color: '#999' }}>No transfers recorded.</td>
-                    </tr>
-                  ) : (
-                    transfers.map((t, i) => (
-                      <tr key={t._id || i} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={styles.td}>{formatDateTime(t.date)}</td>
-                        <td style={styles.tdBold}>{t.materialName}</td>
-                        <td style={styles.td}>{t.quantity}</td>
-                        <td style={styles.td}>{t.from}</td>
-                        <td style={styles.td}>{t.to}</td>
-                        <td style={styles.td}>{t.issuedBy}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+              <h1 style={{ ...styles.pageTitle, marginBottom: 0 }}>Stock Ledger — All Inventory Movements</h1>
+              <button onClick={fetchStockLedger} style={{ ...styles.orangeBtn, background: '#2563eb' }}>🔄 Refresh</button>
             </div>
+
+            {(() => {
+              const q = ledgerSearch.toLowerCase();
+              const filteredLedger = stockLedger.filter(e => {
+                const matchesSearch = !q || e.materialName.toLowerCase().includes(q);
+                const matchesType = ledgerTypeFilter === 'All' || e.type === ledgerTypeFilter;
+                return matchesSearch && matchesType;
+              });
+              const totalIn = filteredLedger.reduce((sum, e) => sum + (e.inQty || 0), 0);
+              const totalOut = filteredLedger.reduce((sum, e) => sum + (e.outQty || 0), 0);
+
+              return (
+                <>
+                  <div style={styles.filtersContainer}>
+                    <input
+                      type="text"
+                      placeholder="Search material..."
+                      value={ledgerSearch}
+                      onChange={e => setLedgerSearch(e.target.value)}
+                      style={styles.searchInput}
+                    />
+                    <div style={styles.filterGroup}>
+                      <span style={styles.filterLabel}>Transaction Type:</span>
+                      <select value={ledgerTypeFilter} onChange={e => setLedgerTypeFilter(e.target.value)} style={styles.filterSelect}>
+                        <option value="All">All Types</option>
+                        <option value="GRN Receipt">GRN Receipt</option>
+                        <option value="MIN Issue">MIN Issue</option>
+                        <option value="MIN Receipt">MIN Receipt</option>
+                        <option value="Usage">Usage</option>
+                        <option value="Adjustment">Adjustment</option>
+                      </select>
+                      <button
+                        onClick={() => exportToCSV('stock-ledger.csv',
+                          ['Date', 'Material', 'Type', 'Reference', 'IN Qty', 'OUT Qty', 'Balance', 'Performed By', 'Remarks'],
+                          filteredLedger.map(e => [formatDateTime(e.date), e.materialName, e.type, e.reference, e.inQty, e.outQty, e.balance, e.performedBy, e.remarks])
+                        )}
+                        style={styles.refreshBtn}
+                      >
+                        ⬇ Export CSV
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={styles.tableContainer}>
+                    {ledgerLoading ? (
+                      <div style={styles.loadingText}>Loading stock ledger...</div>
+                    ) : filteredLedger.length === 0 ? (
+                      <div style={styles.emptyState}>No stock movements recorded yet.</div>
+                    ) : (
+                      <table style={styles.table}>
+                        <thead>
+                          <tr style={styles.tableHeaderRow}>
+                            <th style={styles.th}>Date</th>
+                            <th style={styles.th}>Material</th>
+                            <th style={styles.th}>Transaction Type</th>
+                            <th style={styles.th}>Reference</th>
+                            <th style={styles.th}>IN Qty</th>
+                            <th style={styles.th}>OUT Qty</th>
+                            <th style={styles.th}>Balance</th>
+                            <th style={styles.th}>Performed By</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredLedger.map((e, i) => (
+                            <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
+                              <td style={styles.td}>{formatDateTime(e.date)}</td>
+                              <td style={styles.tdBold}>{e.materialName} <span style={{ color: '#94a3b8', fontWeight: 'normal' }}>{e.unit}</span></td>
+                              <td style={styles.td}>
+                                {(() => {
+                                  const TYPE_COLORS = {
+                                    'GRN Receipt': { bg: '#e8f5e9', color: '#2e7d32' },
+                                    'MIN Issue': { bg: '#e3f2fd', color: '#1565c0' },
+                                    'MIN Receipt': { bg: '#e0f2fe', color: '#0369a1' },
+                                    'Usage': { bg: '#fff3e0', color: '#b7791f' },
+                                    'Adjustment': { bg: '#f3e8ff', color: '#7e22ce' }
+                                  };
+                                  const c = TYPE_COLORS[e.type] || { bg: '#f1f5f9', color: '#334155' };
+                                  return (
+                                    <span style={{
+                                      background: c.bg,
+                                      color: c.color,
+                                      padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
+                                    }}>{e.type}</span>
+                                  );
+                                })()}
+                              </td>
+                              <td style={styles.td}>{e.reference}</td>
+                              <td style={{ ...styles.td, color: e.inQty ? '#2e7d32' : '#cbd5e1', fontWeight: e.inQty ? 'bold' : 'normal' }}>{e.inQty ? `+${e.inQty}` : '—'}</td>
+                              <td style={{ ...styles.td, color: e.outQty ? '#c62828' : '#cbd5e1', fontWeight: e.outQty ? 'bold' : 'normal' }}>{e.outQty ? `-${e.outQty}` : '—'}</td>
+                              <td style={styles.tdBold}>{e.balance}</td>
+                              <td style={styles.td}>{e.performedBy}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{ background: '#f5f6fa', borderTop: '2px solid #cbd5e1' }}>
+                            <td colSpan="4" style={{ ...styles.tdBold, textAlign: 'right' }}>Totals (filtered):</td>
+                            <td style={{ ...styles.tdBold, color: '#2e7d32' }}>+{totalIn}</td>
+                            <td style={{ ...styles.tdBold, color: '#c62828' }}>-{totalOut}</td>
+                            <td colSpan="2" style={styles.td}></td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
 
@@ -1730,54 +1984,103 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
             {/* Submitted PRs Registry */}
             <div style={styles.tableContainer}>
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                 <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>📋 Submitted PR Registry Archive</h3>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    placeholder="Search project or material..."
+                    value={prSearch}
+                    onChange={e => setPrSearch(e.target.value)}
+                    style={{ padding: '7px 12px', borderRadius: '6px', border: 'none', fontSize: '13px', width: '220px' }}
+                  />
+                  <select
+                    value={prStatusFilter}
+                    onChange={e => setPrStatusFilter(e.target.value)}
+                    style={{ padding: '7px 12px', borderRadius: '6px', border: 'none', fontSize: '13px' }}
+                  >
+                    <option value="All">All Status</option>
+                    <option value="Pending">Pending</option>
+                    <option value="PO Created">PO Created</option>
+                  </select>
+                </div>
               </div>
               <table style={styles.table}>
                 <thead>
                   <tr style={{ background: '#f5f6fa' }}>
                     <th style={{ ...styles.th, color: '#333' }}>PR Number</th>
-                    <th style={{ ...styles.th, color: '#333' }}>Project Name</th>
-                    <th style={{ ...styles.th, color: '#333' }}>Material Specifications</th>
-                    <th style={{ ...styles.th, color: '#333' }}>Urgency</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Project</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Material</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Required Qty</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Available Qty</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Shortage Qty</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Priority</th>
                     <th style={{ ...styles.th, color: '#333' }}>Status</th>
-                    <th style={{ ...styles.th, color: '#333' }}>Submitted Date</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Submitted</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {prs.map((pr, idx) => (
-                    <tr key={pr._id || idx} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={styles.tdBold}>PR-{String(idx + 1).padStart(3, '0')}</td>
-                      <td style={styles.td}>{pr.projectName || pr.project}</td>
-                      <td style={styles.td}>
-                        {pr.materials?.map((m, i) => (
-                          <div key={i}>{m.materialName} ×{m.quantity} {m.unit}</div>
-                        ))}
-                      </td>
-                      <td style={styles.td}>
-                        <span style={{
-                          background: pr.urgency === 'Critical' ? '#ffebee' : pr.urgency === 'Urgent' ? '#dbeafe' : '#e3f2fd',
-                          color: pr.urgency === 'Critical' ? '#c62828' : pr.urgency === 'Urgent' ? '#1e3a8a' : '#1565c0',
-                          padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
-                        }}>{pr.urgency || 'Normal'}</span>
-                      </td>
-                      <td style={styles.td}>
-                        <span style={{
-                          background: pr.status === 'Approved' ? '#e8f5e9' : pr.status === 'Rejected' ? '#ffebee' : pr.status === 'PO Created' ? '#e0f2f1' : '#f5f5f5',
-                          color: pr.status === 'Approved' ? '#2e7d32' : pr.status === 'Rejected' ? '#c62828' : pr.status === 'PO Created' ? '#004d40' : '#666',
-                          padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'
-                        }}>{pr.status}</span>
-                      </td>
-                      <td style={styles.td}>{formatDate(pr.createdAt)}</td>
-                    </tr>
-                  ))}
-                  {prs.length === 0 && (
-                    <tr>
-                      <td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#999' }}>
-                        No purchase requests submitted yet.
-                      </td>
-                    </tr>
-                  )}
+                  {(() => {
+                    const rows = [];
+                    prs.forEach((pr, idx) => {
+                      (pr.materials || []).forEach((m, mi) => {
+                        rows.push({ pr, idx, m, mi });
+                      });
+                    });
+                    const filtered = rows.filter(({ pr, m }) => {
+                      const matchesStatus = prStatusFilter === 'All' || pr.status === prStatusFilter;
+                      const q = prSearch.toLowerCase();
+                      const matchesSearch = !q || (pr.projectName || pr.project || '').toLowerCase().includes(q) || (m.materialName || '').toLowerCase().includes(q);
+                      return matchesStatus && matchesSearch;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan="9" style={{ padding: '30px', textAlign: 'center', color: '#999' }}>
+                            No purchase requests match the current filters.
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return filtered.map(({ pr, idx, m, mi }) => {
+                      const mainMat = mainMaterials.find(x => x.name === m.materialName);
+                      const available = mainMat ? mainMat.quantity : 0;
+                      const shortage = Math.max((Number(m.quantity) || 0) - available, 0);
+                      return (
+                        <tr key={`${pr._id || idx}-${mi}`} style={{ borderBottom: '1px solid #eee' }}>
+                          <td style={styles.tdBold}>PR-{String(idx + 1).padStart(3, '0')}</td>
+                          <td style={styles.td}>{pr.projectName || pr.project}</td>
+                          <td style={styles.td}>{m.materialName}</td>
+                          <td style={styles.td}>{m.quantity} {m.unit}</td>
+                          <td style={styles.td}>{available} {m.unit}</td>
+                          <td style={styles.td}>
+                            {shortage > 0 ? (
+                              <span style={{ color: '#c62828', fontWeight: 'bold' }}>{shortage} {m.unit}</span>
+                            ) : (
+                              <span style={{ color: '#2e7d32' }}>0</span>
+                            )}
+                          </td>
+                          <td style={styles.td}>
+                            <span style={{
+                              background: pr.urgency === 'Critical' ? '#ffebee' : pr.urgency === 'Urgent' ? '#dbeafe' : '#e3f2fd',
+                              color: pr.urgency === 'Critical' ? '#c62828' : pr.urgency === 'Urgent' ? '#1e3a8a' : '#1565c0',
+                              padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
+                            }}>{pr.urgency || 'Normal'}</span>
+                          </td>
+                          <td style={styles.td}>
+                            <span style={{
+                              background: pr.status === 'Approved' ? '#e8f5e9' : pr.status === 'Rejected' ? '#ffebee' : pr.status === 'PO Created' ? '#e0f2f1' : '#f5f5f5',
+                              color: pr.status === 'Approved' ? '#2e7d32' : pr.status === 'Rejected' ? '#c62828' : pr.status === 'PO Created' ? '#004d40' : '#666',
+                              padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'
+                            }}>{pr.status}</span>
+                          </td>
+                          <td style={styles.td}>{formatDate(pr.createdAt)}</td>
+                        </tr>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -1786,233 +2089,119 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
         {view === 'settings' && <SettingsPage user={user} onLogout={onLogout} onUserUpdate={onUserUpdate} />}
 
-        {view === 'item-master' && (
+        {view === 'stock-adjustments' && (
           <div style={styles.container}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <h1 style={styles.pageTitle}>Item Master Threshold Settings</h1>
-              <button 
-                onClick={() => {
-                  setEditingItemMasterId(null);
-                  setItemMasterForm(emptyItemMasterForm);
-                  setShowItemMasterForm(!showItemMasterForm);
-                }}
-                style={{ ...styles.orangeBtn, background: '#2563eb' }}
-              >
-                {showItemMasterForm ? 'View Master Catalog' : '＋ Add Master Item'}
-              </button>
+            <h1 style={styles.pageTitle}>Stock Adjustments</h1>
+            <div style={{ color: '#64748b', fontSize: '13px', marginBottom: '20px' }}>
+              The only authorized way to correct current stock outside of a GRN, Material Issuance or Usage transaction — e.g. after a physical stock count. Every adjustment requires a reason and is permanently logged.
             </div>
 
-            {showItemMasterForm ? (
-              <div style={styles.formCard}>
-                <h3 style={{ color: '#0d1b4b', marginBottom: '16px' }}>{editingItemMasterId ? 'Edit Threshold Settings' : 'Create Master Catalog Record'}</h3>
-                <form onSubmit={handleItemMasterSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div>
-                    <label style={styles.fieldLabel}>Material Code *</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. MAT-CEM-001" 
-                      value={itemMasterForm.materialCode}
-                      onChange={e => setItemMasterForm({ ...itemMasterForm, materialCode: e.target.value })}
-                      style={styles.formInput}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Material Name *</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. Portland Cement OPC" 
-                      value={itemMasterForm.materialName}
-                      onChange={e => setItemMasterForm({ ...itemMasterForm, materialName: e.target.value })}
-                      style={styles.formInput}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Material Category *</label>
-                    <select
-                      value={itemMasterForm.category}
-                      onChange={e => setItemMasterForm({ ...itemMasterForm, category: e.target.value })}
-                      style={styles.formSelect}
-                      required
-                    >
-                      {[
-                        'Cement & Concrete',
-                        'Aggregates',
-                        'Road Construction',
-                        'Bridge Construction',
-                        'Reinforcement Steel',
-                        'Structural Steel',
-                        'Railway Materials',
-                        'Drainage & Culvert',
-                        'Geotechnical',
-                        'Formwork & Scaffolding',
-                        'Fasteners & Hardware',
-                        'Waterproofing & Joints',
-                        'Safety Materials',
-                        'Survey & Site',
-                        'Miscellaneous',
-                        'Other'
-                      ].map(c => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Unit *</label>
-                    <select
-                      value={itemMasterForm.unit}
-                      onChange={e => setItemMasterForm({ ...itemMasterForm, unit: e.target.value })}
-                      style={styles.formSelect}
-                      required
-                    >
-                      {['bag', 'kg', 'ton', 'piece', 'litre', 'm3'].map(u => (
-                        <option key={u} value={u}>{u}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Estimated Unit Cost (LKR) *</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={itemMasterForm.estimatedUnitCost}
-                      onChange={e => setItemMasterForm({ ...itemMasterForm, estimatedUnitCost: e.target.value })}
-                      style={styles.formInput}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Status</label>
-                    <select
-                      value={itemMasterForm.status}
-                      onChange={e => setItemMasterForm({ ...itemMasterForm, status: e.target.value })}
-                      style={styles.formSelect}
-                    >
-                      <option value="Active">Active</option>
-                      <option value="Inactive">Inactive</option>
-                    </select>
-                  </div>
-                  <div style={{ gridColumn: 'span 2' }}>
-                    <label style={styles.fieldLabel}>Description (optional)</label>
-                    <input
-                      type="text"
-                      value={itemMasterForm.description}
-                      onChange={e => setItemMasterForm({ ...itemMasterForm, description: e.target.value })}
-                      style={styles.formInput}
-                      placeholder="e.g. 50kg Ordinary Portland Cement bags"
-                    />
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Minimum Stock Level *</label>
-                    <input 
-                      type="number" 
-                      value={itemMasterForm.minimumStock}
-                      onChange={e => setItemMasterForm({ ...itemMasterForm, minimumStock: e.target.value })}
-                      style={styles.formInput}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Maximum Stock Level *</label>
-                    <input 
-                      type="number" 
-                      value={itemMasterForm.maximumStock}
-                      onChange={e => {
-                        const max = Number(e.target.value);
-                        setItemMasterForm({ 
-                          ...itemMasterForm, 
-                          maximumStock: max,
-                          reorderLevel: Math.round(max * 0.5) 
-                        });
-                      }}
-                      style={styles.formInput}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Reorder Level * (Auto-set to 50% of Max, editable)</label>
-                    <input 
-                      type="number" 
-                      value={itemMasterForm.reorderLevel}
-                      onChange={e => setItemMasterForm({ ...itemMasterForm, reorderLevel: e.target.value })}
-                      style={styles.formInput}
-                      required
-                    />
-                  </div>
-                  <div style={{ gridColumn: 'span 2', display: 'flex', gap: '10px', marginTop: '10px' }}>
-                    <button type="submit" style={styles.orangeBtn}>Save Threshold Settings</button>
-                    <button type="button" onClick={() => setShowItemMasterForm(false)} style={{ ...styles.orangeBtn, background: '#cbd5e1', color: '#1e293b' }}>Cancel</button>
-                  </div>
-                </form>
-              </div>
-            ) : (
-              <div style={styles.tableContainer}>
+            <div style={styles.formCard}>
+              <h3 style={{ color: '#0d1b4b', marginBottom: '16px' }}>Record a Physical Count Adjustment</h3>
+              <form onSubmit={handleStockAdjustmentSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={styles.fieldLabel}>Material *</label>
+                  <select
+                    value={adjustmentForm.materialId}
+                    onChange={e => setAdjustmentForm({ ...adjustmentForm, materialId: e.target.value })}
+                    style={styles.formSelect}
+                    required
+                  >
+                    <option value="">-- Select material --</option>
+                    {mainMaterials.map(m => (
+                      <option key={m._id} value={m._id}>{m.name} ({m.unit})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={styles.fieldLabel}>Current System Quantity</label>
+                  <input
+                    type="text"
+                    value={adjustmentForm.materialId ? (mainMaterials.find(m => m._id === adjustmentForm.materialId)?.quantity ?? '-') : '-'}
+                    style={{ ...styles.formInput, background: '#f1f5f9' }}
+                    disabled
+                  />
+                </div>
+                <div>
+                  <label style={styles.fieldLabel}>Physical Count *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Quantity actually counted"
+                    value={adjustmentForm.physicalCount}
+                    onChange={e => setAdjustmentForm({ ...adjustmentForm, physicalCount: e.target.value })}
+                    style={styles.formInput}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={styles.fieldLabel}>Reason *</label>
+                  <select
+                    value={adjustmentForm.reason}
+                    onChange={e => setAdjustmentForm({ ...adjustmentForm, reason: e.target.value })}
+                    style={styles.formSelect}
+                    required
+                  >
+                    {['Count Correction', 'Damage', 'Loss/Theft', 'Expiry', 'Other'].map(r => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={styles.fieldLabel}>Notes (optional)</label>
+                  <input
+                    type="text"
+                    value={adjustmentForm.notes}
+                    onChange={e => setAdjustmentForm({ ...adjustmentForm, notes: e.target.value })}
+                    style={styles.formInput}
+                    placeholder="Additional detail supporting this adjustment"
+                  />
+                </div>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <button type="submit" style={styles.orangeBtn} disabled={adjustmentSubmitting}>
+                    {adjustmentSubmitting ? 'Recording...' : 'Record Adjustment'}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div style={{ ...styles.tableContainer, marginTop: '24px' }}>
+              <h3 style={{ color: '#0d1b4b', margin: '16px 0 0 16px' }}>Recent Adjustments</h3>
+              {ledgerLoading ? (
+                <div style={styles.loadingText}>Loading adjustment history...</div>
+              ) : (
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
-                      <th style={styles.th}>Material Code</th>
-                      <th style={styles.th}>Material Name</th>
-                      <th style={styles.th}>Category</th>
-                      <th style={styles.th}>Unit</th>
-                      <th style={styles.th}>Est. Unit Cost</th>
-                      <th style={styles.th}>Min Level</th>
-                      <th style={styles.th}>Reorder Level</th>
-                      <th style={styles.th}>Max Level</th>
-                      <th style={styles.th}>Status</th>
-                      <th style={styles.th}>Actions</th>
+                      <th style={styles.th}>Date</th>
+                      <th style={styles.th}>Material</th>
+                      <th style={styles.th}>Change</th>
+                      <th style={styles.th}>New Balance</th>
+                      <th style={styles.th}>Reason</th>
+                      <th style={styles.th}>Performed By</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {itemMasterList.length === 0 ? (
-                      <tr>
-                        <td colSpan="10" style={styles.emptyState}>No Item Master records found. Click Add to get started.</td>
-                      </tr>
+                    {stockLedger.filter(e => e.type === 'Adjustment').length === 0 ? (
+                      <tr><td colSpan="6" style={styles.emptyState}>No stock adjustments recorded yet.</td></tr>
                     ) : (
-                      itemMasterList.map(item => (
-                        <tr key={item._id} style={{ borderBottom: '1px solid #eee' }}>
-                          <td style={styles.tdBold}>{item.materialCode}</td>
-                          <td style={styles.td}>{item.materialName}</td>
-                          <td style={styles.td}>{item.category}</td>
-                          <td style={styles.td}>{item.unit}</td>
-                          <td style={styles.td}>{Number(item.estimatedUnitCost || 0).toLocaleString()}</td>
-                          <td style={styles.td}>{item.minimumStock}</td>
-                          <td style={styles.td}>{item.reorderLevel}</td>
-                          <td style={styles.td}>{item.maximumStock}</td>
-                          <td style={styles.td}>
-                            <span style={{
-                              background: item.status === 'Inactive' ? '#ffebee' : '#e8f5e9',
-                              color: item.status === 'Inactive' ? '#c62828' : '#2e7d32',
-                              padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600'
-                            }}>{item.status || 'Active'}</span>
+                      stockLedger.filter(e => e.type === 'Adjustment').map((e, i) => (
+                        <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
+                          <td style={styles.td}>{formatDateTime(e.date)}</td>
+                          <td style={styles.tdBold}>{e.materialName} <span style={{ color: '#94a3b8', fontWeight: 'normal' }}>{e.unit}</span></td>
+                          <td style={{ ...styles.td, color: e.inQty ? '#2e7d32' : (e.outQty ? '#c62828' : '#64748b'), fontWeight: 'bold' }}>
+                            {e.inQty ? `+${e.inQty}` : (e.outQty ? `-${e.outQty}` : 'No change')}
                           </td>
-                          <td style={styles.td}>
-                            <button
-                              onClick={() => handleItemMasterEditClick(item)}
-                              style={{ background: '#1565c0', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px', fontWeight: 'bold' }}
-                            >
-                              ⚙️ Edit
-                            </button>
-                            <button
-                              onClick={() => handleItemMasterToggleStatus(item)}
-                              style={{ background: item.status === 'Inactive' ? '#2e7d32' : '#f57f17', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px', fontWeight: 'bold' }}
-                            >
-                              {item.status === 'Inactive' ? 'Activate' : 'Deactivate'}
-                            </button>
-                            <button
-                              onClick={() => handleItemMasterDelete(item._id)}
-                              style={{ background: '#c62828', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                            >
-                              🗑 Delete
-                            </button>
-                          </td>
+                          <td style={styles.tdBold}>{e.balance}</td>
+                          <td style={styles.td}>{e.remarks}</td>
+                          <td style={styles.td}>{e.performedBy}</td>
                         </tr>
                       ))
                     )}
                   </tbody>
                 </table>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
 
@@ -2169,7 +2358,13 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         <td style={styles.td}>{bom.version || 'v1.0'}</td>
                         <td style={styles.td}>{bom.approvedBy || '-'}</td>
                         <td style={styles.td}>{(bom.materials || []).length} item(s)</td>
-                        <td style={styles.td}>
+                        <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
+                          <button
+                            onClick={() => setViewBom(bom)}
+                            style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginRight: '8px' }}
+                          >
+                            👁 View
+                          </button>
                           <button
                             onClick={() => handleCompareBom(bom)}
                             style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
@@ -2216,7 +2411,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           <td style={styles.td}>
                             <input type="checkbox" checked={it.include} onChange={() => handleShortageIncludeToggle(idx)} />
                           </td>
-                          <td style={{ ...styles.tdBold }}>{it.name}</td>
+                          <td style={{ ...styles.tdBold, color: '#0d1b4b' }}>{it.name}</td>
                           <td style={styles.td}>{it.category}</td>
                           <td style={styles.td}>{it.plannedQty} {it.unit}</td>
                           <td style={styles.td}>{it.available} {it.unit}</td>
@@ -2253,6 +2448,222 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                 </div>
               </div>
             )}
+
+            {viewBom && (
+              <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }} onClick={() => setViewBom(null)}>
+                <div style={{ background: 'white', borderRadius: '10px', width: '700px', maxWidth: '90%', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 10px 25px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 24px', borderBottom: '1px solid #e2e8f0' }}>
+                    <div>
+                      <h3 style={{ margin: 0, color: '#0d1b4b', fontWeight: '700' }}>{viewBom.bomNumber || '-'}</h3>
+                      <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748b' }}>
+                        {viewBom.projectId?.projectName || viewBom.projectId?.name || viewBom.projectName || '-'} &middot; {viewBom.version || 'v1.0'} &middot; Approved by {viewBom.approvedBy || '-'}
+                      </p>
+                    </div>
+                    <button onClick={() => setViewBom(null)} style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                      ✕ Close
+                    </button>
+                  </div>
+                  <div style={{ padding: '20px 24px' }}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr style={styles.tableHeaderRow}>
+                          <th style={styles.th}>Material</th>
+                          <th style={styles.th}>Category</th>
+                          <th style={styles.th}>Planned Qty</th>
+                          <th style={styles.th}>Unit</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(viewBom.materials || []).length === 0 ? (
+                          <tr>
+                            <td colSpan="4" style={styles.emptyState}>No materials listed on this BOM.</td>
+                          </tr>
+                        ) : (
+                          viewBom.materials.map((item, idx) => (
+                            <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                              <td style={{ ...styles.tdBold, color: '#0d1b4b' }}>{item.name}</td>
+                              <td style={styles.td}>{item.category || '-'}</td>
+                              <td style={styles.td}>{item.plannedQty}</td>
+                              <td style={styles.td}>{item.unit || '-'}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', padding: '16px 24px', borderTop: '1px solid #e2e8f0' }}>
+                    <button
+                      onClick={() => { const b = viewBom; setViewBom(null); handleCompareBom(b); }}
+                      style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}
+                    >
+                      Compare Stock & Create PR
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === 'reports' && (
+          <div style={styles.container}>
+            <h1 style={styles.pageTitle}>Reports &amp; Analytics</h1>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '30px' }}>
+              {[
+                { icon: '💰', title: 'Inventory Valuation Report', desc: 'View current stock value and valuation', action: () => { setModal('total-materials'); setModalSearchTerm(''); } },
+                { icon: '📊', title: 'Stock Summary Report', desc: 'Detailed stock breakdown by category', action: () => { setModal('stock-value'); setModalSearchTerm(''); } },
+                { icon: '⚠️', title: 'Low Stock Report', desc: 'Materials below minimum stock level', action: () => { setModal('low-stock'); setModalSearchTerm(''); } },
+                { icon: '🔔', title: 'Reorder Level Report', desc: 'Materials that have reached reorder level', action: () => { setModal('reorder-level'); setModalSearchTerm(''); } },
+                { icon: '📥', title: 'GRN Report', desc: 'Goods received notes summary', action: () => { setModal('last-grn'); setModalSearchTerm(''); } },
+                { icon: '🚚', title: 'Material Transfer Report', desc: 'All MIN transfers to sites (Stock Ledger)', action: () => setView('stock-ledger') },
+                { icon: '📝', title: 'Purchase Request Report', desc: 'PRs generated summary', action: () => setView('purchase-request') },
+                { icon: '📈', title: 'Frequently Issued Materials', desc: 'Fast-moving materials, ranked by issue count', action: () => setModal('frequently-used') },
+              ].map((r, i) => (
+                <div key={i} onClick={r.action} className="hover-card" style={{ ...styles.tableContainer, padding: '20px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ fontSize: '24px' }}>{r.icon}</div>
+                  <div style={{ fontWeight: '700', color: '#0d1b4b', fontSize: '14px' }}>{r.title}</div>
+                  <div style={{ fontSize: '12px', color: '#64748b' }}>{r.desc}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Monthly Usage Report */}
+            {(() => {
+              const filteredUsage = usageLogs.filter(u => {
+                if (!u.usageDate) return false;
+                const dateStr = u.usageDate.substring(0, 7); // 'YYYY-MM'
+                return dateStr === selectedMonth;
+              });
+
+              const usageDataGrouped = [];
+              const usageMap = {};
+              filteredUsage.forEach(u => {
+                const name = u.materialName;
+                const qty = Number(u.actualQty) || 0;
+                usageMap[name] = (usageMap[name] || 0) + qty;
+              });
+              Object.keys(usageMap).forEach(key => {
+                usageDataGrouped.push({ name: key, value: usageMap[key] });
+              });
+
+              return (
+                <div style={{ ...styles.tableContainer, padding: '24px', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h3 style={{ margin: 0, color: '#0d1b4b' }}>📊 Monthly Material Usage Consumption</h3>
+                    <div>
+                      <label style={{ marginRight: '10px', fontSize: '13px', fontWeight: 'bold' }}>Select Month:</label>
+                      <select
+                        value={selectedMonth}
+                        onChange={e => setSelectedMonth(e.target.value)}
+                        style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
+                      >
+                        <option value="2026-07">July 2026</option>
+                        <option value="2026-06">June 2026</option>
+                        <option value="2026-05">May 2026</option>
+                        <option value="2026-04">April 2026</option>
+                      </select>
+                    </div>
+                  </div>
+                  {usageDataGrouped.length === 0 ? (
+                    <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>No material consumption recorded for this month.</div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '40px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ width: '320px', height: '240px' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={usageDataGrouped}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={60}
+                              outerRadius={90}
+                              paddingAngle={4}
+                              dataKey="value"
+                            >
+                              {usageDataGrouped.map((entry, index) => {
+                                const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#3b82f6'];
+                                return <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />;
+                              })}
+                            </Pie>
+                            <Tooltip formatter={(value, name) => [`${value} units`, name]} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        {usageDataGrouped.map((item, index) => {
+                          const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#3b82f6'];
+                          return (
+                            <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
+                              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: COLORS[index % COLORS.length] }}></div>
+                              <span style={{ fontWeight: '600' }}>{item.name}:</span>
+                              <span>{item.value}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {view === 'notifications' && (
+          <div style={styles.container}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+              <h1 style={{ ...styles.pageTitle, marginBottom: 0 }}>Notifications</h1>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={styles.filterGroup}>
+                  <select value={notifFilter} onChange={e => setNotifFilter(e.target.value)} style={styles.filterSelect}>
+                    <option value="All">All ({persistedNotifications.length})</option>
+                    <option value="Unread">Unread ({persistedNotifications.filter(n => !n.isRead).length})</option>
+                  </select>
+                </div>
+                <button onClick={handleMarkAllNotifsRead} style={{ ...styles.orangeBtn, background: '#2563eb' }}>Mark all as read</button>
+                <button onClick={fetchPersistedNotifications} style={styles.refreshBtn}>🔄 Refresh</button>
+              </div>
+            </div>
+
+            <div style={styles.tableContainer}>
+              {(() => {
+                const filtered = notifFilter === 'Unread' ? persistedNotifications.filter(n => !n.isRead) : persistedNotifications;
+                if (filtered.length === 0) {
+                  return <div style={styles.emptyState}>No notifications to show.</div>;
+                }
+                return (
+                  <div>
+                    {filtered.map((n, i) => (
+                      <div
+                        key={n._id || i}
+                        style={{
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px',
+                          padding: '16px 20px', borderBottom: i === filtered.length - 1 ? 'none' : '1px solid #f1f5f9',
+                          backgroundColor: n.isRead ? 'white' : 'rgba(37, 99, 235, 0.05)'
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                            {!n.isRead && <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#2563eb', display: 'inline-block' }}></span>}
+                            <span style={{
+                              background: '#e3f2fd', color: '#1565c0', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase'
+                            }}>{n.type || 'info'}</span>
+                          </div>
+                          <div style={{ fontSize: '13px', color: '#0d1b4b', fontWeight: n.isRead ? '400' : '600' }}>{n.message}</div>
+                          <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>{formatDateTime(n.createdAt)}</div>
+                        </div>
+                        {!n.isRead && (
+                          <button onClick={() => handleMarkNotifRead(n._id)} style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                            Mark read
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         )}
 
@@ -2347,9 +2758,14 @@ const styles = {
     marginBottom: '30px',
   },
   sidebarTitle: {
-    fontSize: '18px',
+    fontSize: '16px',
     fontWeight: '700',
-    color: 'white',
+    color: '#2563eb',
+  },
+  sidebarSubtitle: {
+    fontSize: '11px',
+    color: '#cbd5e1',
+    fontWeight: '500',
   },
   sidebarUserSection: {
     display: 'flex',

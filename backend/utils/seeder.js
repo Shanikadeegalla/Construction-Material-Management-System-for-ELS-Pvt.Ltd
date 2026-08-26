@@ -34,6 +34,9 @@ const defaultPermissions = {
   "Approve PO": { Admin: "Full", Director: "Full" },
   "Manage PO Lifecycle": { Admin: "Full", PurchaseManager: "Full" },
   "Supplier Management": { Admin: "Full" },
+  "Manage Quotations": { Admin: "Full", PurchaseManager: "Full" },
+  "Create Invoice": { Admin: "Full", MainStoreOfficer: "Full" },
+  "Approve Payment": { Admin: "Full", Director: "Full" },
 
   // Inventory & Stores
   "Create GRN": { Admin: "Full", MainStoreOfficer: "Full" },

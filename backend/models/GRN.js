@@ -13,6 +13,10 @@ const grnSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  supplierId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Supplier'
+  },
   receivedBy: {
     type: String,
     required: true

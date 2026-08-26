@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import SettingsPage from './SettingsPage';
+import SupplierProfile from '../components/SupplierProfile';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
 import { formatDate } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
@@ -19,7 +20,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [performanceData, setPerformanceData] = useState([]);
+  const [invoices, setInvoices] = useState([]);
   const [modal, setModal] = useState(null);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [poSearchTerm, setPoSearchTerm] = useState('');
@@ -69,6 +70,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
   // Search Filter for Suppliers
   const [supplierSearch, setSupplierSearch] = useState('');
+
+  // Supplier Profile view state
+  const [viewingSupplierId, setViewingSupplierId] = useState(null);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -137,18 +141,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       }
       setPurchaseRequests(prList);
 
-      // Fetch Supplier Performance
-      const perfRes = await fetch('http://localhost:5000/api/purchase-orders/supplier-performance', { headers });
-      const perfData = await perfRes.json();
-      let rawPerf = perfData.success ? perfData.data : [];
-      if (!rawPerf || rawPerf.length === 0) {
-        rawPerf = [
-          { supplierName: 'Lanka Cement Ltd', totalOrders: 5, onTimeDeliveries: 4, onTimePercent: 80, deliveryAccuracy: 96.5, performanceRating: 'Excellent' },
-          { supplierName: 'Melwa Steel', totalOrders: 3, onTimeDeliveries: 3, onTimePercent: 100, deliveryAccuracy: 100, performanceRating: 'Excellent' },
-          { supplierName: 'Mahaweli Sand Co.', totalOrders: 2, onTimeDeliveries: 2, onTimePercent: 100, deliveryAccuracy: 98.0, performanceRating: 'Excellent' }
-        ];
-      }
-      setPerformanceData(rawPerf);
+      // Fetch Invoices / Payments
+      const invRes = await fetch('http://localhost:5000/api/invoices', { headers });
+      const invData = await invRes.json();
+      setInvoices(invData.success ? invData.data : []);
 
     } catch (err) {
       setError('Could not connect to the backend server. Loading fallback demo data.');
@@ -161,10 +157,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         { _id: '1', name: 'Lanka Cement Ltd', contactPerson: 'Nimal Perera', phone: '0711122334', email: 'nimal@lankacement.lk', category: 'Cement', status: 'Active' },
         { _id: '2', name: 'Melwa Steel', contactPerson: 'Kamal Silva', phone: '0722233445', email: 'kamal@melwa.lk', category: 'Steel', status: 'Active' },
       ]);
-      setPerformanceData([
-        { supplierName: 'Lanka Cement Ltd', totalOrders: 5, onTimeDeliveries: 4, onTimePercent: 80, deliveryAccuracy: 96.5, performanceRating: 'Excellent' },
-        { supplierName: 'Melwa Steel', totalOrders: 3, onTimeDeliveries: 3, onTimePercent: 100, deliveryAccuracy: 100, performanceRating: 'Excellent' },
-      ]);
+      setInvoices([]);
       setPurchaseRequests([
         { _id: '1', prNumber: 'PR-2026-001', projectName: 'Colombo Port Expansion', materials: [{ materialName: 'Portland Cement OPC', quantity: 150, unit: 'bags' }], urgency: 'Normal', status: 'Pending', notes: 'Need for foundation casting.', createdAt: new Date().toISOString() },
         { _id: '2', prNumber: 'PR-2026-002', projectName: 'Marina Heights', materials: [{ materialName: 'TMT Steel 12mm', quantity: 8, unit: 'ton' }], urgency: 'Urgent', status: 'Approved', notes: 'Urgent column structure reinforcement.', createdAt: new Date(Date.now() - 86400000).toISOString() },
@@ -496,6 +489,13 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     { label: 'Inactive Suppliers', value: suppliers.filter(s => s.status === 'Inactive').length, color: '#c62828' },
   ];
 
+  const paymentStats = [
+    { label: 'Total Invoices', value: invoices.length, color: '#1565c0' },
+    { label: 'Pending Approval', value: invoices.filter(i => i.status === 'Pending Approval').length, color: '#1e3a8a' },
+    { label: 'Approved', value: invoices.filter(i => i.status === 'Approved').length, color: '#2563eb' },
+    { label: 'Paid', value: invoices.filter(i => i.status === 'Paid').length, color: '#2e7d32' },
+  ];
+
   const filteredSuppliers = suppliers.filter(s =>
     s.name?.toLowerCase().includes(supplierSearch.toLowerCase()) ||
     s.category?.toLowerCase().includes(supplierSearch.toLowerCase())
@@ -702,6 +702,24 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     );
   };
 
+  // Shared styling for the Create PO form fields/labels/section headers
+  const poFieldStyle = { width: '100%', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', boxSizing: 'border-box', fontSize: '13px', color: '#1e293b' };
+  const poLabelStyle = { display: 'block', fontSize: '12px', color: '#666', marginBottom: '6px', fontWeight: '600' };
+  const poSectionHeaderStyle = { color: '#0d1b4b', fontSize: '14px', fontWeight: '700', margin: '0 0 14px', textTransform: 'uppercase', letterSpacing: '0.02em' };
+  const poItemGridCols = '2fr 0.7fr 0.9fr 1.1fr 1.1fr 36px';
+
+  if (viewingSupplierId) {
+    return (
+      <SupplierProfile
+        supplierId={viewingSupplierId}
+        onBack={() => setViewingSupplierId(null)}
+        getHeaders={getHeaders}
+        canManageQuotations={true}
+        user={user}
+      />
+    );
+  }
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
       {/* Sidebar */}
@@ -709,8 +727,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         <div style={{ padding: '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
           <div>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: 'white' }}>ELS CMMS</div>
-            <div style={{ fontSize: '11px', color: '#2563eb' }}>Procurement</div>
+            <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Procurement</div>
           </div>
         </div>
         <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -728,7 +746,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             { id: 'prs', label: 'Purchase Request', icon: '📋' },
             { id: 'orders', label: 'Purchase Orders', icon: '📦' },
             { id: 'suppliers', label: 'Suppliers Registry', icon: '🏭' },
-            { id: 'performance', label: 'Supplier Performance', icon: '📈' },
+            { id: 'payment', label: 'Payment', icon: '💳' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
             <div key={item.id} onClick={() => { setActivePage(item.id); setError(''); setMessage(''); }}
@@ -743,14 +761,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       </div>
 
       {/* Main Content */}
-      <div style={{ marginLeft: '240px', flex: 1, background: '#f5f6fa', minHeight: '100vh' }}>
+      <div className="dashboard-content" style={{ marginLeft: '240px', flex: 1, background: '#f5f6fa', minHeight: '100vh' }}>
         <div style={{ background: 'white', padding: '16px 24px', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ margin: 0, fontSize: '20px', color: '#0d1b4b' }}>
             {activePage === 'dashboard' && 'Dashboard'}
             {activePage === 'prs' && 'Purchase Request'}
             {activePage === 'orders' && 'Purchase Orders Catalog'}
             {activePage === 'suppliers' && 'Supplier Registry'}
-            {activePage === 'performance' && 'Supplier Performance Evaluation'}
+            {activePage === 'payment' && 'Payment Portal'}
             {activePage === 'settings' && 'User Settings & Preferences'}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
@@ -887,35 +905,44 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           {message && <div style={{ background: '#e8f5e9', border: '1px solid #4caf50', color: '#2e7d32', padding: '10px 16px', borderRadius: '6px', marginBottom: '16px' }}>{message}</div>}
 
           {/* Stats Bar */}
-          {activePage === 'settings' ? null : activePage !== 'suppliers' ? (
+          {activePage === 'settings' ? null : activePage === 'suppliers' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+              {supplierStats.map((s, i) => (
+                <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
+                  <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          ) : activePage === 'payment' ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
-              {stats.map((s, i) => (
-                <div 
-                  key={i} 
-                  onClick={() => {
-                    setModal(s.type);
-                    setModalSearchTerm('');
-                  }}
-                  style={{ 
-                    background: 'white', 
-                    borderRadius: '8px', 
-                    padding: '20px', 
-                    boxShadow: '0 1px 4px rgba(0,0,0,0.1)', 
-                    borderTop: `4px solid ${s.color}`,
-                    cursor: 'pointer',
-                    transition: 'transform 0.2s, box-shadow 0.2s'
-                  }}
-                  className="hover-card"
-                >
+              {paymentStats.map((s, i) => (
+                <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
                   <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
                   <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
                 </div>
               ))}
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
-              {supplierStats.map((s, i) => (
-                <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+              {stats.map((s, i) => (
+                <div
+                  key={i}
+                  onClick={() => {
+                    setModal(s.type);
+                    setModalSearchTerm('');
+                  }}
+                  style={{
+                    background: 'white',
+                    borderRadius: '8px',
+                    padding: '20px',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+                    borderTop: `4px solid ${s.color}`,
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s, box-shadow 0.2s'
+                  }}
+                  className="hover-card"
+                >
                   <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
                   <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
                 </div>
@@ -1091,104 +1118,135 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
               {/* Create PO Form */}
               {showForm && (
-                <div style={{ background: 'white', borderRadius: '8px', padding: '24px', marginBottom: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', border: '1px solid #2563eb' }}>
-                  <h3 style={{ margin: '0 0 20px', color: '#0d1b4b' }}>Create New Purchase Order</h3>
+                <div style={{ background: 'white', borderRadius: '10px', padding: '28px', marginBottom: '24px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)', border: '1px solid #e2e8f0' }}>
+                  <h3 style={{ margin: '0 0 4px', color: '#0d1b4b', fontSize: '18px' }}>Create New Purchase Order</h3>
+                  <p style={{ margin: '0 0 20px', color: '#94a3b8', fontSize: '12px' }}>Fields marked * are required</p>
                   <form onSubmit={handlePOSubmit}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>SELECT PURCHASE REQUEST (PR)</label>
-                        <select value={form.prId} onChange={e => handlePrSelectChange(e.target.value)}
-                          style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}>
-                          <option value="">-- Create PO without PR (Manual) --</option>
-                          {pendingPRs.map(pr => (
-                            <option key={pr._id} value={pr._id}>{pr.projectName || pr.project} (Pending PR)</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>SELECT SUPPLIER *</label>
-                        <select value={form.supplier} onChange={e => setForm({ ...form, supplier: e.target.value })} required
-                          style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}>
-                          <option value="">-- Select Supplier --</option>
-                          {suppliers.filter(s => s.status === 'Active').map(s => (
-                            <option key={s._id} value={s.name}>{s.name} ({s.category})</option>
-                          ))}
-                        </select>
+
+                    {/* Order Details */}
+                    <div style={{ paddingBottom: '20px', marginBottom: '20px', borderBottom: '1px solid #f1f5f9' }}>
+                      <h4 style={poSectionHeaderStyle}>Order Details</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <div>
+                          <label style={poLabelStyle}>SELECT PURCHASE REQUEST (PR)</label>
+                          <select value={form.prId} onChange={e => handlePrSelectChange(e.target.value)}
+                            className="po-field" style={poFieldStyle}>
+                            <option value="">-- Create PO without PR (Manual) --</option>
+                            {pendingPRs.map(pr => (
+                              <option key={pr._id} value={pr._id}>{pr.projectName || pr.project} (Pending PR)</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={poLabelStyle}>SELECT SUPPLIER *</label>
+                          <select value={form.supplier} onChange={e => setForm({ ...form, supplier: e.target.value })} required
+                            className="po-field" style={poFieldStyle}>
+                            <option value="">-- Select Supplier --</option>
+                            {suppliers.filter(s => s.status === 'Active').map(s => (
+                              <option key={s._id} value={s.name}>{s.name} ({s.category})</option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     </div>
 
-                    <h4 style={{ color: '#0d1b4b', marginBottom: '12px' }}>Order Items Specification</h4>
-                    {form.items.map((item, index) => (
-                      <div key={index} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-                        <input placeholder="Material Name" value={item.materialName}
-                          onChange={e => updateItem(index, 'materialName', e.target.value)} required
-                          style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px' }} />
-                        <input type="number" placeholder="Qty" value={item.quantity}
-                          onChange={e => updateItem(index, 'quantity', e.target.value)} required
-                          style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px' }} />
-                        <select value={item.unit} onChange={e => updateItem(index, 'unit', e.target.value)}
-                          style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px' }}>
-                          {!['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].includes(item.unit) && item.unit && (
-                            <option value={item.unit}>{item.unit}</option>
-                          )}
-                          {['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].map(u => <option key={u} value={u}>{u}</option>)}
-                        </select>
-                        <input type="number" placeholder="Unit Price (LKR)" value={item.unitPrice}
-                          onChange={e => updateItem(index, 'unitPrice', e.target.value)} required
-                          style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px' }} />
-                        {form.items.length > 1 && (
-                          <button type="button" onClick={() => removeItem(index)}
-                            style={{ background: '#ffebee', color: '#c62828', border: 'none', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer' }}>✕</button>
-                        )}
-                      </div>
-                    ))}
+                    {/* Order Items */}
+                    <div style={{ paddingBottom: '20px', marginBottom: '20px', borderBottom: '1px solid #f1f5f9' }}>
+                      <h4 style={poSectionHeaderStyle}>Order Items Specification</h4>
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: poItemGridCols, gap: '8px', padding: '0 2px 8px', fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                        <span>Item</span>
+                        <span>Qty</span>
+                        <span>Unit</span>
+                        <span style={{ textAlign: 'right' }}>Unit Price</span>
+                        <span style={{ textAlign: 'right' }}>Line Total</span>
+                        <span />
+                      </div>
+
+                      {form.items.map((item, index) => {
+                        const lineTotal = (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0);
+                        return (
+                          <div key={index} style={{ display: 'grid', gridTemplateColumns: poItemGridCols, gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+                            <input placeholder="Material Name" value={item.materialName}
+                              onChange={e => updateItem(index, 'materialName', e.target.value)} required
+                              className="po-field" style={poFieldStyle} />
+                            <input type="number" placeholder="Qty" value={item.quantity} min="0"
+                              onChange={e => updateItem(index, 'quantity', e.target.value)} required
+                              className="po-field" style={{ ...poFieldStyle, textAlign: 'right' }} />
+                            <select value={item.unit} onChange={e => updateItem(index, 'unit', e.target.value)}
+                              className="po-field" style={poFieldStyle}>
+                              {!['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].includes(item.unit) && item.unit && (
+                                <option value={item.unit}>{item.unit}</option>
+                              )}
+                              {['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                            <input type="number" placeholder="0.00" value={item.unitPrice} min="0"
+                              onChange={e => updateItem(index, 'unitPrice', e.target.value)} required
+                              className="po-field" style={{ ...poFieldStyle, textAlign: 'right' }} />
+                            <div style={{ textAlign: 'right', fontSize: '13px', fontWeight: '600', color: '#334155', padding: '10px 4px' }}>
+                              {lineTotal.toLocaleString()}
+                            </div>
+                            {form.items.length > 1 ? (
+                              <button type="button" onClick={() => removeItem(index)} title="Remove item" className="po-remove-btn">✕</button>
+                            ) : <span />}
+                          </div>
+                        );
+                      })}
+
                       <button type="button" onClick={addItem}
-                        style={{ background: '#e3f2fd', color: '#1565c0', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                        style={{ background: '#e3f2fd', color: '#1565c0', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', marginTop: '6px' }}>
                         + Add Custom Item
                       </button>
-                      <div style={{ fontSize: '16px', fontWeight: '700', color: '#0d1b4b' }}>
-                        Total PO Amount: LKR {calcTotal().toLocaleString()}
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+                        <div style={{ background: '#f0f7ff', border: '1px solid #dbeafe', borderRadius: '8px', padding: '12px 20px', display: 'flex', alignItems: 'baseline', gap: '10px' }}>
+                          <span style={{ fontSize: '13px', color: '#475569', fontWeight: '600' }}>Total PO Amount</span>
+                          <span style={{ fontSize: '20px', fontWeight: '700', color: '#0d1b4b' }}>LKR {calcTotal().toLocaleString()}</span>
+                        </div>
                       </div>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>EXPECTED DELIVERY DATE *</label>
-                        <DateInput value={form.expectedDeliveryDate || ''} onChange={iso => setForm({ ...form, expectedDeliveryDate: iso })} required
-                          style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }} />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>PAYMENT TERMS *</label>
-                        <select value={form.paymentTerms || ''} onChange={e => setForm({ ...form, paymentTerms: e.target.value })} required
-                          style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}>
-                          <option value="30 Days Credit">30 Days Credit</option>
-                          <option value="Cash on Delivery">Cash on Delivery</option>
-                          <option value="50% Advance">50% Advance</option>
-                          <option value="Full Payment">Full Payment</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>DELIVERY ADDRESS *</label>
-                        <input placeholder="Enter delivery address..." value={form.deliveryAddress || ''} onChange={e => setForm({ ...form, deliveryAddress: e.target.value })} required
-                          style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }} />
+                    {/* Delivery & Terms */}
+                    <div style={{ paddingBottom: '20px', marginBottom: '20px', borderBottom: '1px solid #f1f5f9' }}>
+                      <h4 style={poSectionHeaderStyle}>Delivery &amp; Terms</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+                        <div>
+                          <label style={poLabelStyle}>EXPECTED DELIVERY DATE *</label>
+                          <DateInput value={form.expectedDeliveryDate || ''} onChange={iso => setForm({ ...form, expectedDeliveryDate: iso })} required
+                            style={poFieldStyle} />
+                        </div>
+                        <div>
+                          <label style={poLabelStyle}>PAYMENT TERMS *</label>
+                          <select value={form.paymentTerms || ''} onChange={e => setForm({ ...form, paymentTerms: e.target.value })} required
+                            className="po-field" style={poFieldStyle}>
+                            <option value="30 Days Credit">30 Days Credit</option>
+                            <option value="Cash on Delivery">Cash on Delivery</option>
+                            <option value="50% Advance">50% Advance</option>
+                            <option value="Full Payment">Full Payment</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={poLabelStyle}>DELIVERY ADDRESS *</label>
+                          <input placeholder="Enter delivery address..." value={form.deliveryAddress || ''} onChange={e => setForm({ ...form, deliveryAddress: e.target.value })} required
+                            className="po-field" style={poFieldStyle} />
+                        </div>
                       </div>
                     </div>
 
-                    <div style={{ marginBottom: '16px' }}>
-                      <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>NOTES</label>
+                    {/* Notes */}
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={poLabelStyle}>NOTES</label>
                       <input placeholder="Enter terms, remarks or delivery location..." value={form.notes}
                         onChange={e => setForm({ ...form, notes: e.target.value })}
-                        style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }} />
+                        className="po-field" style={poFieldStyle} />
                     </div>
 
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 28px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', boxShadow: '0 2px 6px rgba(37,99,235,0.3)' }}>
                         Submit Purchase Order
                       </button>
                       <button type="button" onClick={() => setShowForm(false)}
-                        style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer' }}>
+                        style={{ background: 'white', color: '#475569', border: '1px solid #cbd5e1', padding: '12px 28px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>
                         Cancel
                       </button>
                     </div>
@@ -1398,7 +1456,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Company Name', 'Contact Person', 'Phone', 'Email', 'Category', 'Status', ...(user?.role === 'Admin' ? ['Actions'] : [])].map(h => (
+                      {['Supplier Code', 'Company Name', 'Contact Person', 'Phone Number', 'Email', 'Address', 'Registration Date', 'Status', 'Actions'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
@@ -1409,6 +1467,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         {editingSupplierId === s._id ? (
                           // Editing Row
                           <>
+                            <td style={{ padding: '10px 16px', fontSize: '13px', color: '#666' }}>{s.supplierId}</td>
                             <td style={{ padding: '10px 16px' }}>
                               <input value={editSupForm.name} onChange={e => setEditSupForm({ ...editSupForm, name: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} required />
                             </td>
@@ -1422,12 +1481,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               <input type="email" value={editSupForm.email} onChange={e => setEditSupForm({ ...editSupForm, email: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} />
                             </td>
                             <td style={{ padding: '10px 16px' }}>
-                              <select value={editSupForm.category} onChange={e => setEditSupForm({ ...editSupForm, category: e.target.value })} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc' }}>
-                                {['Cement', 'Steel', 'Bricks', 'Sand', 'Gravel', 'Wood', 'Paint', 'Other'].map(cat => (
-                                  <option key={cat} value={cat}>{cat}</option>
-                                ))}
-                              </select>
+                              <input value={editSupForm.address} onChange={e => setEditSupForm({ ...editSupForm, address: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} />
                             </td>
+                            <td style={{ padding: '10px 16px', fontSize: '13px', color: '#666' }}>{s.createdAt ? formatDate(s.createdAt) : '-'}</td>
                             <td style={{ padding: '10px 16px' }}>
                               <select value={editSupForm.status} onChange={e => setEditSupForm({ ...editSupForm, status: e.target.value })} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc' }}>
                                 <option value="Active">Active</option>
@@ -1442,13 +1498,13 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         ) : (
                           // Normal Display Row
                           <>
-                            <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#0d1b4b' }}>{s.name}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.supplierId}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#1565c0', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setViewingSupplierId(s._id)}>{s.name}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.contactPerson || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.phone}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.email || '-'}</td>
-                            <td style={{ padding: '14px 16px' }}>
-                              <span style={{ background: '#e3f2fd', color: '#1565c0', padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600' }}>{s.category}</span>
-                            </td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.address || '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.createdAt ? formatDate(s.createdAt) : '-'}</td>
                             <td style={{ padding: '14px 16px' }}>
                               <span style={{
                                 background: s.status === 'Active' ? '#e8f5e9' : '#ffebee',
@@ -1456,20 +1512,26 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                 padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '600'
                               }}>{s.status}</span>
                             </td>
-                            {user?.role === 'Admin' && (
-                              <td style={{ padding: '14px 16px' }}>
-                                <button onClick={() => handleSupplierEditClick(s)}
-                                  style={{ background: '#1565c0', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px' }}>
-                                  Edit
-                                </button>
-                                {s.status === 'Active' && (
-                                  <button onClick={() => handleSupplierDeactivate(s._id)}
-                                    style={{ background: '#c62828', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>
-                                    Deactivate
+                            <td style={{ padding: '14px 16px' }}>
+                              <button onClick={() => setViewingSupplierId(s._id)}
+                                style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px' }}>
+                                View
+                              </button>
+                              {user?.role === 'Admin' && (
+                                <>
+                                  <button onClick={() => handleSupplierEditClick(s)}
+                                    style={{ background: '#1565c0', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px' }}>
+                                    Edit
                                   </button>
-                                )}
-                              </td>
-                            )}
+                                  {s.status === 'Active' && (
+                                    <button onClick={() => handleSupplierDeactivate(s._id)}
+                                      style={{ background: '#c62828', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>
+                                      Deactivate
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </td>
                           </>
                         )}
                       </tr>
@@ -1480,59 +1542,67 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             </div>
           )}
 
-          {activePage === 'performance' && (
+          {activePage === 'payment' && (
             <div>
               <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b' }}>
+                  <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>💳 Supplier Invoice & Payment Status</h3>
+                </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Supplier Name', 'Total Orders', 'On-Time Deliveries', 'Delivery Accuracy %', 'Performance Rating'].map(h => (
+                      {['Invoice No', 'PO Number', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {performanceData.map((perf, i) => {
-                      const rating = perf.performanceRating;
-                      let ratingBg = '#ffebee';
-                      let ratingColor = '#c62828';
-                      if (rating === 'Excellent') {
-                        ratingBg = '#e8f5e9';
-                        ratingColor = '#2e7d32';
-                      } else if (rating === 'Good') {
-                        ratingBg = '#e3f2fd';
-                        ratingColor = '#1565c0';
-                      } else if (rating === 'Average') {
-                        ratingBg = '#dbeafe';
-                        ratingColor = '#1e3a8a';
-                      } else if (rating === 'N/A') {
-                        ratingBg = '#f5f5f5';
-                        ratingColor = '#666';
+                    {invoices.map((inv, i) => {
+                      const status = inv.status;
+                      let statusBg = '#f5f5f5';
+                      let statusColor = '#666';
+                      if (status === 'Paid') {
+                        statusBg = '#e0f2f1';
+                        statusColor = '#00695c';
+                      } else if (status === 'Approved') {
+                        statusBg = '#e8f5e9';
+                        statusColor = '#2e7d32';
+                      } else if (status === 'Pending Approval') {
+                        statusBg = '#dbeafe';
+                        statusColor = '#1e3a8a';
+                      } else if (status === 'Rejected') {
+                        statusBg = '#ffebee';
+                        statusColor = '#c62828';
                       }
 
                       return (
-                        <tr key={i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
-                          <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#0d1b4b' }}>{perf.supplierName}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{perf.totalOrders}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>
-                            {perf.onTimeDeliveries} ({perf.onTimePercent}%)
-                          </td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600' }}>
-                            {perf.deliveryAccuracy}%
-                          </td>
+                        <tr key={inv._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
+                          <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#0d1b4b' }}>{inv.invoiceNumber}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{inv.po?.poNumber || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{inv.supplier?.name || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600' }}>{Number(inv.amount).toLocaleString()}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{formatDate(inv.invoiceDate)}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{inv.dueDate ? formatDate(inv.dueDate) : '-'}</td>
                           <td style={{ padding: '14px 16px' }}>
                             <span style={{
-                              background: ratingBg,
-                              color: ratingColor,
+                              background: statusBg,
+                              color: statusColor,
                               padding: '4px 10px',
                               borderRadius: '12px',
                               fontSize: '12px',
                               fontWeight: '600'
-                            }}>{rating}</span>
+                            }}>{status}</span>
                           </td>
                         </tr>
                       );
                     })}
+                    {invoices.length === 0 && (
+                      <tr>
+                        <td colSpan={7} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
+                          No invoices recorded yet. Invoices are submitted by Main Store when goods are received against a PO.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>

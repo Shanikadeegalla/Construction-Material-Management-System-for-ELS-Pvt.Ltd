@@ -3,6 +3,7 @@ import Material from '../models/Material.js';
 import TransferLog from '../models/TransferLog.js';
 import BOM from '../models/BOM.js';
 import { encryptDB, decryptDB } from '../utils/cryptoUtils.js';
+import { recordMovement } from '../utils/stockService.js';
 
 // @desc    Get all Material Issuance Notes
 // @route   GET /api/min
@@ -146,8 +147,13 @@ export const issueMIN = async (req, res) => {
 
     for (const m of min.materials) {
       const mainMat = await Material.findOne({ name: m.materialName, location: 'MainStore' });
-      mainMat.quantity -= m.quantity;
-      await mainMat.save();
+      await recordMovement({
+        materialDoc: mainMat,
+        type: 'MIN Issue',
+        quantityChange: -m.quantity,
+        reference: min.minNumber,
+        performedBy: issuedBy
+      });
 
       const log = new TransferLog({
         materialId: mainMat._id,
@@ -202,17 +208,13 @@ export const confirmMINReceipt = async (req, res) => {
       });
       let siteMat = siteMats.find(sm => decryptDB(sm.name) === matName);
 
-      if (siteMat) {
-        const currentQty = Number(decryptDB(siteMat.quantity)) || 0;
-        siteMat.quantity = encryptDB(String(currentQty + qtyToReceive));
-        await siteMat.save();
-      } else {
+      if (!siteMat) {
         const mainMat = await Material.findById(log.materialId);
         siteMat = new Material({
           name: encryptDB(matName),
           category: mainMat ? mainMat.category : 'Other',
           unit: mainMat ? mainMat.unit : 'bag',
-          quantity: encryptDB(String(qtyToReceive)),
+          quantity: encryptDB('0'),
           minimumStock: mainMat ? mainMat.minimumStock : 10,
           location: 'SiteStore',
           unitPrice: mainMat ? mainMat.unitPrice : 0,
@@ -221,6 +223,14 @@ export const confirmMINReceipt = async (req, res) => {
         });
         await siteMat.save();
       }
+
+      await recordMovement({
+        materialDoc: siteMat,
+        type: 'MIN Receipt',
+        quantityChange: qtyToReceive,
+        reference: min.minNumber,
+        performedBy: req.user ? req.user.name : 'Site Store Officer'
+      });
 
       log.status = 'Received';
       await log.save();

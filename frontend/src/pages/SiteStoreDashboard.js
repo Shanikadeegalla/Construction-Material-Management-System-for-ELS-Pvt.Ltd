@@ -416,7 +416,10 @@ function SiteStoreDashboard({ user, onLogout }) {
       <aside style={styles.sidebar}>
         <div style={styles.sidebarHeader}>
           <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
-          <h2 style={styles.sidebarTitle}>ELS CMMS</h2>
+          <div>
+            <div style={styles.sidebarTitle}>ELS Construction</div>
+            <div style={styles.sidebarSubtitle}>Site Store Panel</div>
+          </div>
         </div>
 
         {user && (
@@ -461,7 +464,7 @@ function SiteStoreDashboard({ user, onLogout }) {
       </aside>
 
       {/* Content Area */}
-      <main style={styles.contentArea}>
+      <main className="dashboard-content" style={styles.contentArea}>
         {error && <div style={styles.errorAlert}>{error}</div>}
         {success && <div style={styles.successAlert}>{success}</div>}
 
@@ -1105,9 +1108,14 @@ const styles = {
     marginBottom: '30px',
   },
   sidebarTitle: {
-    fontSize: '18px',
+    fontSize: '16px',
     fontWeight: '700',
-    color: 'white',
+    color: '#2563eb',
+  },
+  sidebarSubtitle: {
+    fontSize: '11px',
+    color: '#cbd5e1',
+    fontWeight: '500',
   },
   sidebarUserSection: {
     display: 'flex',

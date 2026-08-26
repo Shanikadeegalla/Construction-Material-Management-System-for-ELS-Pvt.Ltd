@@ -15,7 +15,7 @@ router.route('/')
   .get(protect, getMINs)
   .post(protect, createMIN);
 
-router.put('/:id/status', protect, updateMINStatus);
+router.put('/:id/status', protect, checkPermission('Issue Materials'), updateMINStatus);
 router.post('/:id/issue', protect, checkPermission('Issue Materials'), issueMIN);
 router.post('/:id/confirm-receipt', protect, checkPermission('Confirm Material Receipt'), confirmMINReceipt);
 

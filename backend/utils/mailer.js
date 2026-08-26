@@ -7,17 +7,31 @@ let transporter = null;
 const getTransporter = () => {
   if (transporter) return transporter;
 
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    throw new Error('Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASS in the environment.');
+  const { SMTP_SERVICE, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+  if (!SMTP_USER || !SMTP_PASS) {
+    throw new Error('Email authentication credentials are not configured. Set SMTP_USER and SMTP_PASS in the environment.');
   }
 
-  transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: Number(SMTP_PORT) || 587,
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: { user: SMTP_USER, pass: SMTP_PASS }
-  });
+  if (SMTP_SERVICE === 'gmail' || SMTP_HOST === 'smtp.gmail.com') {
+    transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: SMTP_USER,
+        pass: SMTP_PASS
+      }
+    });
+  } else {
+    if (!SMTP_HOST) {
+      throw new Error('Email SMTP server host is not configured. Set SMTP_HOST or SMTP_SERVICE in the environment.');
+    }
+
+    transporter = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: Number(SMTP_PORT) || 587,
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: { user: SMTP_USER, pass: SMTP_PASS }
+    });
+  }
 
   return transporter;
 };

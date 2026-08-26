@@ -1,4 +1,8 @@
 import Supplier from '../models/Supplier.js';
+import PurchaseOrder from '../models/PurchaseOrder.js';
+import Quotation from '../models/Quotation.js';
+import Invoice from '../models/Invoice.js';
+import GRN from '../models/GRN.js';
 
 // Generate the next unique sequential Supplier ID (e.g. SUP-0001)
 const generateNextSupplierId = async () => {
@@ -187,3 +191,107 @@ export const activateSupplier = async (req, res) => {
 };
 
 export const deleteSupplier = deactivateSupplier; // Alias for compatibility with other imports if any
+
+// Get a single supplier by ID
+// GET /api/suppliers/:id
+export const getSupplierById = async (req, res) => {
+  try {
+    const supplier = await Supplier.findById(req.params.id);
+    if (!supplier) {
+      return res.status(404).json({ success: false, message: 'Supplier not found' });
+    }
+    res.status(200).json({ success: true, data: supplier });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get a supplier's full profile: info + purchase history + quotations + invoices/payments + GRNs + performance
+// GET /api/suppliers/:id/profile
+export const getSupplierProfile = async (req, res) => {
+  try {
+    const supplier = await Supplier.findById(req.params.id);
+    if (!supplier) {
+      return res.status(404).json({ success: false, message: 'Supplier not found' });
+    }
+
+    const [purchaseOrders, quotations, invoices] = await Promise.all([
+      PurchaseOrder.find({ supplier: supplier._id }).populate('prId', 'project projectName').sort({ createdAt: -1 }),
+      Quotation.find({ supplier: supplier._id }).sort({ createdAt: -1 }),
+      Invoice.find({ supplier: supplier._id }).populate('po', 'poNumber').populate('grn', 'grnNumber').sort({ createdAt: -1 })
+    ]);
+
+    // GRNs aren't reliably linked by ObjectId for older records, so fall back to a
+    // case-insensitive name match against this supplier's name.
+    const grns = await GRN.find({
+      $or: [
+        { supplierId: supplier._id },
+        { supplier: new RegExp(`^${supplier.name || ''}$`, 'i') }
+      ]
+    }).sort({ createdAt: -1 });
+
+    // Performance summary scoped to this supplier's own purchase orders
+    let deliveredCount = 0;
+    let onTimeCount = 0;
+    let totalOrderedQty = 0;
+    let totalReceivedQty = 0;
+
+    purchaseOrders.forEach(po => {
+      if (po.status === 'Delivered') {
+        deliveredCount += 1;
+        if (po.actualDeliveryDate && po.expectedDeliveryDate) {
+          if (new Date(po.actualDeliveryDate) <= new Date(po.expectedDeliveryDate)) {
+            onTimeCount += 1;
+          }
+        } else {
+          onTimeCount += 1;
+        }
+        totalOrderedQty += po.items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+        totalReceivedQty += (po.receivedQty || 0);
+      }
+    });
+
+    let accuracyPercent = 100;
+    let onTimePercent = 100;
+    if (deliveredCount > 0) {
+      if (totalOrderedQty > 0) {
+        accuracyPercent = (totalReceivedQty / totalOrderedQty) * 100;
+      }
+      onTimePercent = (onTimeCount / deliveredCount) * 100;
+    }
+    accuracyPercent = Math.round(accuracyPercent * 10) / 10;
+    onTimePercent = Math.round(onTimePercent * 10) / 10;
+
+    let performanceRating = 'Poor';
+    if (deliveredCount === 0) {
+      performanceRating = 'N/A';
+    } else if (accuracyPercent > 95) {
+      performanceRating = 'Excellent';
+    } else if (accuracyPercent > 85) {
+      performanceRating = 'Good';
+    } else if (accuracyPercent > 70) {
+      performanceRating = 'Average';
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        supplier,
+        purchaseOrders,
+        quotations,
+        invoices,
+        grns,
+        performance: {
+          totalOrders: purchaseOrders.length,
+          deliveredCount,
+          onTimeDeliveries: onTimeCount,
+          onTimePercent,
+          deliveryAccuracy: accuracyPercent,
+          performanceRating
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

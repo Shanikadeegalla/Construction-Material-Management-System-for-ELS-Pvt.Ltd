@@ -48,6 +48,49 @@ const uploadProjectFiles = upload.fields([
   { name: 'specifications', maxCount: 20 }
 ]);
 
+// Computes the next available PRJ-YYYY-XXX code for a given start-date year
+// without reserving it (used both as a form preview and at actual creation time).
+async function computeNextProjectId(startDate) {
+  const dateObj = new Date(startDate);
+  const year = isNaN(dateObj.getTime()) ? new Date().getFullYear() : dateObj.getFullYear();
+
+  const startOfYear = new Date(`${year}-01-01T00:00:00.000Z`);
+  const endOfYear = new Date(`${year}-12-31T23:59:59.999Z`);
+
+  const count = await Project.countDocuments({
+    startDate: { $gte: startOfYear, $lte: endOfYear }
+  });
+
+  let projectId = '';
+  let suffixNum = count + 1;
+  let exists = true;
+  while (exists) {
+    const suffix = String(suffixNum).padStart(3, '0');
+    projectId = `PRJ-${year}-${suffix}`;
+    const existingProject = await Project.findOne({ projectId });
+    if (!existingProject) {
+      exists = false;
+    } else {
+      suffixNum++;
+    }
+  }
+
+  return { projectId, year };
+}
+
+// @desc    Preview the project ID that will be auto-generated on creation
+// @route   GET /api/projects/next-id
+// @access  Private (Project Manager)
+router.get('/next-id', protect, checkPermission('Create Project'), async (req, res) => {
+  try {
+    const { startDate } = req.query;
+    const { projectId } = await computeNextProjectId(startDate || Date.now());
+    res.status(200).json({ success: true, projectId });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // @desc    Create a new project
 // @route   POST /api/projects
 // @access  Private (Project Manager)
@@ -70,28 +113,7 @@ router.post('/', protect, checkPermission('Create Project'), uploadProjectFiles,
 
     // Auto-generate project code (PRJ-YYYY-XXX)
     const dateObj = new Date(startDate);
-    const year = isNaN(dateObj.getTime()) ? new Date().getFullYear() : dateObj.getFullYear();
-
-    const startOfYear = new Date(`${year}-01-01T00:00:00.000Z`);
-    const endOfYear = new Date(`${year}-12-31T23:59:59.999Z`);
-
-    const count = await Project.countDocuments({
-      startDate: { $gte: startOfYear, $lte: endOfYear }
-    });
-
-    let projectId = '';
-    let suffixNum = count + 1;
-    let exists = true;
-    while (exists) {
-      const suffix = String(suffixNum).padStart(3, '0');
-      projectId = `PRJ-${year}-${suffix}`;
-      const existingProject = await Project.findOne({ projectId });
-      if (!existingProject) {
-        exists = false;
-      } else {
-        suffixNum++;
-      }
-    }
+    const { projectId } = await computeNextProjectId(startDate);
 
     // Build uploaded document lists
     const drawings = (req.files?.drawings || []).map((f) => ({

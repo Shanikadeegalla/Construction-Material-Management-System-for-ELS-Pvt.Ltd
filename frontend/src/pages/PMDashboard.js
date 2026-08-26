@@ -59,6 +59,8 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [viewingProject, setViewingProject] = useState(null);
   const [showViewProjectModal, setShowViewProjectModal] = useState(false);
   const [showProjectForm, setShowProjectForm] = useState(false);
+  const [nextProjectId, setNextProjectId] = useState('');
+  const [nextProjectIdLoading, setNextProjectIdLoading] = useState(false);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -193,6 +195,31 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  const fetchNextProjectId = async (startDate) => {
+    setNextProjectIdLoading(true);
+    try {
+      const query = startDate ? `?startDate=${encodeURIComponent(startDate)}` : '';
+      const res = await fetch(`http://localhost:5000/api/projects/next-id${query}`, {
+        headers: getHeaders()
+      });
+      const data = await res.json();
+      setNextProjectId(data.success ? data.projectId : '');
+    } catch (err) {
+      console.error('Error fetching next project ID:', err);
+      setNextProjectId('');
+    } finally {
+      setNextProjectIdLoading(false);
+    }
+  };
+
+  // Preview the auto-generated project ID whenever the create form is open
+  // and the start date changes (the year drives the PRJ-YYYY-XXX sequence).
+  useEffect(() => {
+    if (showProjectForm && !editingProjectId) {
+      fetchNextProjectId(projectForm.startDate);
+    }
+  }, [showProjectForm, editingProjectId, projectForm.startDate]);
+
   const fetchTransfers = async () => {
     try {
       const res = await fetch('http://localhost:5000/api/inventory/transfers', {
@@ -244,7 +271,16 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  const hasSession = () => {
+    try {
+      return !!JSON.parse(localStorage.getItem('user'))?.token;
+    } catch {
+      return false;
+    }
+  };
+
   const fetchAllData = async () => {
+    if (!hasSession()) return;
     setLoading(true);
     await Promise.all([fetchRequests(), fetchBoms(), fetchNotifications(), fetchBomNotifications(), fetchProjects(), fetchTransfers(), fetchSiteInventory(), fetchMaterialMaster()]);
     setLoading(false);
@@ -400,6 +436,14 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     fetchBOMVersions(projId);
 
+    // The BOM number is derived from the project's own project code and stays
+    // constant across every version/draft of that project's BOM, so any existing
+    // record (draft or otherwise) already carries the same number the registry
+    // will show. Fall back to previewing it in the same "BOM-<projectCode>"
+    // shape the backend generates so the field never shows a placeholder.
+    const selectedProject = projects.find(p => p._id === projId);
+    const previewBomNumber = selectedProject?.projectId ? `BOM-${selectedProject.projectId}` : '';
+
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const res = await fetch(`http://localhost:5000/api/bom/versions/${projId}`, {
@@ -407,6 +451,8 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success && data.data) {
+        const existingBomNumber = data.data.find(b => b.bomNumber)?.bomNumber;
+
         const draft = data.data.find(b => b.status === 'Draft');
         if (draft) {
           const mapped = draft.materials.map(m => ({
@@ -422,7 +468,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           }));
           setBomMaterials(mapped);
           setCurrentBomMeta({
-            bomNumber: draft.bomNumber,
+            bomNumber: draft.bomNumber || existingBomNumber || previewBomNumber,
             version: draft.version,
             status: draft.status,
             createdAt: draft.createdAt,
@@ -431,9 +477,20 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           setMessage('ℹ️ Loaded existing Draft BOM for editing.');
           return;
         }
+
+        if (existingBomNumber) {
+          setCurrentBomMeta({ bomNumber: existingBomNumber });
+        } else if (previewBomNumber) {
+          setCurrentBomMeta({ bomNumber: previewBomNumber });
+        }
+      } else if (previewBomNumber) {
+        setCurrentBomMeta({ bomNumber: previewBomNumber });
       }
     } catch (err) {
       console.error(err);
+      if (previewBomNumber) {
+        setCurrentBomMeta({ bomNumber: previewBomNumber });
+      }
     }
 
     setBomMaterials([{ ...emptyBomMaterialRow }]);
@@ -495,15 +552,25 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Returns the active Master Materials matching a search term (name, code, or category).
-  // Empty term returns the full active catalog, used to power "click to browse" behavior.
-  const getMatchingMaterials = (val) => {
+  // Sorted list of distinct categories in the active catalog, used to power the
+  // "choose a category first" filter above the material search box.
+  const materialCategories = Array.from(
+    new Set(materialMaster.map(item => item.category || 'Other'))
+  ).sort();
+
+  // Returns the active Master Materials matching a search term (name or code), narrowed
+  // to the row's chosen category when set. Empty term + no category returns the full
+  // active catalog, used to power "click to browse" behavior.
+  const getMatchingMaterials = (val, category) => {
     const q = (val || '').trim().toLowerCase();
-    if (!q) return materialMaster;
-    return materialMaster.filter(item =>
+    let list = materialMaster;
+    if (category) {
+      list = list.filter(item => (item.category || 'Other') === category);
+    }
+    if (!q) return list;
+    return list.filter(item =>
       (item.materialName && item.materialName.toLowerCase().includes(q)) ||
-      (item.materialCode && item.materialCode.toLowerCase().includes(q)) ||
-      (item.category && item.category.toLowerCase().includes(q))
+      (item.materialCode && item.materialCode.toLowerCase().includes(q))
     );
   };
 
@@ -561,6 +628,23 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     return () => clearInterval(interval);
   }, []);
 
+  // Picking a category narrows the Material Name browse list to that category. Any
+  // previously chosen material is cleared since it may no longer belong to the new category.
+  const handleCategoryChange = (idx, category) => {
+    const updated = [...bomMaterials];
+    updated[idx].category = category;
+    updated[idx].materialId = null;
+    updated[idx].name = '';
+    updated[idx].unit = '';
+    updated[idx].estimatedUnitCost = 0;
+    updated[idx].totalCost = 0;
+    setBomMaterials(updated);
+
+    setFocusedRowIdx(idx);
+    setHighlightedSuggestionIdx(-1);
+    setSuggestions(getMatchingMaterials('', category));
+  };
+
   const handleAddMaterialRow = () => {
     setBomMaterials([...bomMaterials, { ...emptyBomMaterialRow }]);
   };
@@ -577,9 +661,9 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (field === 'name') {
       // Typing invalidates any prior selection until the PM picks a material
       // from the Master Material dropdown again - free typed names must never
-      // be submittable, only materials referenced from the master list.
+      // be submittable, only materials referenced from the master list. The chosen
+      // category is left as-is since it's now a deliberate filter, not just an autofill.
       updated[idx].materialId = null;
-      updated[idx].category = '';
       updated[idx].unit = '';
       updated[idx].estimatedUnitCost = 0;
       updated[idx].totalCost = 0;
@@ -596,7 +680,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (field === 'name') {
       setFocusedRowIdx(idx);
       setHighlightedSuggestionIdx(-1);
-      setSuggestions(getMatchingMaterials(val));
+      setSuggestions(getMatchingMaterials(val, updated[idx].category));
 
       if (val.trim() === '') {
         setDuplicateWarning(null);
@@ -799,6 +883,30 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
             </button>
           </div>
           <form onSubmit={handleProjectSubmit}>
+            {!editingProjectId && (
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '700', marginBottom: '6px' }}>PROJECT ID (AUTO-GENERATED)</label>
+                <input
+                  type="text"
+                  value={nextProjectIdLoading ? 'Generating…' : (nextProjectId || 'Will be assigned on save')}
+                  readOnly
+                  disabled
+                  style={{ width: '100%', maxWidth: '260px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '14px', outline: 'none', background: '#f1f5f9', color: '#475569', fontWeight: '700' }}
+                />
+              </div>
+            )}
+            {editingProjectId && (
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '700', marginBottom: '6px' }}>PROJECT ID</label>
+                <input
+                  type="text"
+                  value={projects.find(p => p._id === editingProjectId)?.projectId || ''}
+                  readOnly
+                  disabled
+                  style={{ width: '100%', maxWidth: '260px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '14px', outline: 'none', background: '#f1f5f9', color: '#475569', fontWeight: '700' }}
+                />
+              </div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '700', marginBottom: '6px' }}>PROJECT NAME *</label>
@@ -1314,8 +1422,8 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
         <div style={{ padding: '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
           <div>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: 'white' }}>ELS CMMS</div>
-            <div style={{ fontSize: '11px', color: '#2563eb' }}>PM Workspace</div>
+            <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>PM Workspace</div>
           </div>
         </div>
         <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1347,7 +1455,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       </div>
 
       {/* Main Content */}
-      <div style={{ marginLeft: '240px', flex: 1, background: '#f5f6fa', minHeight: '100vh' }}>
+      <div className="dashboard-content" style={{ marginLeft: '240px', flex: 1, background: '#f5f6fa', minHeight: '100vh' }}>
         <div style={{ background: 'white', padding: '16px 24px', borderBottom: '1px solid #e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ margin: 0, fontSize: '20px', color: '#0d1b4b', fontWeight: '700' }}>
             {activePage === 'dashboard' && 'PM Executive Overview'}
@@ -1492,20 +1600,13 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               {stats.map((s, i) => (
                 <div
                   key={i}
-                  onClick={() => {
-                    setModal(s.type);
-                    setModalSearchTerm('');
-                  }}
                   style={{
                     background: 'white',
                     borderRadius: '8px',
                     padding: '20px',
                     boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                    borderTop: `4px solid ${s.color}`,
-                    cursor: 'pointer',
-                    transition: 'transform 0.2s, box-shadow 0.2s'
+                    borderTop: `4px solid ${s.color}`
                   }}
-                  className="hover-card"
                 >
                   <div style={{ fontSize: '24px', fontWeight: '700', color: s.color }}>{s.value}</div>
                   <div style={{ fontSize: '13px', color: '#666', marginTop: '6px' }}>{s.label}</div>
@@ -1577,21 +1678,21 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px' }}>
               {/* Create BOM Form */}
               <div style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #0d1b4b', paddingBottom: '10px', marginBottom: '20px' }}>
-                  <h3 style={{ margin: 0, color: '#0d1b4b', fontWeight: '700' }}>🏗️ Create / Edit Bill of Materials (BOM)</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                  <h3 style={{ margin: 0, color: '#0d1b4b', fontWeight: '700' }}>🏗️ Bill of Materials (BOM)</h3>
                   {!showBOMForm ? (
                     <button
                       type="button"
                       onClick={handleOpenCreateBOM}
-                      style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px', boxShadow: '0 4px 10px rgba(37, 99, 235,0.15)' }}
+                      style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '14px', boxShadow: '0 4px 10px rgba(37, 99, 235,0.15)' }}
                     >
-                      ➕ Create BOM
+                      + Create BOM
                     </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => setShowBOMForm(false)}
-                      style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
+                      style={{ background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '14px' }}
                     >
                       ✕ Close
                     </button>
@@ -1642,7 +1743,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <option value="">-- Choose a Project --</option>
                     {projects.map(p => (
                       <option key={p._id} value={p._id}>
-                        {p.projectName || p.name} ({p.projectId || 'Draft'})
+                        {p.projectId || 'Draft'} - {p.projectName || p.name}
                       </option>
                     ))}
                   </select>
@@ -1758,7 +1859,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                       <tbody>
                         {bomMaterials.map((m, idx) => (
                           <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                            {/* Material Combobox: click to browse the full master list, or type to filter */}
+                            {/* Material Combobox: click to browse (narrowed to the row's chosen Category, if any), or type to filter */}
                             <td style={{ padding: '8px 4px', width: '240px', position: 'relative' }}>
                               <div style={{ position: 'relative' }}>
                                 <input
@@ -1769,7 +1870,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                                   onFocus={() => {
                                     setFocusedRowIdx(idx);
                                     setHighlightedSuggestionIdx(-1);
-                                    setSuggestions(getMatchingMaterials(m.name));
+                                    setSuggestions(getMatchingMaterials(m.name, m.category));
                                   }}
                                   onBlur={() => setFocusedRowIdx(null)}
                                   onKeyDown={e => {
@@ -1798,7 +1899,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                                 <div style={{ position: 'absolute', top: '100%', left: 4, right: 4, background: 'white', border: '1px solid #cbd5e1', borderRadius: '6px', boxShadow: '0 8px 20px rgba(0,0,0,0.12)', zIndex: 1000, maxHeight: '280px', overflowY: 'auto' }}>
                                   {suggestions.length === 0 ? (
                                     <div style={{ padding: '14px 12px', fontSize: '12px', color: '#94a3b8', textAlign: 'center' }}>
-                                      No active master material matches{m.name.trim() ? ` "${m.name}"` : ''}. Ask Admin to add it.
+                                      No active master material{m.category ? ` in "${m.category}"` : ''} matches{m.name.trim() ? ` "${m.name}"` : ''}. Ask Admin to add it.
                                     </div>
                                   ) : (
                                     Object.entries(
@@ -1845,15 +1946,18 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                                 </div>
                               )}
                             </td>
-                            {/* Category - Read only */}
+                            {/* Category - choose first to narrow the Material Name list; auto-set once a material is picked */}
                             <td style={{ padding: '8px 4px', width: '120px' }}>
-                              <input
-                                type="text"
+                              <select
                                 value={m.category}
-                                placeholder="Autofilled"
-                                style={{ width: '100%', padding: '8px', border: '1px solid #e2e8f0', borderRadius: '4px', fontSize: '13px', background: '#f8fafc', color: '#475569' }}
-                                readOnly
-                              />
+                                onChange={e => handleCategoryChange(idx, e.target.value)}
+                                style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px', background: 'white', color: '#334155' }}
+                              >
+                                <option value="">-- Any --</option>
+                                {materialCategories.map(cat => (
+                                  <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                              </select>
                             </td>
                             {/* Unit - Read only */}
                             <td style={{ padding: '8px 4px', width: '90px' }}>

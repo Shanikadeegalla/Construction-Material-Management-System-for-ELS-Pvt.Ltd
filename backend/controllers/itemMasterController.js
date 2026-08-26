@@ -1,6 +1,29 @@
 import ItemMaster from '../models/ItemMaster.js';
 import Material from '../models/Material.js';
 
+// Generate the next unique sequential Material Code (e.g. MAT-0001)
+const generateNextMaterialCode = async () => {
+  let next = (await ItemMaster.countDocuments()) + 1;
+  let candidate;
+  do {
+    candidate = `MAT-${String(next).padStart(4, '0')}`;
+    next++;
+  } while (await ItemMaster.findOne({ materialCode: candidate }));
+  return candidate;
+};
+
+// @desc    Get the next available Material Code (for pre-filling the create-material form)
+// @route   GET /api/item-master/next-code
+// @access  Private
+export const getNextMaterialCode = async (req, res) => {
+  try {
+    const materialCode = await generateNextMaterialCode();
+    res.status(200).json({ success: true, materialCode });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Get all master materials (optionally filtered by status)
 // @route   GET /api/item-master
 // @access  Private
@@ -58,6 +81,26 @@ export const createItemMaster = async (req, res) => {
         reorderLevel: calculatedReorder
       }
     );
+
+    // Auto-provision a zero-stock MainStore inventory row so the new master
+    // material shows up in the Main Store Inventory list without a Store
+    // Officer having to add it manually (they no longer have that ability).
+    const existingMainStoreRow = await Material.findOne({ name: materialName, location: 'MainStore' });
+    if (!existingMainStoreRow) {
+      await Material.create({
+        materialCode,
+        name: materialName,
+        category,
+        unit,
+        quantity: 0,
+        minimumStock: Number(minimumStock || 10),
+        maximumStock: Number(maximumStock || 100),
+        reorderLevel: calculatedReorder,
+        location: 'MainStore',
+        unitPrice: Number(estimatedUnitCost || 0),
+        description: description || ''
+      });
+    }
 
     res.status(201).json({ success: true, data: item });
   } catch (error) {
