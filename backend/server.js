@@ -21,6 +21,8 @@ import itemMasterRoutes from './routes/itemMasterRoutes.js';
 import materialIssuanceRoutes from './routes/materialIssuanceRoutes.js';
 import quotationRoutes from './routes/quotations.js';
 import invoiceRoutes from './routes/invoices.js';
+import paymentRoutes from './routes/paymentRoutes.js';
+import { stripeWebhookHandler } from './controllers/paymentController.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 import { handleEncryption } from './middleware/encryptionMiddleware.js';
 
@@ -34,6 +36,11 @@ const app = express();
 
 // Middlewares
 app.use(cors());
+
+// Stripe requires the raw request body to verify webhook signatures, so this
+// route must be registered before express.json() parses the body.
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), stripeWebhookHandler);
+
 app.use(express.json()); // Body parser
 app.use(handleEncryption);
 
@@ -58,6 +65,7 @@ app.use('/api/item-master', itemMasterRoutes);
 app.use('/api/min', materialIssuanceRoutes);
 app.use('/api/quotations', quotationRoutes);
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/payments', paymentRoutes);
 app.use('/api', siteInventoryRoutes);
 
 // Root route

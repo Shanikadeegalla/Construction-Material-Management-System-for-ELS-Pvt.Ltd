@@ -1359,12 +1359,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       <div style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #0d1b4b', paddingBottom: '12px', marginBottom: '20px' }}>
           <h3 style={{ margin: 0, color: '#0d1b4b', fontWeight: '700', fontSize: '16px' }}>🏪 Real-Time Site Stores Inventory</h3>
-          <button 
-            onClick={fetchSiteInventory} 
-            style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '4px', padding: '6px 12px', fontSize: '13px', cursor: 'pointer', fontWeight: '600' }}
-          >
-            🔄 Refresh Balances
-          </button>
         </div>
 
         <div style={{ marginBottom: '20px' }}>

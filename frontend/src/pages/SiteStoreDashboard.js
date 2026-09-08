@@ -10,6 +10,10 @@ function SiteStoreDashboard({ user, onLogout }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  // Site Inventory screen filters
+  const [inventorySearchQuery, setInventorySearchQuery] = useState('');
+  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('All');
+
   // Phase 8 - Approved BOM states
   const [projects, setProjects] = useState([]);
   const [selectedProjId, setSelectedProjId] = useState('');
@@ -27,6 +31,21 @@ function SiteStoreDashboard({ user, onLogout }) {
     notes: '',
     items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }]
   });
+
+  // Request Materials Form State (free-form Material Transfer Request, not
+  // gated by an approved BOM)
+  const [itemMasterList, setItemMasterList] = useState([]);
+  const emptyRequestItemRow = { materialName: '', category: '', unit: '', quantity: '' };
+  const [requestForm, setRequestForm] = useState({
+    requiredDate: '',
+    notes: '',
+    items: [{ ...emptyRequestItemRow }]
+  });
+  // Material Name combobox state for the Request Materials table (mirrors the
+  // "click to browse or type to search" behavior of the PM's BOM Material Allocation Table)
+  const [requestFocusedRowIdx, setRequestFocusedRowIdx] = useState(null);
+  const [requestSuggestions, setRequestSuggestions] = useState([]);
+  const [requestHighlightedSuggestionIdx, setRequestHighlightedSuggestionIdx] = useState(-1);
 
   // Usage Form State
   const [usageForm, setUsageForm] = useState({
@@ -102,6 +121,21 @@ function SiteStoreDashboard({ user, onLogout }) {
       }
     } catch (err) {
       console.error('Error fetching Material Issuance Notes:', err);
+    }
+  };
+
+  const fetchItemMasters = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/item-master', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setItemMasterList(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching item master list:', err);
     }
   };
 
@@ -186,6 +220,7 @@ function SiteStoreDashboard({ user, onLogout }) {
     fetchMaterials();
     fetchProjects();
     fetchMINs();
+    fetchItemMasters();
     // Load usage logs
     const logs = localStorage.getItem('siteUsageLogs');
     if (logs) {
@@ -195,6 +230,14 @@ function SiteStoreDashboard({ user, onLogout }) {
         setUsageHistory([]);
       }
     }
+  }, [selectedProjId]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchMaterials();
+      fetchMINs();
+    }, 30000);
+    return () => clearInterval(interval);
   }, [selectedProjId]);
 
   useEffect(() => {
@@ -317,6 +360,125 @@ function SiteStoreDashboard({ user, onLogout }) {
     }
   };
 
+  const currentProjectName = (() => {
+    const userProjId = user?.projectId || user?.project_id;
+    const userProj = projects.find(p => p._id === userProjId);
+    return userProj ? (userProj.projectName || userProj.name) : minForm.projectName;
+  })();
+
+  // Sorted list of distinct categories in the active Item Master catalog, used to
+  // power the "choose a category first" filter above the material search box.
+  const requestMaterialCategories = Array.from(
+    new Set(itemMasterList.map(item => item.category || 'Other'))
+  ).sort();
+
+  // Returns the active Item Master entries matching a search term (name or code),
+  // narrowed to the row's chosen category when set.
+  const getMatchingRequestMaterials = (val, category) => {
+    const q = (val || '').trim().toLowerCase();
+    let list = itemMasterList;
+    if (category) {
+      list = list.filter(item => (item.category || 'Other') === category);
+    }
+    if (!q) return list;
+    return list.filter(item =>
+      (item.materialName && item.materialName.toLowerCase().includes(q)) ||
+      (item.materialCode && item.materialCode.toLowerCase().includes(q))
+    );
+  };
+
+  const handleRequestCategoryChange = (idx, category) => {
+    const updated = [...requestForm.items];
+    updated[idx].category = category;
+    updated[idx].materialName = '';
+    updated[idx].unit = '';
+    setRequestForm({ ...requestForm, items: updated });
+
+    setRequestFocusedRowIdx(idx);
+    setRequestHighlightedSuggestionIdx(-1);
+    setRequestSuggestions(getMatchingRequestMaterials('', category));
+  };
+
+  const handleRequestSuggestionClick = (idx, item) => {
+    const updated = [...requestForm.items];
+    updated[idx].materialName = item.materialName;
+    updated[idx].category = item.category || 'Other';
+    updated[idx].unit = item.unit || '';
+    setRequestForm({ ...requestForm, items: updated });
+
+    setRequestSuggestions([]);
+    setRequestHighlightedSuggestionIdx(-1);
+    setRequestFocusedRowIdx(null);
+  };
+
+  const handleRequestMaterialNameChange = (idx, val) => {
+    const updated = [...requestForm.items];
+    updated[idx].materialName = val;
+    // Typing invalidates any prior selection until a material is picked from
+    // the Item Master dropdown again - only catalog materials are submittable.
+    updated[idx].unit = '';
+    setRequestForm({ ...requestForm, items: updated });
+
+    setRequestFocusedRowIdx(idx);
+    setRequestHighlightedSuggestionIdx(-1);
+    setRequestSuggestions(getMatchingRequestMaterials(val, updated[idx].category));
+  };
+
+  const handleRequestMaterialsSubmit = async (e) => {
+    e.preventDefault();
+    setError(''); setSuccess('');
+
+    const invalid = requestForm.items.some(item => !item.materialName || !item.quantity || Number(item.quantity) <= 0);
+    if (invalid) {
+      setError('Please select a material and enter a valid request quantity for all rows.');
+      return;
+    }
+
+    if (!selectedProjId) {
+      setError('You must be assigned to a project to request materials.');
+      return;
+    }
+
+    try {
+      const payload = {
+        projectId: selectedProjId,
+        projectName: currentProjectName,
+        requiredDate: requestForm.requiredDate,
+        notes: requestForm.notes,
+        materials: requestForm.items.map(item => ({
+          materialName: item.materialName,
+          quantity: item.quantity,
+          unit: item.unit
+        }))
+      };
+
+      const ciphertext = encryptTransit(JSON.stringify(payload));
+
+      const res = await fetch('http://localhost:5000/api/min/request', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ ciphertext })
+      });
+      const data = await res.json();
+
+      let finalData = data;
+      if (data && data.ciphertext) {
+        finalData = JSON.parse(decryptTransit(data.ciphertext));
+      }
+
+      if (res.ok && finalData.success) {
+        setSuccess('✅ Material Transfer Request submitted successfully to Main Store!');
+        setRequestForm({ requiredDate: '', notes: '', items: [{ ...emptyRequestItemRow }] });
+        fetchMINs();
+        setView('dashboard');
+      } else {
+        setError(finalData.message || 'Failed to submit Material Transfer Request.');
+      }
+    } catch (err) {
+      setError('Could not connect to the backend server to submit the Material Transfer Request.');
+    }
+  };
+
   const handleUsageSubmit = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -410,6 +572,42 @@ function SiteStoreDashboard({ user, onLogout }) {
   const siteStockValue = materials.reduce((sum, m) => sum + (m.quantity * m.unitPrice), 0);
   const siteLowStockItems = materials.filter(m => m.quantity <= m.minimumStock).length;
 
+  // Site Inventory screen stats
+  const siteOutOfStockItems = materials.filter(m => m.quantity === 0).length;
+  const siteLowStockOnlyItems = materials.filter(m => m.quantity > 0 && m.quantity <= m.minimumStock).length;
+  const now = new Date();
+  const receivedThisMonthCount = mins.filter(m => {
+    if (m.status !== 'Received' || !m.receivedAt) return false;
+    const d = new Date(m.receivedAt);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  }).length;
+
+  // Total quantity historically confirmed as received at site, per material name
+  const issuedToSiteByMaterial = {};
+  mins.filter(m => m.status === 'Received').forEach(m => {
+    (m.materials || []).forEach(mat => {
+      issuedToSiteByMaterial[mat.materialName] = (issuedToSiteByMaterial[mat.materialName] || 0) + Number(mat.quantity || 0);
+    });
+  });
+
+  // Total quantity consumed at site, per material name (from locally logged usage)
+  const consumedByMaterial = {};
+  usageHistory.forEach(u => {
+    consumedByMaterial[u.materialName] = (consumedByMaterial[u.materialName] || 0) + Number(u.quantity || 0);
+  });
+
+  const inventoryMaterialStatus = (m) => {
+    if (m.quantity === 0) return { label: 'Out of Stock', bg: '#ffebee', color: '#c62828' };
+    if (m.quantity <= m.minimumStock) return { label: 'Low', bg: '#ffebee', color: '#c62828' };
+    return { label: 'Normal', bg: '#e8f5e9', color: '#2e7d32' };
+  };
+
+  const siteFilteredMaterials = materials.filter(m => {
+    const matchesSearch = m.name.toLowerCase().includes(inventorySearchQuery.toLowerCase());
+    const matchesCategory = inventoryCategoryFilter === 'All' || m.category === inventoryCategoryFilter;
+    return matchesSearch && matchesCategory;
+  });
+
   return (
     <div style={styles.dashboardLayout}>
       {/* Navigation Sidebar */}
@@ -445,6 +643,7 @@ function SiteStoreDashboard({ user, onLogout }) {
           {[
             { id: 'dashboard', label: 'Dashboard', icon: '📊' },
             { id: 'site-inventory', label: 'Site Inventory', icon: '🏗️' },
+            { id: 'request-materials', label: 'Request Materials', icon: '📦' },
             { id: 'create-min', label: 'Material Issuance Note', icon: '📋' },
             { id: 'usage', label: 'Material Usage', icon: '🔧' },
           ].map(item => (
@@ -602,7 +801,6 @@ function SiteStoreDashboard({ user, onLogout }) {
             <div style={{ ...styles.tableContainer, marginTop: '24px' }}>
               <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 📋 Material Issuance Note Status Logs
-                <button onClick={fetchMINs} style={{ background: '#2563eb', border: 'none', color: 'white', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Refresh</button>
               </h3>
               {mins.length === 0 ? (
                 <div style={styles.emptyState}>No Material Issuance Note logs found.</div>
@@ -648,10 +846,63 @@ function SiteStoreDashboard({ user, onLogout }) {
 
         {view === 'site-inventory' && (
           <div style={styles.container}>
-            <h1 style={styles.pageTitle}>Site Store Inventory Directory</h1>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+              <h1 style={{ ...styles.pageTitle, marginBottom: 0 }}>Site Store Inventory Directory</h1>
+            </div>
+            <div style={{ color: '#64748b', fontSize: '13px', marginBottom: '16px' }}>
+              What's currently available at this site, what's been issued here from Main Store, what's been consumed, and what's running low.
+            </div>
+
+            {/* Summary Cards */}
+            <div style={styles.statsGrid}>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>Total Materials</div>
+                <div style={styles.statValue}>{totalSiteSKUs}</div>
+              </div>
+              <div style={{ ...styles.statCard, borderLeft: siteLowStockOnlyItems > 0 ? '4px solid #f59e0b' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Low Stock</div>
+                <div style={{ ...styles.statValue, color: siteLowStockOnlyItems > 0 ? '#f59e0b' : '#0d1b4b' }}>{siteLowStockOnlyItems}</div>
+              </div>
+              <div style={{ ...styles.statCard, borderLeft: siteOutOfStockItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Out of Stock</div>
+                <div style={{ ...styles.statValue, color: siteOutOfStockItems > 0 ? '#ef4444' : '#0d1b4b' }}>{siteOutOfStockItems}</div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>Received This Month</div>
+                <div style={styles.statValue}>{receivedThisMonthCount}</div>
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div style={styles.filtersContainer}>
+              <input
+                type="text"
+                placeholder="Search inventory by name..."
+                value={inventorySearchQuery}
+                onChange={e => setInventorySearchQuery(e.target.value)}
+                style={styles.searchInput}
+              />
+              <div style={styles.filterGroup}>
+                <span style={styles.filterLabel}>Category:</span>
+                <select
+                  value={inventoryCategoryFilter}
+                  onChange={e => setInventoryCategoryFilter(e.target.value)}
+                  style={styles.filterSelect}
+                >
+                  <option value="All">All Categories</option>
+                  {['Cement', 'Steel', 'Bricks', 'Sand', 'Gravel', 'Wood', 'Paint', 'Other'].map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Stock Table */}
             <div style={styles.tableContainer}>
-              {materials.length === 0 ? (
-                <div style={styles.emptyState}>No materials in site inventory.</div>
+              {loading ? (
+                <div style={styles.loadingText}>Fetching site inventory...</div>
+              ) : siteFilteredMaterials.length === 0 ? (
+                <div style={styles.emptyState}>No materials found in the Site Store.</div>
               ) : (
                 <table style={styles.table}>
                   <thead>
@@ -659,31 +910,29 @@ function SiteStoreDashboard({ user, onLogout }) {
                       <th style={styles.th}>Material Name</th>
                       <th style={styles.th}>Category</th>
                       <th style={styles.th}>Unit</th>
-                      <th style={styles.th}>Local Qty Available</th>
+                      <th style={styles.th}>Available at Site</th>
+                      <th style={styles.th}>Issued to Site</th>
+                      <th style={styles.th}>Consumed</th>
                       <th style={styles.th}>Min Stock Limit</th>
-                      <th style={styles.th}>Est. Unit Price (LKR)</th>
-                      <th style={styles.th}>Total Value</th>
+                      <th style={styles.th}>Total Value (LKR)</th>
                       <th style={styles.th}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {materials.map(m => {
-                      const isLow = m.quantity <= m.minimumStock;
+                    {siteFilteredMaterials.map(m => {
+                      const status = inventoryMaterialStatus(m);
                       return (
-                        <tr key={m._id} style={{ borderBottom: '1px solid #eee', backgroundColor: isLow ? 'rgba(239,68,68,0.08)' : 'white' }}>
-                          <td style={styles.tdBold}>{m.name}</td>
+                        <tr key={m._id} style={{ borderBottom: '1px solid #eee', backgroundColor: status.label !== 'Normal' ? 'rgba(239,68,68,0.08)' : 'white' }}>
+                          <td style={{ ...styles.tdBold, color: status.label !== 'Normal' ? '#c62828' : '#0d1b4b' }}>{m.name}</td>
                           <td style={styles.td}>{m.category}</td>
                           <td style={styles.td}>{m.unit}</td>
                           <td style={styles.td}>{m.quantity}</td>
+                          <td style={styles.td}>{issuedToSiteByMaterial[m.name] || 0}</td>
+                          <td style={styles.td}>{consumedByMaterial[m.name] || 0}</td>
                           <td style={styles.td}>{m.minimumStock}</td>
-                          <td style={styles.td}>{m.unitPrice?.toLocaleString()}</td>
                           <td style={styles.td}>LKR {(m.quantity * (m.unitPrice || 0)).toLocaleString()}</td>
                           <td style={styles.td}>
-                            {isLow ? (
-                              <span style={{ background: '#ffebee', color: '#c62828', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Low</span>
-                            ) : (
-                              <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Normal</span>
-                            )}
+                            <span style={{ background: status.bg, color: status.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{status.label}</span>
                           </td>
                         </tr>
                       );
@@ -697,7 +946,6 @@ function SiteStoreDashboard({ user, onLogout }) {
             <div style={{ ...styles.tableContainer, marginTop: '30px' }}>
               <div style={{ padding: '16px 20px', color: 'white', margin: 0, borderBottom: '1px solid #eee', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, fontSize: '15px', color: 'white' }}>🚚 In-Transit Shipments (Awaiting Receipt)</h3>
-                <button onClick={fetchMINs} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Refresh</button>
               </div>
               {mins.filter(m => m.status === 'Issued').length === 0 ? (
                 <div style={styles.emptyState}>No shipments currently in-transit.</div>
@@ -742,6 +990,228 @@ function SiteStoreDashboard({ user, onLogout }) {
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        )}
+
+        {view === 'request-materials' && (
+          <div style={styles.container}>
+            <h1 style={styles.pageTitle}>Request Materials</h1>
+            <div style={styles.formCard}>
+              <form onSubmit={handleRequestMaterialsSubmit}>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                  <div>
+                    <label style={styles.fieldLabel}>Project / Site</label>
+                    <input
+                      type="text"
+                      value={currentProjectName}
+                      style={{ ...styles.formInput, background: '#f1f5f9' }}
+                      disabled
+                    />
+                  </div>
+                  <div>
+                    <label style={styles.fieldLabel}>Required Date *</label>
+                    <DateInput
+                      value={requestForm.requiredDate}
+                      onChange={iso => setRequestForm({ ...requestForm, requiredDate: iso })}
+                      style={styles.formInput}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <h4 style={{ color: '#0d1b4b', margin: '20px 0 10px', fontSize: '14px', fontWeight: '700' }}>Material Allocation Table</h4>
+                {/* paddingBottom reserves room for the material search dropdown (~5 rows) so it isn't
+                    clipped by this container's overflow-x:auto, which the CSS spec also turns into
+                    an overflow-y clip when overflow-y is left at its default. */}
+                <div style={{ overflowX: 'auto', paddingBottom: requestFocusedRowIdx !== null ? '260px' : '20px', transition: 'padding-bottom 0.15s ease' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
+                    <thead>
+                      <tr style={{ background: '#f8fafc', borderBottom: '1px solid #cbd5e1' }}>
+                        {['Material Name *', 'Category', 'Unit', 'Available at Site', 'Request Qty *', 'Action'].map(h => (
+                          <th key={h} style={{ padding: '10px', textAlign: 'left', fontSize: '12px', color: '#475569', fontWeight: '600' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {requestForm.items.map((item, idx) => {
+                        const siteMat = materials.find(m => m.name === item.materialName);
+                        const availableAtSite = siteMat ? siteMat.quantity : 0;
+                        return (
+                          <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            {/* Material Combobox: click to browse (narrowed to the row's chosen Category, if any), or type to filter */}
+                            <td style={{ padding: '8px 4px', width: '220px', position: 'relative' }}>
+                              <div style={{ position: 'relative' }}>
+                                <input
+                                  type="text"
+                                  placeholder="Click to browse or type to search..."
+                                  value={item.materialName}
+                                  onChange={e => handleRequestMaterialNameChange(idx, e.target.value)}
+                                  onFocus={() => {
+                                    setRequestFocusedRowIdx(idx);
+                                    setRequestHighlightedSuggestionIdx(-1);
+                                    setRequestSuggestions(getMatchingRequestMaterials(item.materialName, item.category));
+                                  }}
+                                  onBlur={() => setRequestFocusedRowIdx(null)}
+                                  onKeyDown={e => {
+                                    if (requestFocusedRowIdx !== idx || requestSuggestions.length === 0) return;
+                                    if (e.key === 'ArrowDown') {
+                                      e.preventDefault();
+                                      setRequestHighlightedSuggestionIdx(prev => Math.min(prev + 1, requestSuggestions.length - 1));
+                                    } else if (e.key === 'ArrowUp') {
+                                      e.preventDefault();
+                                      setRequestHighlightedSuggestionIdx(prev => Math.max(prev - 1, 0));
+                                    } else if (e.key === 'Enter') {
+                                      if (requestHighlightedSuggestionIdx >= 0) {
+                                        e.preventDefault();
+                                        handleRequestSuggestionClick(idx, requestSuggestions[requestHighlightedSuggestionIdx]);
+                                      }
+                                    } else if (e.key === 'Escape') {
+                                      e.currentTarget.blur();
+                                    }
+                                  }}
+                                  style={{ width: '100%', padding: '8px 28px 8px 8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px' }}
+                                  required
+                                />
+                                <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: '#94a3b8', pointerEvents: 'none' }}>▼</span>
+                              </div>
+                              {requestFocusedRowIdx === idx && (
+                                <div style={{ position: 'absolute', top: '100%', left: 4, right: 4, background: 'white', border: '1px solid #cbd5e1', borderRadius: '6px', boxShadow: '0 8px 20px rgba(0,0,0,0.12)', zIndex: 1000, maxHeight: '280px', overflowY: 'auto' }}>
+                                  {requestSuggestions.length === 0 ? (
+                                    <div style={{ padding: '14px 12px', fontSize: '12px', color: '#94a3b8', textAlign: 'center' }}>
+                                      No active material{item.category ? ` in "${item.category}"` : ''} matches{item.materialName.trim() ? ` "${item.materialName}"` : ''}.
+                                    </div>
+                                  ) : (
+                                    Object.entries(
+                                      requestSuggestions.reduce((acc, sugg, i) => {
+                                        const cat = sugg.category || 'Other';
+                                        (acc[cat] = acc[cat] || []).push({ ...sugg, __flatIdx: i });
+                                        return acc;
+                                      }, {})
+                                    ).map(([cat, items]) => (
+                                      <div key={cat}>
+                                        <div style={{ position: 'sticky', top: 0, background: '#eef2ff', color: '#3730a3', fontSize: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.4px', padding: '5px 12px' }}>
+                                          {cat}
+                                        </div>
+                                        {items.map(sugg => (
+                                          <div
+                                            key={sugg._id}
+                                            onClick={() => handleRequestSuggestionClick(idx, sugg)}
+                                            onMouseDown={e => e.preventDefault()}
+                                            onMouseEnter={() => setRequestHighlightedSuggestionIdx(sugg.__flatIdx)}
+                                            style={{
+                                              padding: '8px 12px',
+                                              cursor: 'pointer',
+                                              fontSize: '12px',
+                                              borderBottom: '1px solid #f1f5f9',
+                                              background: sugg.__flatIdx === requestHighlightedSuggestionIdx ? '#eff6ff' : 'white',
+                                              display: 'flex',
+                                              justifyContent: 'space-between',
+                                              alignItems: 'center',
+                                              gap: '8px'
+                                            }}
+                                          >
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                              <strong style={{ color: '#0d1b4b' }}>{sugg.materialName}</strong>{' '}
+                                              <span style={{ color: '#94a3b8', fontSize: '11px' }}>({sugg.materialCode})</span>
+                                            </span>
+                                            <span style={{ color: '#64748b', fontSize: '11px', whiteSpace: 'nowrap' }}>
+                                              {sugg.unit}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            {/* Category - choose first to narrow the Material Name list; auto-set once a material is picked */}
+                            <td style={{ padding: '8px 4px', width: '150px' }}>
+                              <select
+                                value={item.category}
+                                onChange={e => handleRequestCategoryChange(idx, e.target.value)}
+                                style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px', background: 'white', color: '#334155' }}
+                              >
+                                <option value="">-- Any --</option>
+                                {requestMaterialCategories.map(cat => (
+                                  <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                              </select>
+                            </td>
+                            {/* Unit - Read only */}
+                            <td style={{ padding: '8px 4px', width: '90px' }}>
+                              <input
+                                type="text"
+                                value={item.unit || ''}
+                                placeholder="Autofilled"
+                                style={{ width: '100%', padding: '8px', border: '1px solid #e2e8f0', borderRadius: '4px', fontSize: '13px', background: '#f8fafc', color: '#475569' }}
+                                readOnly
+                              />
+                            </td>
+                            {/* Available at Site - Read only */}
+                            <td style={{ padding: '8px 4px', width: '140px' }}>
+                              <input
+                                type="text"
+                                value={item.materialName ? `${availableAtSite} ${item.unit || ''}`.trim() : ''}
+                                placeholder="—"
+                                style={{ width: '100%', padding: '8px', border: '1px solid #e2e8f0', borderRadius: '4px', fontSize: '13px', background: '#f8fafc', color: '#475569' }}
+                                readOnly
+                              />
+                            </td>
+                            {/* Request Quantity */}
+                            <td style={{ padding: '8px 4px', width: '110px' }}>
+                              <input
+                                type="number"
+                                min="1"
+                                placeholder="Quantity"
+                                value={item.quantity}
+                                onChange={e => {
+                                  const updated = [...requestForm.items];
+                                  updated[idx].quantity = e.target.value;
+                                  setRequestForm({ ...requestForm, items: updated });
+                                }}
+                                style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px' }}
+                                required
+                              />
+                            </td>
+                            {/* Remove button */}
+                            <td style={{ padding: '8px 4px', width: '60px', textAlign: 'center' }}>
+                              <button
+                                type="button"
+                                onClick={() => setRequestForm({ ...requestForm, items: requestForm.items.filter((_, i) => i !== idx) })}
+                                disabled={requestForm.items.length === 1}
+                                style={{ background: '#ef4444', color: 'white', border: 'none', width: '32px', height: '32px', borderRadius: '4px', cursor: requestForm.items.length === 1 ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}
+                              >
+                                ✕
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRequestForm({ ...requestForm, items: [...requestForm.items, { ...emptyRequestItemRow }] })}
+                  style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px', marginBottom: '16px' }}
+                >
+                  ➕ Add Material Row
+                </button>
+
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={styles.fieldLabel}>Notes</label>
+                  <textarea
+                    placeholder="Enter extra instructions or remarks..."
+                    value={requestForm.notes}
+                    onChange={e => setRequestForm({ ...requestForm, notes: e.target.value })}
+                    style={{ ...styles.formInput, height: '80px' }}
+                  />
+                </div>
+
+                <button type="submit" style={styles.orangeBtn}>Submit Material Transfer Request</button>
+              </form>
             </div>
           </div>
         )}
@@ -1374,6 +1844,38 @@ const styles = {
     padding: '40px',
     textAlign: 'center',
     color: '#64748b',
+    fontSize: '14px',
+  },
+  filtersContainer: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '16px',
+    marginBottom: '20px',
+  },
+  searchInput: {
+    padding: '10px 16px',
+    borderRadius: '8px',
+    border: '1px solid #cbd5e1',
+    fontSize: '14px',
+    width: '280px',
+  },
+  filterGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  filterLabel: {
+    fontSize: '13px',
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  filterSelect: {
+    padding: '8px 12px',
+    borderRadius: '6px',
+    border: '1px solid #cbd5e1',
+    backgroundColor: 'white',
     fontSize: '14px',
   },
 };

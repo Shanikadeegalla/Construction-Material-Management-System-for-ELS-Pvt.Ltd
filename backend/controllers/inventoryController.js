@@ -225,11 +225,17 @@ export const createGRN = async (req, res) => {
       }
     }
 
-    // 2. Auto-generate grnNumber (GRN-YYYY-XXX)
-    const count = await GRN.countDocuments();
+    // 2. Auto-generate grnNumber (GRN-YYYY-XXX), based on the highest existing
+    // serial for the current year rather than a raw count, so a deleted GRN
+    // can't cause the next number to collide with one still in use.
     const year = new Date().getFullYear();
-    const serial = String(count + 1).padStart(3, '0');
-    const grnNumber = `GRN-${year}-${serial}`;
+    const prefix = `GRN-${year}-`;
+    const yearGrns = await GRN.find({ grnNumber: new RegExp(`^${prefix}`) }).select('grnNumber').lean();
+    const maxSerial = yearGrns.reduce((max, g) => {
+      const n = parseInt(g.grnNumber.slice(prefix.length), 10);
+      return !isNaN(n) && n > max ? n : max;
+    }, 0);
+    const grnNumber = `${prefix}${String(maxSerial + 1).padStart(3, '0')}`;
 
     // 3. Resolve items.
     const resolvedItems = [];
@@ -260,11 +266,13 @@ export const createGRN = async (req, res) => {
         }
       }
 
+      const condition = item.condition === 'Damaged' ? 'Damaged' : 'Good';
       resolvedItems.push({
         material: materialId,
         expectedQty: Number(item.expectedQty) || 0,
         receivedQty: Number(item.receivedQty) || 0,
-        condition: item.condition || 'Good'
+        condition,
+        damagedQty: condition === 'Damaged' ? (Number(item.damagedQty) || 0) : 0
       });
     }
 

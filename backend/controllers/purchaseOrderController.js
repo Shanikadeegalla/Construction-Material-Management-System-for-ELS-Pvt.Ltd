@@ -74,6 +74,7 @@ export const getPurchaseOrders = async (req, res) => {
         poNumber: po.poNumber,
         prId: po.prId ? { _id: po.prId._id, project: po.prId.project, projectName: po.prId.projectName } : null,
         supplier: supplierName,
+        supplierRefId: po.supplier ? po.supplier.toString() : null,
         totalAmount: po.totalAmount,
         status: po.status,
         notes: po.notes || '',

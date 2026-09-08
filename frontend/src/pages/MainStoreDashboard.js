@@ -28,6 +28,23 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [selectedMonth, setSelectedMonth] = useState('2026-07');
   const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
 
+  // Create Material Transfer Note form (Main Store -> Site Store). Used both
+  // to push a brand new transfer, and - when opened from a Pending FreeForm
+  // Site Store request - to fulfil that request in one step (sourceRequestId
+  // is set in that case).
+  const emptyTransferItemRow = { materialName: '', unit: '', quantity: '' };
+  const [showTransferForm, setShowTransferForm] = useState(false);
+  const [transferForm, setTransferForm] = useState({
+    sourceRequestId: '',
+    projectId: '',
+    projectName: '',
+    transferDate: new Date().toISOString().substring(0, 10),
+    reference: '',
+    notes: '',
+    items: [{ ...emptyTransferItemRow }]
+  });
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
+
   // Director-Approved BOMs, and the BOM-vs-stock shortage comparison state used
   // to auto-generate (and let the officer manually adjust) a Purchase Request.
   const [approvedBoms, setApprovedBoms] = useState([]);
@@ -61,7 +78,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     poReference: '',
     receivedDate: new Date().toISOString().substring(0, 10),
     notes: '',
-    items: [{ material: '', expectedQty: '', receivedQty: '', condition: 'Good' }]
+    items: []
   });
 
   // Post-GRN "Attach Invoice" step state
@@ -71,6 +88,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [invoiceFile, setInvoiceFile] = useState(null);
   const [invoiceMessage, setInvoiceMessage] = useState('');
   const [invoiceError, setInvoiceError] = useState('');
+  const [grnInvoices, setGrnInvoices] = useState([]);
 
   // Purchase Orders (used to prefill GRN creation from a Sent/Delivered PO)
   const [purchaseOrders, setPurchaseOrders] = useState([]);
@@ -228,6 +246,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       const grnData = await grnRes.json();
       if (Array.isArray(grnData)) setGrns(grnData);
 
+      // Fetch invoices (to flag which GRNs already have a supplier invoice attached)
+      const invRes = await fetch('http://localhost:5000/api/invoices', { headers });
+      const invData = await invRes.json();
+      if (invData.success) setGrnInvoices(invData.data);
+
       // Fetch Transfers
       const transferRes = await fetch('http://localhost:5000/api/inventory/transfers', { headers });
       const transferData = await transferRes.json();
@@ -320,9 +343,23 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     e.preventDefault();
     setError(''); setSuccess('');
 
-    const invalid = grnForm.items.some(item => !item.material || !item.expectedQty || !item.receivedQty);
+    if (!selectedGrnPO || grnForm.items.length === 0) {
+      setError('Please select a Purchase Order to load its items before recording a GRN.');
+      return;
+    }
+
+    const invalid = grnForm.items.some(item => !item.material || item.receivedQty === '' || item.receivedQty === null || Number(item.receivedQty) < 0);
     if (invalid) {
-      setError('Please fill in material, expected and received quantities for all rows.');
+      setError('Please enter a valid received quantity for all items.');
+      return;
+    }
+
+    const invalidDamaged = grnForm.items.some(item =>
+      item.condition === 'Damaged' &&
+      (item.damagedQty === '' || item.damagedQty === null || Number(item.damagedQty) < 0 || Number(item.damagedQty) > Number(item.receivedQty))
+    );
+    if (invalidDamaged) {
+      setError('Please enter a valid damaged quantity (not exceeding received quantity) for items marked Damaged.');
       return;
     }
 
@@ -345,8 +382,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           poReference: '',
           receivedDate: new Date().toISOString().substring(0, 10),
           notes: '',
-          items: [{ material: '', expectedQty: '', receivedQty: '', condition: 'Good' }]
+          items: []
         });
+        setSelectedGrnPO('');
         setLastCreatedGrn(data.grn);
         fetchData();
       } else {
@@ -586,6 +624,112 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
+  // Opens the Create Material Transfer Note form. With no argument it opens
+  // blank for a brand new Main Store-initiated transfer. Passed a Pending
+  // FreeForm Material Transfer Note (a Site Store request), it pre-fills the
+  // project, materials and reference from that request so Main Store can
+  // review/adjust the transfer quantities before sending.
+  const openTransferForm = (sourceRequest) => {
+    setError(''); setSuccess('');
+    if (sourceRequest) {
+      setTransferForm({
+        sourceRequestId: sourceRequest._id,
+        projectId: sourceRequest.projectId,
+        projectName: sourceRequest.projectName,
+        transferDate: new Date().toISOString().substring(0, 10),
+        reference: sourceRequest.minNumber,
+        notes: sourceRequest.notes || '',
+        items: sourceRequest.materials.map(m => ({ materialName: m.materialName, unit: m.unit, quantity: m.quantity }))
+      });
+    } else {
+      setTransferForm({
+        sourceRequestId: '',
+        projectId: '',
+        projectName: '',
+        transferDate: new Date().toISOString().substring(0, 10),
+        reference: '',
+        notes: '',
+        items: [{ ...emptyTransferItemRow }]
+      });
+    }
+    setShowTransferForm(true);
+  };
+
+  const handleTransferProjectChange = (projectId) => {
+    const proj = projects.find(p => p._id === projectId);
+    setTransferForm({ ...transferForm, projectId, projectName: proj ? proj.projectName : '' });
+  };
+
+  const handleTransferItemChange = (idx, field, value) => {
+    const items = transferForm.items.map((item, i) => {
+      if (i !== idx) return item;
+      if (field === 'materialName') {
+        const mat = mainMaterials.find(m => m.name === value);
+        return { ...item, materialName: value, unit: mat ? mat.unit : item.unit };
+      }
+      return { ...item, [field]: value };
+    });
+    setTransferForm({ ...transferForm, items });
+  };
+
+  const addTransferItemRow = () => {
+    setTransferForm({ ...transferForm, items: [...transferForm.items, { ...emptyTransferItemRow }] });
+  };
+
+  const removeTransferItemRow = (idx) => {
+    setTransferForm({ ...transferForm, items: transferForm.items.filter((_, i) => i !== idx) });
+  };
+
+  const handleCreateTransferSubmit = async (e) => {
+    e.preventDefault();
+    setError(''); setSuccess('');
+
+    if (!transferForm.projectId || !transferForm.transferDate) {
+      setError('Please select a project and transfer date.');
+      return;
+    }
+    const invalid = transferForm.items.some(item => !item.materialName || !item.quantity || Number(item.quantity) <= 0);
+    if (invalid) {
+      setError('Please select a material and enter a valid transfer quantity for every row.');
+      return;
+    }
+
+    setTransferSubmitting(true);
+    try {
+      const payload = {
+        projectId: transferForm.projectId,
+        projectName: transferForm.projectName,
+        transferDate: transferForm.transferDate,
+        reference: transferForm.reference,
+        notes: transferForm.notes,
+        sourceRequestId: transferForm.sourceRequestId || undefined,
+        materials: transferForm.items.map(item => ({ materialName: item.materialName, quantity: item.quantity, unit: item.unit }))
+      };
+      const ciphertext = encryptTransit(JSON.stringify(payload));
+      const res = await fetch('http://localhost:5000/api/min/transfer', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ ciphertext })
+      });
+      const data = await res.json();
+      let finalData = data;
+      if (data && data.ciphertext) {
+        finalData = JSON.parse(decryptTransit(data.ciphertext));
+      }
+      if (res.ok && finalData.success) {
+        setSuccess('✅ Material Transfer Note created and materials issued to Site Store!');
+        setShowTransferForm(false);
+        fetchData();
+      } else {
+        setError(finalData.message || 'Failed to create Material Transfer Note.');
+      }
+    } catch (err) {
+      setError('Could not connect to the backend server to create the Material Transfer Note.');
+    } finally {
+      setTransferSubmitting(false);
+    }
+  };
+
   // Opens the shortage comparison panel for one Director-approved BOM: every
   // planned material is checked against current Main Store stock, and any
   // shortfall is pre-selected as an editable PR quantity. The officer can then
@@ -679,22 +823,62 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     window.location.reload();
   };
 
+  // Resolve a PO's supplier to the matching Supplier Registry record, preferring
+  // the reliable ObjectId reference over fuzzy name matching.
+  const resolveSupplierForPO = (po) => {
+    if (!po) return null;
+    const supName = po.supplier?.name || po.supplier;
+    return (
+      suppliers.find(s => s._id === po.supplierRefId) ||
+      suppliers.find(s => s._id === (po.supplier?._id || '')) ||
+      suppliers.find(s => s.name === supName || s.supplierId === supName) ||
+      null
+    );
+  };
+
+  const formatSupplierLabel = (po) => {
+    const matched = resolveSupplierForPO(po);
+    if (!matched) return po?.supplier?.name || po?.supplier || '';
+    const displayName = (matched.name && matched.name !== matched.supplierId) ? matched.name : (matched.contactPerson || matched.name);
+    return `${matched.supplierId} – ${displayName}`;
+  };
+
+  // Next GRN Number preview: highest existing serial for the current year + 1,
+  // so it stays correct even if some GRNs were removed (avoids collisions).
+  const nextGrnNumber = () => {
+    const year = new Date().getFullYear();
+    const prefix = `GRN-${year}-`;
+    const maxSerial = grns.reduce((max, g) => {
+      if (typeof g.grnNumber === 'string' && g.grnNumber.startsWith(prefix)) {
+        const n = parseInt(g.grnNumber.slice(prefix.length), 10);
+        if (!isNaN(n) && n > max) return n;
+      }
+      return max;
+    }, 0);
+    return `${prefix}${String(maxSerial + 1).padStart(3, '0')}`;
+  };
+
   // GRN: prefill the form (supplier + item rows) from a selected Sent/Delivered PO
   const handleGrnPOSelect = (poId) => {
     setSelectedGrnPO(poId);
-    if (!poId) return;
+    if (!poId) {
+      setGrnForm({ ...grnForm, supplier: '', supplierId: '', poReference: '', items: [] });
+      return;
+    }
     const po = purchaseOrders.find(p => p._id === poId);
     if (!po) return;
 
-    const matchedSupplier = suppliers.find(s => s._id === (po.supplier?._id || po.supplier));
+    const matchedSupplier = resolveSupplierForPO(po);
     const items = (po.items || []).map(item => {
       const matchedMaterial = materials.find(m => m.name === item.materialName && m.location === 'MainStore');
       return {
         material: matchedMaterial ? matchedMaterial._id : '',
         materialName: item.materialName,
+        unit: item.unit || '',
         expectedQty: item.quantity,
         receivedQty: '',
-        condition: 'Good'
+        condition: 'Good',
+        damagedQty: ''
       };
     });
 
@@ -703,7 +887,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       supplier: matchedSupplier ? matchedSupplier.name : (po.supplier?.name || grnForm.supplier),
       supplierId: matchedSupplier ? matchedSupplier._id : (po.supplier?._id || ''),
       poReference: po.poNumber,
-      items: items.length > 0 ? items : grnForm.items
+      items
     });
   };
 
@@ -1170,11 +1354,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           {[
             { id: 'dashboard', label: 'Dashboard', icon: '📊' },
             { id: 'inventory', label: 'Inventory', icon: '📦' },
-            { id: 'grn', label: 'GRN Incoming', icon: '📥' },
-            { id: 'min', label: 'Material Requests (MIN)', icon: '🚚' },
             { id: 'approved-boms', label: 'Approved BOMs', icon: '✅' },
-            { id: 'stock-adjustments', label: 'Stock Adjustments', icon: '⚖️' },
-            { id: 'stock-ledger', label: 'Stock Ledger', icon: '📜' },
+            { id: 'grn', label: 'Goods Received Note', icon: '📥' },
+            { id: 'min', label: 'Material Transfer Note', icon: '🚚' },
             { id: 'reports', label: 'Reports & Analytics', icon: '📈' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
@@ -1416,7 +1598,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
-                <button onClick={fetchData} style={styles.refreshBtn}>Refresh</button>
               </div>
             </div>
 
@@ -1483,136 +1664,184 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               <h3 style={{ color: '#0d1b4b', marginBottom: '16px' }}>Record New Incoming Goods</h3>
 
               <div style={{ marginBottom: '16px', maxWidth: '400px' }}>
-                <label style={styles.fieldLabel}>Select Purchase Order (Optional — prefills supplier &amp; items)</label>
+                <label style={styles.fieldLabel}>Select Purchase Order *</label>
                 <select
                   value={selectedGrnPO}
                   onChange={e => handleGrnPOSelect(e.target.value)}
                   style={styles.formSelect}
+                  required
                 >
-                  <option value="">-- Manual Entry --</option>
+                  <option value="">-- Select Purchase Order --</option>
                   {purchaseOrders.filter(po => ['Sent', 'Delivered'].includes(po.status)).map(po => (
-                    <option key={po._id} value={po._id}>{po.poNumber} — {po.supplier?.name || po.supplier} (LKR {Number(po.totalAmount || 0).toLocaleString()})</option>
+                    <option key={po._id} value={po._id}>{po.poNumber} — {formatSupplierLabel(po)} (LKR {Number(po.totalAmount || 0).toLocaleString()})</option>
                   ))}
                 </select>
               </div>
 
-              <form onSubmit={handleGrnSubmit}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                  <div>
-                    <label style={styles.fieldLabel}>Supplier *</label>
-                    <select
-                      value={grnForm.supplier}
-                      onChange={e => {
-                        const matched = suppliers.find(s => s.name === e.target.value);
-                        setGrnForm({ ...grnForm, supplier: e.target.value, supplierId: matched ? matched._id : '' });
-                      }}
-                      style={styles.formSelect}
-                      required
-                    >
-                      <option value="">-- Select Supplier --</option>
-                      {suppliers.map(s => (
-                        <option key={s._id} value={s.name}>{s.name}</option>
-                      ))}
-                    </select>
+              {(() => {
+                const po = selectedGrnPO ? purchaseOrders.find(p => p._id === selectedGrnPO) : null;
+                return (
+                  <div style={{
+                    marginBottom: '16px',
+                    padding: '16px',
+                    background: '#f4f6fb',
+                    border: '1px solid #d7deed',
+                    borderRadius: '8px'
+                  }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+                      <div>
+                        <div style={styles.fieldLabel}>GRN Number</div>
+                        <div style={{ fontWeight: 600, color: '#0d1b4b' }}>
+                          {nextGrnNumber()}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={styles.fieldLabel}>Supplier *</div>
+                        {po ? (
+                          <div style={{ fontWeight: 600, color: '#0d1b4b' }}>
+                            {formatSupplierLabel(po)}
+                          </div>
+                        ) : (
+                          <select
+                            value={grnForm.supplier}
+                            onChange={e => {
+                              const matched = suppliers.find(s => s.name === e.target.value);
+                              setGrnForm({ ...grnForm, supplier: e.target.value, supplierId: matched ? matched._id : '' });
+                            }}
+                            style={styles.formSelect}
+                            required
+                          >
+                            <option value="">-- Select Supplier --</option>
+                            {suppliers.map(s => (
+                              <option key={s._id} value={s.name}>{s.supplierId} – {s.name}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                      <div>
+                        <div style={styles.fieldLabel}>Received Date</div>
+                        <DateInput
+                          value={grnForm.receivedDate}
+                          onChange={iso => setGrnForm({ ...grnForm, receivedDate: iso })}
+                          style={styles.formInput}
+                          required
+                        />
+                      </div>
+                      {po && (
+                        <>
+                          <div>
+                            <div style={styles.fieldLabel}>PO Number</div>
+                            <div style={{ fontWeight: 600, color: '#0d1b4b' }}>{po.poNumber}</div>
+                          </div>
+                          <div>
+                            <div style={styles.fieldLabel}>PO Date</div>
+                            <div style={{ fontWeight: 600, color: '#0d1b4b' }}>
+                              {po.sentAt ? new Date(po.sentAt).toLocaleDateString() : (po.createdAt ? new Date(po.createdAt).toLocaleDateString() : 'N/A')}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={styles.fieldLabel}>Project</div>
+                            <div style={{ fontWeight: 600, color: '#0d1b4b' }}>{po.prId?.project || po.prId?.projectName || 'N/A'}</div>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <label style={styles.fieldLabel}>PO Reference (Optional)</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. PO-2026-001"
-                      value={grnForm.poReference}
-                      onChange={e => setGrnForm({ ...grnForm, poReference: e.target.value })}
-                      style={styles.formInput}
-                    />
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Received Date</label>
-                    <DateInput
-                      value={grnForm.receivedDate}
-                      onChange={iso => setGrnForm({ ...grnForm, receivedDate: iso })}
-                      style={styles.formInput}
-                      required
-                    />
-                  </div>
-                </div>
+                );
+              })()}
 
+              <form onSubmit={handleGrnSubmit}>
                 <h4 style={{ color: '#0d1b4b', marginBottom: '12px' }}>GRN Materials List</h4>
-                {grnForm.items.map((item, idx) => (
-                  <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-                    <select
-                      value={item.material}
-                      onChange={e => {
-                        const updated = [...grnForm.items];
-                        updated[idx].material = e.target.value;
-                        const matched = materials.find(m => m._id === e.target.value);
-                        updated[idx].materialName = matched ? matched.name : '';
-                        setGrnForm({ ...grnForm, items: updated });
-                      }}
-                      style={styles.formSelect}
-                      required
-                    >
-                      <option value="">-- Select Material --</option>
-                      {materials.filter(m => m.location === 'MainStore').map(m => (
-                        <option key={m._id} value={m._id}>{m.name}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      placeholder="Expected"
-                      value={item.expectedQty}
-                      onChange={e => {
-                        const updated = [...grnForm.items];
-                        updated[idx].expectedQty = e.target.value;
-                        setGrnForm({ ...grnForm, items: updated });
-                      }}
-                      style={styles.formInput}
-                      required
-                    />
-                    <input
-                      type="number"
-                      placeholder="Received"
-                      value={item.receivedQty}
-                      onChange={e => {
-                        const updated = [...grnForm.items];
-                        updated[idx].receivedQty = e.target.value;
-                        setGrnForm({ ...grnForm, items: updated });
-                      }}
-                      style={styles.formInput}
-                      required
-                    />
-                    <select
-                      value={item.condition}
-                      onChange={e => {
-                        const updated = [...grnForm.items];
-                        updated[idx].condition = e.target.value;
-                        setGrnForm({ ...grnForm, items: updated });
-                      }}
-                      style={styles.formSelect}
-                    >
-                      <option value="Good">Good</option>
-                      <option value="Damaged">Damaged</option>
-                      <option value="Partial">Partial</option>
-                      <option value="Shortage">Shortage</option>
-                      <option value="Other">Other</option>
-                    </select>
-                    {grnForm.items.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => setGrnForm({ ...grnForm, items: grnForm.items.filter((_, i) => i !== idx) })}
-                        style={{ background: '#ffebee', color: '#c62828', border: 'none', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer' }}
-                      >
-                        ✕
-                      </button>
-                    )}
+                {!selectedGrnPO || grnForm.items.length === 0 ? (
+                  <div style={{ padding: '16px', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: '8px', color: '#8a6d00', fontSize: '13px', marginBottom: '16px' }}>
+                    Select a Purchase Order above to load its items. Materials cannot be added manually — GRNs must match an ordered PO.
                   </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setGrnForm({ ...grnForm, items: [...grnForm.items, { material: '', expectedQty: '', receivedQty: '', condition: 'Good' }] })}
-                  style={{ background: '#e3f2fd', color: '#1565c0', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', marginBottom: '16px', fontSize: '13px' }}
-                >
-                  + Add Row
-                </button>
+                ) : (
+                  <div style={{ overflowX: 'auto', marginBottom: '16px' }}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr style={styles.tableHeaderRow}>
+                          <th style={styles.th}>Material</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>Ordered Qty</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>Received Qty</th>
+                          <th style={styles.th}>Condition</th>
+                          <th style={styles.th}>Discrepancy</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {grnForm.items.map((item, idx) => {
+                          const ordered = Number(item.expectedQty) || 0;
+                          const received = item.receivedQty === '' ? null : Number(item.receivedQty);
+                          const shortage = received !== null && ordered - received > 0 ? ordered - received : 0;
+                          const damagedQty = Number(item.damagedQty) || 0;
+                          return (
+                            <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                              <td style={{ ...styles.tdBold, color: '#0d1b4b' }}>{item.materialName}{item.unit ? ` (${item.unit})` : ''}</td>
+                              <td style={{ ...styles.td, textAlign: 'right' }}>{ordered}</td>
+                              <td style={{ ...styles.td, textAlign: 'right' }}>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={item.receivedQty}
+                                  onChange={e => {
+                                    const updated = [...grnForm.items];
+                                    updated[idx].receivedQty = e.target.value;
+                                    setGrnForm({ ...grnForm, items: updated });
+                                  }}
+                                  style={{ ...styles.formInput, width: '90px', textAlign: 'right' }}
+                                  required
+                                />
+                              </td>
+                              <td style={styles.td}>
+                                <select
+                                  value={item.condition}
+                                  onChange={e => {
+                                    const updated = [...grnForm.items];
+                                    updated[idx].condition = e.target.value;
+                                    if (e.target.value !== 'Damaged') updated[idx].damagedQty = '';
+                                    setGrnForm({ ...grnForm, items: updated });
+                                  }}
+                                  style={styles.formSelect}
+                                >
+                                  <option value="Good">Good</option>
+                                  <option value="Damaged">Damaged</option>
+                                </select>
+                                {item.condition === 'Damaged' && (
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={received !== null ? received : undefined}
+                                    placeholder="Damaged qty"
+                                    value={item.damagedQty}
+                                    onChange={e => {
+                                      const updated = [...grnForm.items];
+                                      updated[idx].damagedQty = e.target.value;
+                                      setGrnForm({ ...grnForm, items: updated });
+                                    }}
+                                    style={{ ...styles.formInput, width: '110px', marginTop: '6px' }}
+                                    required
+                                  />
+                                )}
+                              </td>
+                              <td style={styles.td}>
+                                {shortage > 0 && (
+                                  <div style={{ color: '#b45309', fontSize: '12px', fontWeight: 600 }}>
+                                    ⚠️ Shortage: {shortage} units
+                                  </div>
+                                )}
+                                {item.condition === 'Damaged' && damagedQty > 0 && (
+                                  <div style={{ color: '#b91c1c', fontSize: '12px', fontWeight: 600, marginTop: shortage > 0 ? '4px' : 0 }}>
+                                    ⚠️ Damaged quantity: {damagedQty}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
                 <div style={{ marginBottom: '16px' }}>
                   <label style={styles.fieldLabel}>Notes</label>
@@ -1624,96 +1853,167 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   />
                 </div>
 
-                <button type="submit" style={styles.orangeBtn}>Record GRN & Update Inventory</button>
+                <button
+                  type="submit"
+                  style={{ ...styles.orangeBtn, opacity: (!selectedGrnPO || grnForm.items.length === 0) ? 0.5 : 1, cursor: (!selectedGrnPO || grnForm.items.length === 0) ? 'not-allowed' : 'pointer' }}
+                  disabled={!selectedGrnPO || grnForm.items.length === 0}
+                >
+                  Record GRN & Update Inventory
+                </button>
               </form>
             </div>
 
-            {/* Attach Invoice (optional, shown right after a GRN is recorded) */}
-            {lastCreatedGrn && (
-              <div style={styles.formCard}>
-                <h3 style={{ color: '#0d1b4b', marginBottom: '4px' }}>Attach Supplier Invoice (Optional)</h3>
-                <p style={{ color: '#666', fontSize: '13px', marginTop: 0, marginBottom: '16px' }}>
-                  GRN {lastCreatedGrn.grnNumber} recorded. If the supplier handed over an invoice with this delivery, record it here for Director payment approval.
-                </p>
-                {invoiceMessage && <div style={{ ...styles.errorAlert, backgroundColor: '#e8f5e9', border: '1px solid #66bb6a', color: '#2e7d32' }}>{invoiceMessage}</div>}
-                {invoiceError && <div style={styles.errorAlert}>{invoiceError}</div>}
-                <form onSubmit={handleInvoiceSubmit}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                    <div>
-                      <label style={styles.fieldLabel}>Related PO *</label>
-                      <select
-                        value={invoiceForm.po}
-                        onChange={e => setInvoiceForm({ ...invoiceForm, po: e.target.value })}
-                        style={styles.formSelect}
-                        required
-                      >
-                        <option value="">-- Select Purchase Order --</option>
-                        {supplierPOs.map(po => (
-                          <option key={po._id} value={po._id}>{po.poNumber}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label style={styles.fieldLabel}>Invoice Amount (LKR) *</label>
-                      <input
-                        type="number"
-                        value={invoiceForm.amount}
-                        onChange={e => setInvoiceForm({ ...invoiceForm, amount: e.target.value })}
-                        style={styles.formInput}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label style={styles.fieldLabel}>Invoice Date</label>
-                      <DateInput
-                        value={invoiceForm.invoiceDate}
-                        onChange={iso => setInvoiceForm({ ...invoiceForm, invoiceDate: iso })}
-                        style={styles.formInput}
-                      />
-                    </div>
-                    <div style={{ gridColumn: 'span 2' }}>
-                      <label style={styles.fieldLabel}>Attach Invoice PDF/JPG</label>
-                      <input type="file" accept=".pdf,.jpg,.jpeg" onChange={e => setInvoiceFile(e.target.files[0])} style={styles.formInput} />
+            {/* Attach Invoice */}
+            <div style={styles.formCard}>
+              <h3 style={{ color: '#0d1b4b', marginBottom: '4px' }}>Attach Supplier Invoice</h3>
+              <p style={{ color: '#666', fontSize: '13px', marginTop: 0, marginBottom: '16px' }}>
+                {lastCreatedGrn
+                  ? `GRN ${lastCreatedGrn.grnNumber} recorded. If the supplier handed over an invoice with this delivery, record it here for Director payment approval.`
+                  : 'Select the GRN the supplier invoice belongs to, then record it here for Director payment approval.'}
+              </p>
+              {invoiceMessage && <div style={{ ...styles.errorAlert, backgroundColor: '#e8f5e9', border: '1px solid #66bb6a', color: '#2e7d32' }}>{invoiceMessage}</div>}
+              {invoiceError && <div style={styles.errorAlert}>{invoiceError}</div>}
+              <form onSubmit={handleInvoiceSubmit}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                  <div>
+                    <label style={styles.fieldLabel}>Related GRN *</label>
+                    <select
+                      value={lastCreatedGrn?._id || ''}
+                      onChange={e => {
+                        const selected = grns.find(g => g._id === e.target.value) || null;
+                        setLastCreatedGrn(selected);
+                        setInvoiceForm({ po: '', amount: '', invoiceDate: new Date().toISOString().substring(0, 10) });
+                      }}
+                      style={styles.formSelect}
+                      required
+                    >
+                      <option value="">-- Select GRN --</option>
+                      {grns.map(g => (
+                        <option key={g._id} value={g._id}>{g.grnNumber} — {g.supplier}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={styles.fieldLabel}>Related PO *</label>
+                    <select
+                      value={invoiceForm.po}
+                      onChange={e => setInvoiceForm({ ...invoiceForm, po: e.target.value })}
+                      style={styles.formSelect}
+                      required
+                      disabled={!lastCreatedGrn}
+                    >
+                      <option value="">-- Select Purchase Order --</option>
+                      {supplierPOs.map(po => (
+                        <option key={po._id} value={po._id}>{po.poNumber}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={styles.fieldLabel}>Invoice Amount (LKR) *</label>
+                    <input
+                      type="number"
+                      value={invoiceForm.amount}
+                      onChange={e => setInvoiceForm({ ...invoiceForm, amount: e.target.value })}
+                      style={styles.formInput}
+                      required
+                      disabled={!lastCreatedGrn}
+                    />
+                  </div>
+                  <div>
+                    <label style={styles.fieldLabel}>Invoice Date</label>
+                    <DateInput
+                      value={invoiceForm.invoiceDate}
+                      onChange={iso => setInvoiceForm({ ...invoiceForm, invoiceDate: iso })}
+                      style={styles.formInput}
+                    />
+                  </div>
+                  <div style={{ gridColumn: 'span 4' }}>
+                    <label style={styles.fieldLabel}>Attach Invoice PDF/JPG</label>
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: '12px',
+                      border: '1px solid #ddd', borderRadius: '6px', padding: '8px 10px',
+                      backgroundColor: lastCreatedGrn ? 'white' : '#f5f5f5'
+                    }}>
+                      <label style={{
+                        padding: '8px 16px', borderRadius: '6px', fontSize: '13px', fontWeight: '600',
+                        whiteSpace: 'nowrap', flexShrink: 0,
+                        backgroundColor: lastCreatedGrn ? '#0d1b4b' : '#ccc', color: 'white',
+                        cursor: lastCreatedGrn ? 'pointer' : 'not-allowed'
+                      }}>
+                        Choose File
+                        <input
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg"
+                          onChange={e => setInvoiceFile(e.target.files[0] || null)}
+                          disabled={!lastCreatedGrn}
+                          style={{ display: 'none' }}
+                        />
+                      </label>
+                      <span style={{
+                        color: '#334155', fontSize: '13px', overflow: 'hidden',
+                        textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                      }}>
+                        {invoiceFile ? invoiceFile.name : 'No file chosen'}
+                      </span>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                    <button type="submit" style={styles.orangeBtn}>Record Invoice</button>
-                    <button type="button" onClick={() => { setLastCreatedGrn(null); setView('dashboard'); }}
-                      style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
-                      Skip
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button type="submit" style={{ ...styles.orangeBtn, opacity: lastCreatedGrn ? 1 : 0.5, cursor: lastCreatedGrn ? 'pointer' : 'not-allowed' }} disabled={!lastCreatedGrn}>Record Invoice</button>
+                  <button type="button" onClick={() => { setLastCreatedGrn(null); setInvoiceForm({ po: '', amount: '', invoiceDate: new Date().toISOString().substring(0, 10) }); setInvoiceFile(null); setInvoiceMessage(''); setInvoiceError(''); }}
+                    style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                    Clear
+                  </button>
+                </div>
+              </form>
+            </div>
 
             {/* GRN History */}
             <div style={styles.tableContainer}>
-              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>GRN Processing History</h3>
+              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>Recent GRNs</h3>
               <table style={styles.table}>
                 <thead>
                   <tr style={styles.tableHeaderRow}>
                     <th style={styles.th}>GRN No.</th>
+                    <th style={styles.th}>PO No.</th>
                     <th style={styles.th}>Supplier</th>
-                    <th style={styles.th}>Date</th>
-                    <th style={styles.th}>PO Reference</th>
-                    <th style={styles.th}>Items Count</th>
+                    <th style={styles.th}>Received Date</th>
+                    <th style={styles.th}>Invoice</th>
                     <th style={styles.th}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {grns.map((g, i) => (
-                    <tr key={g._id || i} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={styles.tdBold}>{g.grnNumber}</td>
-                      <td style={styles.td}>{g.supplier}</td>
-                      <td style={styles.td}>{formatDate(g.receivedDate || g.createdAt)}</td>
-                      <td style={styles.td}>{g.poReference}</td>
-                      <td style={styles.td}>{g.items?.length || 0}</td>
-                      <td style={styles.td}>
-                        <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Processed</span>
-                      </td>
-                    </tr>
-                  ))}
+                  {grns.map((g, i) => {
+                    const matchedSupplier = suppliers.find(s =>
+                      s.name === g.supplier || s.supplierId === g.supplier || s._id === g.supplierId
+                    );
+                    const supplierLabel = matchedSupplier ? `${matchedSupplier.supplierId} – ${matchedSupplier.name}` : g.supplier;
+                    const invoice = grnInvoices.find(inv => (inv.grn?._id || inv.grn) === g._id);
+                    return (
+                      <tr key={g._id || i} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ ...styles.tdBold, color: '#0d1b4b' }}>{g.grnNumber}</td>
+                        <td style={styles.td}>{g.poReference || 'N/A'}</td>
+                        <td style={styles.td}>{supplierLabel}</td>
+                        <td style={styles.td}>{formatDate(g.receivedDate || g.createdAt)}</td>
+                        <td style={styles.td}>
+                          {invoice ? (
+                            invoice.file?.url ? (
+                              <a href={`http://localhost:5000${invoice.file.url}`} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontWeight: '600', fontSize: '12px' }}>
+                                View Invoice
+                              </a>
+                            ) : (
+                              <span style={{ color: '#94a3b8', fontSize: '12px' }}>Recorded (no file)</span>
+                            )
+                          ) : (
+                            <span style={{ color: '#94a3b8', fontSize: '12px' }}>Not attached</span>
+                          )}
+                        </td>
+                        <td style={styles.td}>
+                          <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Processed</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1724,7 +2024,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           <div style={styles.container}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
               <h1 style={{ ...styles.pageTitle, marginBottom: 0 }}>Stock Ledger — All Inventory Movements</h1>
-              <button onClick={fetchStockLedger} style={{ ...styles.orangeBtn, background: '#2563eb' }}>🔄 Refresh</button>
             </div>
 
             {(() => {
@@ -2208,9 +2507,156 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         {view === 'min' && (
           <div style={styles.container}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-              <h1 style={styles.pageTitle}>Material Issuance Notes</h1>
-              <button onClick={fetchMINs} style={{ ...styles.orangeBtn, background: '#2563eb' }}>🔄 Refresh Requests</button>
+              <h1 style={styles.pageTitle}>Material Transfer Notes</h1>
+              <button
+                onClick={() => (showTransferForm ? setShowTransferForm(false) : openTransferForm())}
+                style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}
+              >
+                {showTransferForm ? 'Cancel' : '+ Create Material Transfer Note'}
+              </button>
             </div>
+
+            {showTransferForm && (
+              <div style={styles.formCard}>
+                <h3 style={{ color: '#0d1b4b', marginBottom: '16px', fontWeight: 'bold' }}>
+                  {transferForm.sourceRequestId ? `Transfer Materials for Request ${transferForm.reference}` : 'Create Material Transfer Note'}
+                </h3>
+                <form onSubmit={handleCreateTransferSubmit} style={{ display: 'grid', gap: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '16px' }}>
+                    <div>
+                      <label style={styles.fieldLabel}>Project *</label>
+                      <select
+                        value={transferForm.projectId}
+                        onChange={e => handleTransferProjectChange(e.target.value)}
+                        style={styles.formSelect}
+                        disabled={!!transferForm.sourceRequestId}
+                        required
+                      >
+                        <option value="">-- Select project --</option>
+                        {projects.map(p => (
+                          <option key={p._id} value={p._id}>{p.projectName}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={styles.fieldLabel}>Site Store *</label>
+                      <input
+                        type="text"
+                        value={transferForm.projectName ? `${transferForm.projectName} Site Store` : ''}
+                        placeholder="Select a project first"
+                        style={{ ...styles.formInput, background: '#f1f5f9', cursor: 'not-allowed' }}
+                        disabled
+                      />
+                    </div>
+                    <div>
+                      <label style={styles.fieldLabel}>Transfer Date *</label>
+                      <DateInput
+                        value={transferForm.transferDate}
+                        onChange={val => setTransferForm({ ...transferForm, transferDate: val })}
+                        style={styles.formInput}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={styles.fieldLabel}>Reference</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. BOM-PRJ-2026-013"
+                        value={transferForm.reference}
+                        onChange={e => setTransferForm({ ...transferForm, reference: e.target.value })}
+                        style={styles.formInput}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr style={styles.tableHeaderRow}>
+                          <th style={styles.th}>Material</th>
+                          <th style={styles.th}>Available (Main Store)</th>
+                          <th style={styles.th}>Transfer Qty</th>
+                          <th style={styles.th}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {transferForm.items.map((item, idx) => {
+                          const mainMat = mainMaterials.find(m => m.name === item.materialName);
+                          const available = mainMat ? mainMat.quantity : 0;
+                          const over = item.quantity && Number(item.quantity) > available;
+                          return (
+                            <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                              <td style={styles.td}>
+                                <select
+                                  value={item.materialName}
+                                  onChange={e => handleTransferItemChange(idx, 'materialName', e.target.value)}
+                                  style={styles.formSelect}
+                                  required
+                                >
+                                  <option value="">-- Select material --</option>
+                                  {mainMaterials.map(m => (
+                                    <option key={m._id} value={m.name}>{m.name} ({m.unit})</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td style={styles.td}>{available} {item.unit}</td>
+                              <td style={styles.td}>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={item.quantity}
+                                  onChange={e => handleTransferItemChange(idx, 'quantity', e.target.value)}
+                                  style={{ ...styles.formInput, borderColor: over ? '#ef4444' : undefined }}
+                                  required
+                                />
+                                {over && <div style={{ color: '#c62828', fontSize: '11px', marginTop: '2px' }}>Exceeds available stock</div>}
+                              </td>
+                              <td style={styles.td}>
+                                {transferForm.items.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeTransferItemRow(idx)}
+                                    style={{ background: '#fde8e8', color: '#c62828', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <button
+                      type="button"
+                      onClick={addTransferItemRow}
+                      style={{ marginTop: '10px', background: '#e2e8f0', color: '#1a365d', border: 'none', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                    >
+                      + Add Material
+                    </button>
+                  </div>
+
+                  <div>
+                    <label style={styles.fieldLabel}>Notes</label>
+                    <textarea
+                      placeholder="Optional notes for this transfer..."
+                      value={transferForm.notes}
+                      onChange={e => setTransferForm({ ...transferForm, notes: e.target.value })}
+                      style={{ ...styles.formInput, height: '70px' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button type="submit" disabled={transferSubmitting} style={styles.orangeBtn}>
+                      {transferSubmitting ? 'Creating...' : 'Create Transfer'}
+                    </button>
+                    <button type="button" onClick={() => setShowTransferForm(false)} style={{ background: '#cbd5e1', color: '#333', border: 'none', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
 
             <div style={styles.tableContainer}>
               <table style={styles.table}>
@@ -2219,6 +2665,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     <th style={styles.th}>MIN No.</th>
                     <th style={styles.th}>Project / Requestor</th>
                     <th style={styles.th}>Requested Materials</th>
+                    <th style={styles.th}>Required Date</th>
                     <th style={styles.th}>Status</th>
                     <th style={styles.th}>Notes</th>
                     <th style={styles.th}>Actions</th>
@@ -2227,7 +2674,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                 <tbody>
                   {minList.length === 0 ? (
                     <tr>
-                      <td colSpan="6" style={styles.emptyState}>No Material Issuance Notes submitted yet.</td>
+                      <td colSpan="7" style={styles.emptyState}>No Material Transfer Notes submitted yet.</td>
                     </tr>
                   ) : (
                     minList.map(m => {
@@ -2248,12 +2695,22 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                             <div style={{ fontSize: '11px', color: '#64748b' }}>By: {m.requestedBy}</div>
                           </td>
                           <td style={styles.td}>
+                            {m.requestType === 'FreeForm' && (
+                              <span style={{ background: '#ede9fe', color: '#6d28d9', padding: '1px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', display: 'inline-block', marginBottom: '4px' }}>
+                                Site Request
+                              </span>
+                            )}
                             {m.materials.map((mat, i) => {
                               const mainMat = materials.find(x => x.name === mat.materialName && x.location === 'MainStore');
                               const isShort = mainMat ? mainMat.quantity < mat.quantity : true;
                               return (
                                 <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '4px' }}>
                                   <span>{mat.materialName} ({mat.quantity} {mat.unit})</span>
+                                  {mat.availableAtSite !== undefined && (
+                                    <span style={{ fontSize: '10px', color: '#64748b' }}>
+                                      Site had: {mat.availableAtSite}
+                                    </span>
+                                  )}
                                   {isShort && (
                                     <span style={{ background: '#fde8e8', color: '#c62828', padding: '1px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' }}>
                                       Shortage ({mainMat ? mainMat.quantity : 0} avail)
@@ -2263,6 +2720,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                               );
                             })}
                           </td>
+                          <td style={styles.td}>{m.requiredDate ? formatDate(m.requiredDate) : '-'}</td>
                           <td style={styles.td}>
                             <span style={{
                               background: m.status === 'Received' ? '#e8f5e9' : m.status === 'Issued' ? '#e0f2f1' : m.status === 'Approved' ? '#e3f2fd' : m.status === 'Rejected' ? '#ffebee' : '#fff3e0',
@@ -2275,13 +2733,24 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           <td style={styles.td}>{m.notes || '-'}</td>
                           <td style={styles.td}>
                             {m.status === 'Pending' && (
-                              <div style={{ display: 'flex', gap: '6px' }}>
-                                <button
-                                  onClick={() => handleApproveMIN(m._id)}
-                                  style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                                >
-                                  Approve
-                                </button>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {m.requestType === 'FreeForm' ? (
+                                  <button
+                                    onClick={() => openTransferForm(m)}
+                                    disabled={shortages.length > 0}
+                                    title={shortages.length > 0 ? 'Insufficient Main Store stock for one or more materials' : ''}
+                                    style={{ background: shortages.length > 0 ? '#94a3b8' : '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: shortages.length > 0 ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                                  >
+                                    Transfer to Site
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleApproveMIN(m._id)}
+                                    style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                                  >
+                                    Approve
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => handleRejectMIN(m._id)}
                                   style={{ background: '#ef4444', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
@@ -2330,7 +2799,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           <div style={styles.container}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <h1 style={styles.pageTitle}>Director-Approved BOMs</h1>
-              <button onClick={fetchData} style={{ ...styles.orangeBtn, background: '#2563eb' }}>🔄 Refresh</button>
             </div>
 
             <div style={styles.tableContainer}>
@@ -2622,7 +3090,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </select>
                 </div>
                 <button onClick={handleMarkAllNotifsRead} style={{ ...styles.orangeBtn, background: '#2563eb' }}>Mark all as read</button>
-                <button onClick={fetchPersistedNotifications} style={styles.refreshBtn}>🔄 Refresh</button>
               </div>
             </div>
 

@@ -24,6 +24,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [modal, setModal] = useState(null);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [poSearchTerm, setPoSearchTerm] = useState('');
+  const [payingInvoiceId, setPayingInvoiceId] = useState(null);
 
   // PO Form State
   const [form, setForm] = useState({
@@ -238,6 +239,70 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
     return () => clearInterval(interval);
   }, []);
+
+  // Handle the redirect back from Stripe Checkout (success or cancel)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paymentResult = params.get('payment');
+    const sessionId = params.get('session_id');
+    if (!paymentResult) return;
+
+    const cleanUrl = () => {
+      window.history.replaceState({}, '', window.location.pathname);
+    };
+
+    if (paymentResult === 'success' && sessionId && hasSession()) {
+      (async () => {
+        try {
+          const res = await fetch('http://localhost:5000/api/payments/verify-session', {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ sessionId })
+          });
+          const data = await res.json();
+          if (data.success && data.paid) {
+            setActivePage('payment');
+            setMessage(`✅ Payment received for invoice ${data.data?.invoiceNumber || ''}!`);
+            fetchData();
+          } else {
+            setActivePage('payment');
+            setError('Payment could not be confirmed yet. Please refresh in a moment.');
+          }
+        } catch (err) {
+          setError('Could not confirm payment status with the server.');
+        } finally {
+          cleanUrl();
+        }
+      })();
+    } else if (paymentResult === 'cancelled') {
+      setActivePage('payment');
+      setError('Payment was cancelled.');
+      cleanUrl();
+    }
+  }, []);
+
+  const handlePayInvoice = async (invoiceId) => {
+    if (!hasSession()) return;
+    setError(''); setMessage('');
+    setPayingInvoiceId(invoiceId);
+    try {
+      const res = await fetch('http://localhost:5000/api/payments/create-checkout-session', {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ invoiceId })
+      });
+      const data = await res.json();
+      if (data.success && data.url) {
+        window.location.href = data.url;
+      } else {
+        setError(data.message || 'Failed to start Stripe checkout.');
+        setPayingInvoiceId(null);
+      }
+    } catch (err) {
+      setError('Could not connect to the payment server.');
+      setPayingInvoiceId(null);
+    }
+  };
 
   const handlePrSelectChange = (prId) => {
     const selected = pendingPRs.find(pr => pr._id === prId);
@@ -1551,7 +1616,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Invoice No', 'PO Number', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status'].map(h => (
+                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status', 'Action'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
@@ -1579,6 +1644,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         <tr key={inv._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                           <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#0d1b4b' }}>{inv.invoiceNumber}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{inv.po?.poNumber || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#5e35b1', fontWeight: '600' }}>{inv.grn?.grnNumber || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px' }}>{inv.supplier?.name || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600' }}>{Number(inv.amount).toLocaleString()}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{formatDate(inv.invoiceDate)}</td>
@@ -1593,12 +1659,34 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               fontWeight: '600'
                             }}>{status}</span>
                           </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            {status === 'Approved' ? (
+                              <button
+                                onClick={() => handlePayInvoice(inv._id)}
+                                disabled={payingInvoiceId === inv._id}
+                                style={{
+                                  background: payingInvoiceId === inv._id ? '#9fa8da' : '#635bff',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '6px',
+                                  padding: '7px 14px',
+                                  fontSize: '12px',
+                                  fontWeight: '600',
+                                  cursor: payingInvoiceId === inv._id ? 'not-allowed' : 'pointer'
+                                }}
+                              >
+                                {payingInvoiceId === inv._id ? 'Redirecting…' : '💳 Pay'}
+                              </button>
+                            ) : (
+                              <span style={{ color: '#bbb', fontSize: '12px' }}>-</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
                     {invoices.length === 0 && (
                       <tr>
-                        <td colSpan={7} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
+                        <td colSpan={9} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
                           No invoices recorded yet. Invoices are submitted by Main Store when goods are received against a PO.
                         </td>
                       </tr>

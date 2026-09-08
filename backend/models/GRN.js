@@ -41,8 +41,12 @@ const grnSchema = new mongoose.Schema({
     },
     condition: {
       type: String,
-      enum: ['Good', 'Damaged', 'Partial', 'Shortage', 'Other'],
+      enum: ['Good', 'Damaged'],
       default: 'Good'
+    },
+    damagedQty: {
+      type: Number,
+      default: 0
     }
   }],
   poId: {

@@ -2,6 +2,8 @@ import express from 'express';
 import {
   getMINs,
   createMIN,
+  createMaterialRequest,
+  transferMIN,
   updateMINStatus,
   issueMIN,
   confirmMINReceipt
@@ -14,6 +16,9 @@ const router = express.Router();
 router.route('/')
   .get(protect, getMINs)
   .post(protect, createMIN);
+
+router.post('/request', protect, createMaterialRequest);
+router.post('/transfer', protect, checkPermission('Issue Materials'), transferMIN);
 
 router.put('/:id/status', protect, checkPermission('Issue Materials'), updateMINStatus);
 router.post('/:id/issue', protect, checkPermission('Issue Materials'), issueMIN);

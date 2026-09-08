@@ -138,7 +138,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   // Supplier Registry state
   const emptySupplierForm = {
-    supplierId: '', contactPerson: '', phone: '', email: '', address: '',
+    supplierId: '', name: '', contactPerson: '', phone: '', email: '', address: '',
     status: 'Active',
     bankName: '', accountNumber: '', bankBranch: '',
     documents: { idPhoto: null }
@@ -351,8 +351,8 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const handleSupplierSubmit = async (e) => {
     e.preventDefault();
-    if (!supForm.supplierId || !supForm.phone) {
-      alert('Please fill in Supplier ID and Phone.');
+    if (!supForm.supplierId || !supForm.name || !supForm.phone) {
+      alert('Please fill in Supplier ID, Company/Supplier Name and Phone.');
       return;
     }
     if (!isValidPhone(supForm.phone)) {
@@ -389,6 +389,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     setEditingSupplierId(supplier._id);
     setSupForm({
       supplierId: supplier.supplierId || '',
+      name: supplier.name || '',
       contactPerson: supplier.contactPerson || '',
       phone: supplier.phone || '',
       email: supplier.email || '',
@@ -2888,11 +2889,6 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <option value="Purchase Orders">Purchase Orders</option>
                   </select>
 
-                  {/* Refresh */}
-                  <button onClick={fetchAuditLogs} style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', padding: '8px 14px', borderRadius: '8px', fontSize: '13px', color: '#1e3a5f', fontWeight: '600', cursor: 'pointer' }}>
-                    🔄 Refresh
-                  </button>
-
                 </div>
               </div>
 
@@ -2988,10 +2984,21 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                       <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Company/Supplier Name</label>
                       <input
                         type="text"
+                        value={supForm.name}
+                        onChange={(e) => setSupForm({ ...supForm, name: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. Lanka Cement Ltd"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Contact Person</label>
+                      <input
+                        type="text"
                         value={supForm.contactPerson}
                         onChange={(e) => setSupForm({ ...supForm, contactPerson: e.target.value })}
                         style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-                        placeholder="e.g. Lanka Cement Ltd"
+                        placeholder="e.g. Nimal Perera"
                       />
                     </div>
                     <div>
@@ -3088,7 +3095,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Supplier ID', 'Company/Supplier Name', 'Phone', 'Email', 'Status', 'Actions'].map(h => (
+                      {['Supplier ID', 'Company/Supplier Name', 'Contact Person', 'Phone', 'Email', 'Status', 'Actions'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px', fontWeight: '600' }}>{h}</th>
                       ))}
                     </tr>
@@ -3096,11 +3103,12 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                   <tbody>
                     {suppliers.filter(s => {
                       const q = supplierSearch.toLowerCase();
-                      return s.supplierId?.toLowerCase().includes(q) || s.contactPerson?.toLowerCase().includes(q);
+                      return s.supplierId?.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q) || s.contactPerson?.toLowerCase().includes(q);
                     }).map((s, i) => {
                       return (
                         <tr key={s._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                           <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#0d1b4b' }}>{s.supplierId}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{(s.name && s.name !== s.supplierId) ? s.name : (s.contactPerson || '-')}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.contactPerson || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.phone}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.email || '-'}</td>

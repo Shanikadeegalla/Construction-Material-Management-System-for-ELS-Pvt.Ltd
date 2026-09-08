@@ -85,6 +85,181 @@ export const createMIN = async (req, res) => {
   }
 };
 
+// @desc    Create a free-form Material Transfer Request from the Site Store
+//          "Request Materials" screen. Unlike createMIN, this is not gated
+//          against an approved BOM - any material/quantity can be requested.
+//          Each line is stamped with a snapshot of current site stock so
+//          Main Store can see what's on hand when reviewing the request.
+// @route   POST /api/min/request
+// @access  Private
+export const createMaterialRequest = async (req, res) => {
+  try {
+    const { projectId, projectName, requiredDate, materials, notes } = req.body;
+    const requestedBy = req.user ? req.user.name : 'Site Store Officer';
+
+    if (!projectId || !projectName || !materials || !Array.isArray(materials) || materials.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please provide all required Material Transfer Request fields.' });
+    }
+
+    const siteMaterials = await Material.find({
+      location: 'SiteStore',
+      $or: [{ project_id: projectId }, { projectId }]
+    });
+    const decryptedSiteMats = siteMaterials.map(m => ({
+      name: decryptDB(m.name),
+      quantity: Number(decryptDB(m.quantity)) || 0
+    }));
+
+    const preparedMaterials = materials.map(m => {
+      const siteMat = decryptedSiteMats.find(sm => sm.name === m.materialName);
+      return {
+        materialName: m.materialName,
+        quantity: Number(m.quantity),
+        unit: m.unit || 'unit',
+        availableAtSite: siteMat ? siteMat.quantity : 0
+      };
+    });
+
+    if (preparedMaterials.some(m => !m.materialName || !m.quantity || m.quantity <= 0)) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid material and quantity for every request row.' });
+    }
+
+    const count = await MaterialIssuanceNote.countDocuments({});
+    const minNumber = `MIN-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`;
+
+    const min = new MaterialIssuanceNote({
+      minNumber,
+      requestType: 'FreeForm',
+      projectId,
+      projectName,
+      requestedBy,
+      requiredDate: requiredDate || undefined,
+      materials: preparedMaterials,
+      notes: notes || '',
+      status: 'Pending'
+    });
+
+    await min.save();
+    res.status(201).json({ success: true, data: min });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Main Store's "Create Material Transfer Note" screen. Either
+//          starts a brand new Main Store-initiated transfer to a project's
+//          Site Store (no sourceRequestId), or fulfils a Pending/Approved
+//          FreeForm request raised by Site Store in one step (sourceRequestId
+//          given) - transitioning that same note straight to Issued instead
+//          of creating a duplicate document. Either way, Main Store stock is
+//          validated and deducted immediately and an In-Transit TransferLog
+//          is created per material, exactly like issueMIN.
+// @route   POST /api/min/transfer
+// @access  Private
+export const transferMIN = async (req, res) => {
+  try {
+    const { projectId, projectName, transferDate, reference, notes, materials, sourceRequestId } = req.body;
+    const issuedBy = req.user ? req.user.name : 'Main Store Officer';
+
+    if (!projectId || !projectName || !materials || !Array.isArray(materials) || materials.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please provide all required Material Transfer Note fields.' });
+    }
+    if (materials.some(m => !m.materialName || !m.quantity || Number(m.quantity) <= 0)) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid material and transfer quantity for every row.' });
+    }
+
+    const mainMatsByName = {};
+    for (const m of materials) {
+      const mainMat = await Material.findOne({ name: m.materialName, location: 'MainStore' });
+      if (!mainMat || mainMat.quantity < Number(m.quantity)) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient stock in Main Store for ${m.materialName}. Available: ${mainMat ? mainMat.quantity : 0}, Requested: ${m.quantity}`
+        });
+      }
+      mainMatsByName[m.materialName] = mainMat;
+    }
+
+    let min;
+    if (sourceRequestId) {
+      min = await MaterialIssuanceNote.findById(sourceRequestId);
+      if (!min) {
+        return res.status(404).json({ success: false, message: 'Source Material Transfer Request not found.' });
+      }
+      if (min.requestType !== 'FreeForm') {
+        return res.status(400).json({ success: false, message: 'Only free-form Site Store requests can be transferred from this screen.' });
+      }
+      if (!['Pending', 'Approved'].includes(min.status)) {
+        return res.status(400).json({ success: false, message: 'Only Pending or Approved requests can be transferred.' });
+      }
+      min.materials = materials.map(m => {
+        const existing = min.materials.find(x => x.materialName === m.materialName);
+        return {
+          materialName: m.materialName,
+          quantity: Number(m.quantity),
+          unit: m.unit || (existing ? existing.unit : 'unit'),
+          availableAtSite: existing ? existing.availableAtSite : 0
+        };
+      });
+      if (transferDate) min.transferDate = transferDate;
+      if (reference) min.reference = reference;
+      if (notes) min.notes = notes;
+    } else {
+      const count = await MaterialIssuanceNote.countDocuments({});
+      const minNumber = `MIN-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`;
+      min = new MaterialIssuanceNote({
+        minNumber,
+        requestType: 'FreeForm',
+        initiatedBy: 'MainStore',
+        projectId,
+        projectName,
+        requestedBy: issuedBy,
+        transferDate: transferDate || undefined,
+        reference: reference || '',
+        materials: materials.map(m => ({
+          materialName: m.materialName,
+          quantity: Number(m.quantity),
+          unit: m.unit || 'unit'
+        })),
+        notes: notes || ''
+      });
+    }
+
+    for (const m of materials) {
+      await recordMovement({
+        materialDoc: mainMatsByName[m.materialName],
+        type: 'MIN Issue',
+        quantityChange: -Number(m.quantity),
+        reference: min.minNumber,
+        performedBy: issuedBy
+      });
+
+      const log = new TransferLog({
+        materialId: mainMatsByName[m.materialName]._id,
+        materialName: encryptDB(m.materialName),
+        quantity: encryptDB(String(m.quantity)),
+        from: 'MainStore',
+        to: 'SiteStore',
+        projectId,
+        project_id: projectId,
+        status: 'In-Transit',
+        issuedBy,
+        minId: min._id
+      });
+      await log.save();
+    }
+
+    min.status = 'Issued';
+    min.issuedBy = issuedBy;
+    min.issuedAt = new Date();
+    await min.save();
+
+    res.status(201).json({ success: true, message: 'Material Transfer Note created and materials issued to Site Store.', data: min });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Approve/Reject a Material Issuance Note
 // @route   PUT /api/min/:id/status
 // @access  Private
