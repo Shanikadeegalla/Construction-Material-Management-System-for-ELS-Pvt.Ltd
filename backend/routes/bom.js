@@ -5,7 +5,8 @@ import {
   approveBOM,
   rejectBOM,
   getBOMVersions,
-  getApprovedBOM
+  getApprovedBOM,
+  getBOMStockCheck
 } from '../controllers/bomController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
@@ -18,6 +19,7 @@ router.route('/')
 
 router.get('/versions/:projectId', protect, getBOMVersions);
 router.get('/approved/:projectId', protect, getApprovedBOM);
+router.get('/:bomId/stock-check', protect, getBOMStockCheck);
 
 router.put('/:id/approve', protect, checkPermission('BOM Approval'), approveBOM);
 router.put('/:id/reject', protect, checkPermission('BOM Approval'), rejectBOM);

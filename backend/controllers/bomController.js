@@ -3,6 +3,7 @@ import BOM from '../models/BOM.js';
 import Project from '../models/Project.js';
 import User from '../models/userModel.js';
 import ItemMaster from '../models/ItemMaster.js';
+import Material from '../models/Material.js';
 import { createNotificationHelper } from './notificationController.js';
 
 // Helper to calculate the next version for a project
@@ -324,6 +325,46 @@ export const getApprovedBOM = async (req, res) => {
     }
 
     res.status(200).json({ success: true, data: bom });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Compare an approved BOM's planned materials against Main Store stock
+// @route   GET /api/bom/:bomId/stock-check
+// @access  Private
+export const getBOMStockCheck = async (req, res) => {
+  try {
+    const { bomId } = req.params;
+    const bom = await BOM.findOne({ _id: bomId, status: 'Approved' });
+
+    if (!bom) {
+      return res.status(404).json({ success: false, message: 'Approved BOM not found.' });
+    }
+
+    const mainStoreMaterials = await Material.find({ location: 'MainStore' });
+
+    const availableByName = {};
+    for (const material of mainStoreMaterials) {
+      availableByName[material.name] = material.quantity;
+    }
+
+    const data = bom.materials.map((item) => {
+      const available = availableByName[item.name] || 0;
+      const shortage = Math.max(item.plannedQty - available, 0);
+
+      return {
+        name: item.name,
+        category: item.category,
+        unit: item.unit,
+        plannedQty: item.plannedQty,
+        available,
+        shortage,
+        status: shortage > 0 ? 'Shortage' : 'Sufficient'
+      };
+    });
+
+    res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
