@@ -259,6 +259,15 @@ export const updateUser = async (req, res, next) => {
       throw new Error('Not authorized to change your own role');
     }
 
+    // Enforce at most one Admin account in the system
+    if (role === 'Admin' && user.role !== 'Admin') {
+      const adminCount = await User.countDocuments({ role: 'Admin' });
+      if (adminCount >= 1) {
+        res.status(400);
+        throw new Error('Only one Admin account is allowed. Demote or remove the existing Admin before promoting another user.');
+      }
+    }
+
     const cleanEmail = email ? email.trim().toLowerCase() : undefined;
     if (cleanEmail && cleanEmail !== user.email) {
       const emailExists = await User.findOne({ email: cleanEmail });
