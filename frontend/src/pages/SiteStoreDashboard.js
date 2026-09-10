@@ -821,7 +821,16 @@ function SiteStoreDashboard({ user, onLogout }) {
                         <td style={{ ...styles.td, fontWeight: 'bold' }}>{m.minNumber}</td>
                         <td style={styles.td}>
                           {(m.materials || []).map((mat, i) => (
-                            <div key={i}>{mat.materialName} ({mat.quantity} {mat.unit})</div>
+                            <div key={i} style={{ marginBottom: '4px' }}>
+                              {mat.materialName} ({mat.quantity} {mat.unit})
+                              {mat.exceedsBom && (
+                                <div>
+                                  <span style={{ background: '#ffedd5', color: '#c2410c', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', fontSize: '10px', display: 'inline-block', marginTop: '2px' }}>
+                                    ⚠️ Exceeds BOM plan by {mat.exceedAmount} {mat.unit}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
                           ))}
                         </td>
                         <td style={styles.td}>

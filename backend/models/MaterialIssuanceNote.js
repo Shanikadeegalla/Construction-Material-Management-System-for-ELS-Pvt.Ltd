@@ -81,6 +81,17 @@ const materialIssuanceNoteSchema = new mongoose.Schema({
     availableAtSite: {
       type: Number,
       default: 0
+    },
+    // Set when this line's cumulative requested quantity exceeds the
+    // approved BOM's planned quantity - the BOM check is a soft limit that
+    // flags rather than blocks the request.
+    exceedsBom: {
+      type: Boolean,
+      default: false
+    },
+    exceedAmount: {
+      type: Number,
+      default: 0
     }
   }],
   // Pending -> Approved/Rejected -> Issued (deducted from Main Store, in transit) ->

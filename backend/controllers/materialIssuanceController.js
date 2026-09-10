@@ -4,6 +4,7 @@ import TransferLog from '../models/TransferLog.js';
 import BOM from '../models/BOM.js';
 import { encryptDB, decryptDB } from '../utils/cryptoUtils.js';
 import { recordMovement } from '../utils/stockService.js';
+import { createNotificationHelper } from './notificationController.js';
 
 // @desc    Get all Material Issuance Notes
 // @route   GET /api/min
@@ -55,11 +56,12 @@ export const createMIN = async (req, res) => {
         return sum + (line ? line.quantity : 0);
       }, 0);
 
-      if (alreadyRequested + Number(m.quantity) > bomMat.plannedQty) {
-        return res.status(400).json({
-          success: false,
-          message: `Requested quantity for "${m.materialName}" exceeds the approved BOM limit. Planned: ${bomMat.plannedQty}, already requested: ${alreadyRequested}.`
-        });
+      // BOM planned quantity is a soft limit: over-plan requests are flagged
+      // on the line item and surfaced to the requester, not blocked.
+      const exceedAmount = Math.max((alreadyRequested + Number(m.quantity)) - bomMat.plannedQty, 0);
+      if (exceedAmount > 0) {
+        m.exceedsBom = true;
+        m.exceedAmount = exceedAmount;
       }
     }
 
@@ -79,6 +81,18 @@ export const createMIN = async (req, res) => {
     });
 
     await min.save();
+
+    try {
+      const overPlanMats = min.materials.filter(m => m.exceedsBom);
+      if (overPlanMats.length > 0 && req.user) {
+        const details = overPlanMats.map(m => `${m.materialName} (+${m.exceedAmount})`).join(', ');
+        const msg = `Your Material Issuance Note ${min.minNumber} exceeds the approved BOM plan for: ${details}.`;
+        await createNotificationHelper(req.user._id, msg, 'MIN_EXCEEDS_BOM', '/site-store-dashboard');
+      }
+    } catch (nErr) {
+      console.error('Error creating MIN BOM-exceeded notification:', nErr);
+    }
+
     res.status(201).json({ success: true, data: min });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
