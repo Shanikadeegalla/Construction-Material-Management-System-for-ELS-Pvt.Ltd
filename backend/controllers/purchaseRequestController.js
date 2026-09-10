@@ -134,3 +134,43 @@ export const createPurchaseRequest = async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Update a purchase request's status (decline only)
+// @route   PUT /api/purchase-requests/:id/status
+// @access  Private
+export const updatePurchaseRequestStatus = async (req, res) => {
+  try {
+    const { status, reason } = req.body;
+
+    const pr = await PurchaseRequest.findById(req.params.id);
+    if (!pr) {
+      return res.status(404).json({ success: false, message: 'Purchase request not found.' });
+    }
+
+    if (status !== 'Declined') {
+      return res.status(400).json({ success: false, message: 'Invalid status.' });
+    }
+
+    if (pr.status === 'PO Created') {
+      return res.status(400).json({ success: false, message: 'Cannot decline a Purchase Request that has already been converted to a PO.' });
+    }
+
+    pr.status = 'Declined';
+    pr.declineReason = reason || '';
+    await pr.save();
+
+    try {
+      const requester = await User.findOne({ name: new RegExp(`^${pr.requestedBy}$`, 'i') });
+      if (requester) {
+        const msg = `Your Purchase Request for ${pr.projectName} was declined by the Purchase Manager${reason ? ': ' + reason : '.'}`;
+        await createNotificationHelper(requester._id, msg, 'PR_DECLINED', '/purchase-requests');
+      }
+    } catch (nErr) {
+      console.error('Error creating PR decline notification:', nErr);
+    }
+
+    res.status(200).json({ success: true, message: 'Purchase request declined.', data: pr });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};

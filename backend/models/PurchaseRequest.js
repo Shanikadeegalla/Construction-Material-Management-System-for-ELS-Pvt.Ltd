@@ -52,8 +52,12 @@ const purchaseRequestSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Pending', 'PO Created'],
+    enum: ['Pending', 'PO Created', 'Declined'],
     default: 'Pending'
+  },
+  declineReason: {
+    type: String,
+    trim: true
   },
   notes: {
     type: String,

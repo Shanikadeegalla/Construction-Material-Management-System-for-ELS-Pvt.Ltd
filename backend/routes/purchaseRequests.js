@@ -1,7 +1,8 @@
 import express from 'express';
 import {
   getPurchaseRequests,
-  createPurchaseRequest
+  createPurchaseRequest,
+  updatePurchaseRequestStatus
 } from '../controllers/purchaseRequestController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
@@ -14,5 +15,7 @@ const router = express.Router();
 router.route('/')
   .get(protect, getPurchaseRequests)
   .post(protect, checkPermission('Create PR'), createPurchaseRequest);
+
+router.put('/:id/status', protect, checkPermission('Manage PO Lifecycle'), updatePurchaseRequestStatus);
 
 export default router;

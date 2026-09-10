@@ -431,6 +431,16 @@ export const sendPurchaseOrder = async (req, res) => {
 
     await po.save();
 
+    try {
+      const directors = await User.find({ role: 'Director' });
+      const msg = `Purchase Order ${po.poNumber} has been sent to ${supplierName}`;
+      for (const d of directors) {
+        await createNotificationHelper(d._id, msg, 'PO_SENT', '/purchase-orders');
+      }
+    } catch (nErr) {
+      console.error('Error creating PO sent notifications:', nErr);
+    }
+
     res.status(200).json({
       success: true,
       message: `${po.poNumber} sent to ${supplierName} (${supplierDoc.email}) successfully!`,
