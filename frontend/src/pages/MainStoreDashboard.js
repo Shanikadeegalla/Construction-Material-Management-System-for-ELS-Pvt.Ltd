@@ -4,6 +4,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
 import { formatDate, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
+import * as XLSX from 'xlsx';
 
 function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [view, setView] = useState('dashboard'); // 'dashboard', 'inventory', 'grn', 'purchase-request', 'min', 'approved-boms', 'stock-adjustments', 'stock-ledger', 'reports', 'notifications', 'settings'
@@ -929,6 +930,39 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const exportStockLedgerToExcel = (rows) => {
+    const wsData = [
+      ["ELS Construction (Pvt) Ltd"],
+      ["Main Store Stock Ledger"],
+      [`Generated Date: ${formatDateTime(new Date())}`],
+      [], // Spacer
+      ["Material", "Type", "Quantity Change", "Balance After", "Reference", "Reason", "Performed By", "Date"]
+    ];
+
+    rows.forEach(e => {
+      const quantityChange = e.inQty ? `+${e.inQty}` : (e.outQty ? `-${e.outQty}` : 0);
+      wsData.push([
+        e.materialName,
+        e.type,
+        quantityChange,
+        e.balance,
+        e.reference,
+        e.remarks,
+        e.performedBy,
+        formatDateTime(e.date)
+      ]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    const max_cols = wsData.reduce((w, row) => Math.max(w, row.length), 0);
+    ws['!cols'] = Array(max_cols).fill({ wch: 18 });
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Stock Ledger");
+    XLSX.writeFile(wb, `ELS_Stock_Ledger_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const handlePrSubmit = async (e) => {
@@ -2064,6 +2098,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         style={styles.refreshBtn}
                       >
                         ⬇ Export CSV
+                      </button>
+                      <button
+                        onClick={() => exportStockLedgerToExcel(filteredLedger)}
+                        style={{ ...styles.refreshBtn, background: '#1d6f42' }}
+                      >
+                        📊 Export to Excel
                       </button>
                     </div>
                   </div>
