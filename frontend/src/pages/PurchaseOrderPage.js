@@ -60,15 +60,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     status: 'Active'
   });
 
-  // Rate Delivery popup state
-  const [showRateModal, setShowRateModal] = useState(false);
-  const [selectedPo, setSelectedPo] = useState(null);
-  const [rateForm, setRateForm] = useState({
-    actualDeliveryDate: new Date().toISOString().substring(0, 10),
-    receivedQty: '',
-    deliveryCondition: 'Good'
-  });
-
   // Search Filter for Suppliers
   const [supplierSearch, setSupplierSearch] = useState('');
 
@@ -420,41 +411,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
-  const handleRateClick = (po) => {
-    setSelectedPo(po);
-    const totalQty = po.items ? po.items.reduce((sum, item) => sum + item.quantity, 0) : 0;
-    setRateForm({
-      actualDeliveryDate: new Date().toISOString().substring(0, 10),
-      receivedQty: po.receivedQty || totalQty,
-      deliveryCondition: po.deliveryCondition || 'Good'
-    });
-    setShowRateModal(true);
-  };
-
-  const handleRateSubmit = async (e) => {
-    e.preventDefault();
-    setError(''); setMessage('');
-    try {
-      const res = await fetch(`http://localhost:5000/api/purchase-orders/${selectedPo._id}/rate-delivery`, {
-        method: 'PUT',
-        headers: getHeaders(),
-        body: JSON.stringify(rateForm)
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setMessage('✅ PO delivery rated successfully!');
-        setShowRateModal(false);
-        fetchData();
-      } else {
-        setError(data.message || 'Failed to rate delivery.');
-      }
-    } catch {
-      setMessage('✅ PO delivery rated successfully! (Demo Mode)');
-      setOrders(prev => prev.map(o => o._id === selectedPo._id ? { ...o, status: 'Delivered', actualDeliveryDate: rateForm.actualDeliveryDate, receivedQty: Number(rateForm.receivedQty), deliveryCondition: rateForm.deliveryCondition } : o));
-      setShowRateModal(false);
-    }
-  };
-
   const handleSupplierSubmit = async (e) => {
     e.preventDefault();
     setError(''); setMessage('');
@@ -543,7 +499,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   // Stats Calculations
   const stats = [
     { label: 'Total POs', value: orders.length, color: '#1565c0', type: 'total-pos' },
-    { label: 'Pending POs', value: orders.filter(o => o.status === 'Pending').length, color: '#1e3a8a', type: 'pending-pos' },
+    { label: 'Pending POs', value: orders.filter(o => o.status === 'Pending').length, color: '#0d1b4b', type: 'pending-pos' },
     { label: 'Sent POs', value: orders.filter(o => o.status === 'Sent').length, color: '#1565c0', type: 'sent-pos' },
     { label: 'Delivered POs', value: orders.filter(o => o.status === 'Delivered').length, color: '#2e7d32', type: 'delivered-pos' },
   ];
@@ -556,7 +512,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
   const paymentStats = [
     { label: 'Total Invoices', value: invoices.length, color: '#1565c0' },
-    { label: 'Pending Approval', value: invoices.filter(i => i.status === 'Pending Approval').length, color: '#1e3a8a' },
+    { label: 'Pending Approval', value: invoices.filter(i => i.status === 'Pending Approval').length, color: '#0d1b4b' },
     { label: 'Approved', value: invoices.filter(i => i.status === 'Approved').length, color: '#2563eb' },
     { label: 'Paid', value: invoices.filter(i => i.status === 'Paid').length, color: '#2e7d32' },
   ];
@@ -599,7 +555,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           <td style={{ padding: '12px 16px' }}>
             <span style={{
               background: po.status === 'Delivered' ? '#e8f5e9' : po.status === 'Sent' ? '#e3f2fd' : '#dbeafe',
-              color: po.status === 'Delivered' ? '#2e7d32' : po.status === 'Sent' ? '#1565c0' : '#1e3a8a',
+              color: po.status === 'Delivered' ? '#2e7d32' : po.status === 'Sent' ? '#1565c0' : '#0d1b4b',
               padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
             }}>{po.status}</span>
           </td>
@@ -790,7 +746,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       {/* Sidebar */}
       <div style={{ width: '240px', background: '#0d1b4b', color: 'white', display: 'flex', flexDirection: 'column', position: 'fixed', height: '100vh', zIndex: 100 }}>
         <div style={{ padding: '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
+          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }} />
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
             <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Procurement</div>
@@ -888,7 +844,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       const isApproved = type === 'po_approved';
                       const isRejected = type === 'po_rejected';
                       const label = isApproved ? 'PO Approved' : isRejected ? 'PO Rejected' : 'New PR';
-                      const color = isApproved ? '#2e7d32' : isRejected ? '#c62828' : '#1e3a8a';
+                      const color = isApproved ? '#2e7d32' : isRejected ? '#c62828' : '#0d1b4b';
                       const bg = isApproved ? '#e8f5e9' : isRejected ? '#ffebee' : '#dbeafe';
                       return (
                         <div
@@ -1038,7 +994,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       <td style={{ padding: '12px 16px' }}>
                         <span style={{
                           background: po.status === 'Delivered' ? '#e8f5e9' : po.status === 'Sent' ? '#e3f2fd' : '#dbeafe',
-                          color: po.status === 'Delivered' ? '#2e7d32' : po.status === 'Sent' ? '#1565c0' : '#1e3a8a',
+                          color: po.status === 'Delivered' ? '#2e7d32' : po.status === 'Sent' ? '#1565c0' : '#0d1b4b',
                           padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'
                         }}>{po.status}</span>
                       </td>
@@ -1176,7 +1132,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   />
                 </div>
                 <button onClick={() => setShowForm(!showForm)}
-                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', boxShadow: '0 2px 6px rgba(37,99,235,0.3)', whiteSpace: 'nowrap' }}>
+                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', boxShadow: '0 2px 6px rgba(37, 99, 235,0.3)', whiteSpace: 'nowrap' }}>
                   {showForm ? 'Hide Form' : '+ Create PO'}
                 </button>
               </div>
@@ -1307,7 +1263,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     </div>
 
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 28px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', boxShadow: '0 2px 6px rgba(37,99,235,0.3)' }}>
+                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 28px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', boxShadow: '0 2px 6px rgba(37, 99, 235,0.3)' }}>
                         Submit Purchase Order
                       </button>
                       <button type="button" onClick={() => setShowForm(false)}
@@ -1433,13 +1389,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                 Send to Supplier
                               </button>
                             )}
-                            {(po.status === 'Sent' || po.status === 'Delivered') && (
-                              <button onClick={() => handleRateClick(po)}
-                                style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
-                                Rate Delivery
-                              </button>
-                            )}
-                            <select 
+                            <select
                               value={po.status} 
                               onChange={e => handleUpdateStatus(po._id, e.target.value)}
                               style={{ padding: '4px', fontSize: '11px', borderRadius: '4px', border: '1px solid #ddd', cursor: 'pointer', outline: 'none', background: 'white' }}
@@ -1634,7 +1584,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         statusColor = '#2e7d32';
                       } else if (status === 'Pending Approval') {
                         statusBg = '#dbeafe';
-                        statusColor = '#1e3a8a';
+                        statusColor = '#0d1b4b';
                       } else if (status === 'Rejected') {
                         statusBg = '#ffebee';
                         statusColor = '#c62828';
@@ -1706,60 +1656,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         </div>
       </div>
 
-      {showRateModal && selectedPo && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'white', padding: '30px', borderRadius: '8px', width: '450px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
-            <h3 style={{ color: '#0d1b4b', marginTop: 0, marginBottom: '20px' }}>Rate Delivery: {selectedPo.poNumber}</h3>
-            <form onSubmit={handleRateSubmit}>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '12px', color: '#666', fontWeight: '600', marginBottom: '6px' }}>ACTUAL DELIVERY DATE *</label>
-                <DateInput
-                  value={rateForm.actualDeliveryDate}
-                  onChange={iso => setRateForm({ ...rateForm, actualDeliveryDate: iso })}
-                  style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}
-                  required
-                />
-              </div>
-
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '12px', color: '#666', fontWeight: '600', marginBottom: '6px' }}>RECEIVED QUANTITY *</label>
-                <input
-                  type="number"
-                  placeholder="Total Qty Received"
-                  value={rateForm.receivedQty}
-                  onChange={e => setRateForm({ ...rateForm, receivedQty: e.target.value })}
-                  style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}
-                  min="0"
-                  required
-                />
-              </div>
-
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ display: 'block', fontSize: '12px', color: '#666', fontWeight: '600', marginBottom: '6px' }}>DELIVERY CONDITION *</label>
-                <select
-                  value={rateForm.deliveryCondition}
-                  onChange={e => setRateForm({ ...rateForm, deliveryCondition: e.target.value })}
-                  style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box', background: 'white' }}
-                  required
-                >
-                  <option value="Good">Good</option>
-                  <option value="Damaged">Damaged</option>
-                  <option value="Partial">Partial</option>
-                </select>
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
-                  Save Delivery Rating
-                </button>
-                <button type="button" onClick={() => setShowRateModal(false)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
       {renderPOStatsModal()}
     </div>
   );

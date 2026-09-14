@@ -5,7 +5,6 @@ import {
   updatePurchaseOrderStatus,
   getPurchaseOrderById,
   sendPurchaseOrder,
-  ratePurchaseOrderDelivery,
   getSupplierPerformance,
   updatePurchaseOrderSupplier,
   approvePurchaseOrder,
@@ -27,6 +26,5 @@ router.put('/:id/supplier', protect, checkPermission('Manage PO Lifecycle'), upd
 router.put('/:id/approve', protect, checkPermission('Approve PO'), approvePurchaseOrder);
 router.put('/:id/reject', protect, checkPermission('Approve PO'), rejectPurchaseOrder);
 router.put('/:id/send', protect, checkPermission('Manage PO Lifecycle'), sendPurchaseOrder);
-router.put('/:id/rate-delivery', protect, checkPermission('Manage PO Lifecycle'), ratePurchaseOrderDelivery);
 
 export default router;

@@ -23,7 +23,7 @@ import {
 import SettingsPage from './SettingsPage';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
 import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
@@ -160,7 +160,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const MATERIAL_UNIT_OPTIONS = ['Bag', 'Piece', 'Kg', 'Ton', 'Meter', 'm³', 'm²', 'Cum', 'Litre', 'Roll', 'Sheet', 'Set', 'Coil'];
   const emptyMaterialForm = {
     materialCode: '', materialName: '', category: 'Cement & Concrete', unit: 'Bag',
-    estimatedUnitCost: '', description: '', status: 'Active'
+    estimatedUnitCost: '', minimumStock: '', maximumStock: '', reorderLevel: '', description: '', status: 'Active'
   };
   const [materialMasterList, setMaterialMasterList] = useState([]);
   const [showMaterialForm, setShowMaterialForm] = useState(false);
@@ -196,10 +196,10 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      const nextCode = data.materialCode || `MAT-${String(materialMasterList.length + 1).padStart(4, '0')}`;
+      const nextCode = data.materialCode || `MAT${String(materialMasterList.length + 1).padStart(4, '0')}`;
       setMaterialForm(prev => ({ ...prev, materialCode: nextCode }));
     } catch (err) {
-      setMaterialForm(prev => ({ ...prev, materialCode: `MAT-${String(materialMasterList.length + 1).padStart(4, '0')}` }));
+      setMaterialForm(prev => ({ ...prev, materialCode: `MAT${String(materialMasterList.length + 1).padStart(4, '0')}` }));
     }
     setShowMaterialForm(true);
   };
@@ -220,7 +220,10 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           ...materialForm,
-          estimatedUnitCost: Number(materialForm.estimatedUnitCost) || 0
+          estimatedUnitCost: Number(materialForm.estimatedUnitCost) || 0,
+          minimumStock: Number(materialForm.minimumStock) || 0,
+          maximumStock: Number(materialForm.maximumStock) || 0,
+          reorderLevel: Number(materialForm.reorderLevel) || 0
         })
       });
       const data = await res.json();
@@ -246,6 +249,9 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
       category: item.category || 'Cement & Concrete',
       unit: item.unit || 'Bag',
       estimatedUnitCost: item.estimatedUnitCost ?? '',
+      minimumStock: item.minimumStock ?? '',
+      maximumStock: item.maximumStock ?? '',
+      reorderLevel: item.reorderLevel ?? '',
       description: item.description || '',
       status: item.status || 'Active'
     });
@@ -567,7 +573,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                   const rColor = getRoleColor(u.role);
                   return (
                     <tr key={u._id || i} style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#f8fafc' }}>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#1e3a5f' }}>{u.name}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{u.name}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#475569' }}>{u.email}</td>
                       <td style={{ padding: '12px 16px' }}>
                         <span style={{ background: rColor.bg, color: rColor.text, padding: '2px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', display: 'inline-block', minWidth: '110px', textAlign: 'center' }}>
@@ -1519,7 +1525,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         <ChevronRight size={14} />
         {parts.map((p, i) => (
           <React.Fragment key={p}>
-            <span style={{ color: i === parts.length - 1 ? '#1e3a5f' : '#64748b', fontWeight: i === parts.length - 1 ? '600' : '400' }}>{p}</span>
+            <span style={{ color: i === parts.length - 1 ? '#0d1b4b' : '#64748b', fontWeight: i === parts.length - 1 ? '600' : '400' }}>{p}</span>
             {i < parts.length - 1 && <ChevronRight size={14} />}
           </React.Fragment>
         ))}
@@ -1729,10 +1735,10 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         
         {/* Logo area */}
         <div style={{ padding: '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <img 
-            src="/els-logo.png" 
-            alt="ELS Logo" 
-            style={{ width: '38px', height: '38px', objectFit: 'contain' }} 
+          <img
+            src="/els-logo.png"
+            alt="ELS Logo"
+            style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }}
           />
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
@@ -1790,7 +1796,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         
         {/* Top Navbar */}
         <header style={{ height: '70px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 32px', position: 'sticky', top: 0, zIndex: 5, boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
-          <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e3a5f' }}>
+          <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#0d1b4b' }}>
             {activePage === 'dashboard' && 'Dashboard Overview'}
             {activePage === 'users' && 'User Management Console'}
             {activePage === 'suppliers' && 'Supplier Partner Registry'}
@@ -1820,7 +1826,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                 
                 {showNotifications && (
                   <div style={{ position: 'absolute', top: '48px', right: '0', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)', width: '320px', maxHeight: '400px', overflowY: 'auto', zIndex: 100, cursor: 'default', padding: '8px' }} onClick={e => e.stopPropagation()}>
-                    <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#1e3a5f', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span>System Inventory Alerts</span>
                       <span style={{ fontSize: '11px', background: '#fee2e2', color: '#ef4444', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>Stock alerts</span>
                     </div>
@@ -1856,7 +1862,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
             {/* Time display */}
             <div style={{ fontSize: '13px', color: '#64748b', fontWeight: '500', textAlign: 'right' }}>
-              <div style={{ fontWeight: '600', color: '#1e3a5f' }}>{currentTime.toLocaleTimeString()}</div>
+              <div style={{ fontWeight: '600', color: '#0d1b4b' }}>{currentTime.toLocaleTimeString()}</div>
               <div style={{ fontSize: '11px' }}>{formatDateWeekdayShort(currentTime)}</div>
             </div>
 
@@ -1903,7 +1909,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                   >
                     <div>
                       <div style={{ fontSize: '13px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</div>
-                      <div style={{ fontSize: '28px', fontWeight: '800', color: '#1e3a5f', marginTop: '8px' }}>{stat.value}</div>
+                      <div style={{ fontSize: '28px', fontWeight: '800', color: '#0d1b4b', marginTop: '8px' }}>{stat.value}</div>
                     </div>
                     <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: `${stat.color}15`, color: stat.color, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {stat.icon}
@@ -1918,7 +1924,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                 {/* Recent Activity */}
                 <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h3 style={{ margin: 0, color: '#1e3a5f', fontSize: '16px', fontWeight: '700' }}>Recent Audit Activities</h3>
+                    <h3 style={{ margin: 0, color: '#0d1b4b', fontSize: '16px', fontWeight: '700' }}>Recent Audit Activities</h3>
                     <span onClick={() => setActivePage('activity')} style={{ fontSize: '12px', color: '#2563eb', fontWeight: '600', cursor: 'pointer' }}>View All</span>
                   </div>
                   {auditLogs.slice(0, 5).length === 0 ? (
@@ -1929,7 +1935,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: item.status === 'Success' ? '#10b981' : '#ef4444', flexShrink: 0 }} />
                         <div style={{ flex: 1 }}>
                           <span style={{ fontWeight: '600', fontSize: '14px', color: '#0f172a' }}>{item.userName || item.userId?.name || 'System'}</span>
-                          <span style={{ fontSize: '13px', color: '#475569' }}> performed <strong style={{ color: '#1e3a5f' }}>{item.action}</strong> in <strong style={{ color: '#2563eb' }}>{item.module}</strong></span>
+                          <span style={{ fontSize: '13px', color: '#475569' }}> performed <strong style={{ color: '#0d1b4b' }}>{item.action}</strong> in <strong style={{ color: '#2563eb' }}>{item.module}</strong></span>
                         </div>
                         <div style={{ fontSize: '12px', color: '#94a3b8', whiteSpace: 'nowrap' }}>
                           {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -1942,7 +1948,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                 {/* Newly Created Users */}
                 <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h3 style={{ margin: 0, color: '#1e3a5f', fontSize: '16px', fontWeight: '700' }}>Newly Created Users</h3>
+                    <h3 style={{ margin: 0, color: '#0d1b4b', fontSize: '16px', fontWeight: '700' }}>Newly Created Users</h3>
                     <span onClick={() => { setActivePage('users'); setUserViewMode('list'); }} style={{ fontSize: '12px', color: '#2563eb', fontWeight: '600', cursor: 'pointer' }}>View All</span>
                   </div>
                   {[...users]
@@ -1979,7 +1985,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
               {/* User Activity Chart */}
               <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', marginTop: '24px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                  <h3 style={{ margin: 0, color: '#1e3a5f', fontSize: '16px', fontWeight: '700' }}>User Activity</h3>
+                  <h3 style={{ margin: 0, color: '#0d1b4b', fontSize: '16px', fontWeight: '700' }}>User Activity</h3>
                   <div style={{ display: 'flex', gap: '4px', background: '#f1f5f9', borderRadius: '10px', padding: '4px' }}>
                     {[7, 30].map(range => (
                       <button
@@ -2057,47 +2063,6 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                   );
                 })()}
               </div>
-
-              {/* User Distribution Pie Chart */}
-              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', marginTop: '24px' }}>
-                <h3 style={{ margin: '0 0 20px', color: '#1e3a5f', fontSize: '16px', fontWeight: '700' }}>User Distribution</h3>
-                {(() => {
-                  const roleSlices = [
-                    { key: 'Director', label: 'Director', color: '#2a78d6' },
-                    { key: 'ProjectManager', label: 'Project Manager', color: '#1baf7a' },
-                    { key: 'PurchaseManager', label: 'Purchase Manager', color: '#eda100' },
-                    { key: 'MainStoreOfficer', label: 'Main Store', color: '#008300' },
-                    { key: 'SiteStoreOfficer', label: 'Site Store', color: '#4a3aa7' }
-                  ];
-                  const chartData = roleSlices
-                    .map(r => ({ name: r.label, value: users.filter(u => u.role === r.key).length, color: r.color }))
-                    .filter(d => d.value > 0);
-                  if (chartData.length === 0) {
-                    return <div style={{ color: '#94a3b8', fontSize: '14px', textAlign: 'center', padding: '40px' }}>No users yet.</div>;
-                  }
-                  return (
-                    <ResponsiveContainer width="100%" height={320}>
-                      <PieChart>
-                        <Pie
-                          data={chartData}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={110}
-                          label={({ name, value, percent }) => `${name}: ${value} (${(percent * 100).toFixed(0)}%)`}
-                        >
-                          {chartData.map((entry) => (
-                            <Cell key={entry.name} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(value, name) => [`${value} user${value === 1 ? '' : 's'}`, name]} />
-                        <Legend verticalAlign="bottom" height={36} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  );
-                })()}
-              </div>
             </div>
           )}
 
@@ -2127,7 +2092,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ background: 'white', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                       <thead>
-                        <tr style={{ background: '#1e3a5f', color: 'white' }}>
+                        <tr style={{ background: '#0d1b4b', color: 'white' }}>
                           {['Name', 'Email Address', 'Workspace Role', 'Status', 'Actions'].map(h => (
                             <th key={h} style={{ padding: '16px 20px', fontSize: '13px', fontWeight: '600', letterSpacing: '0.5px' }}>{h}</th>
                           ))}
@@ -2143,7 +2108,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                             const rColor = getRoleColor(u.role);
                             return (
                               <tr key={u._id || i} style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#f8fafc', transition: 'background 0.2s' }} className="table-row">
-                                <td style={{ padding: '16px 20px', fontSize: '14px', fontWeight: '600', color: '#1e3a5f', cursor: 'pointer' }} onClick={() => { setSelectedUser(u); setIsEditing(false); setUserViewMode('details'); }}>
+                                <td style={{ padding: '16px 20px', fontSize: '14px', fontWeight: '600', color: '#0d1b4b', cursor: 'pointer' }} onClick={() => { setSelectedUser(u); setIsEditing(false); setUserViewMode('details'); }}>
                                   {u.name}
                                 </td>
                                 <td style={{ padding: '16px 20px', fontSize: '13px', color: '#475569' }}>{u.email}</td>
@@ -2182,7 +2147,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                       </div>
 
                       <div>
-                        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#1e3a5f' }}>
+                        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#0d1b4b' }}>
                           {selectedUser ? selectedUser.name : 'New Account profile'}
                         </h2>
                         
@@ -2416,7 +2381,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         
                         {(!selectedUser || isEditing) && (
                           <button type="submit" 
-                            style={{ background: '#1e3a5f', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <UserPlus size={16} /> {selectedUser ? 'Save Changes' : 'Create User'}
                           </button>
                         )}
@@ -2483,7 +2448,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                 </div>
                 <button 
                   onClick={handleCreateRoleClick}
-                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '12px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(37,99,235,0.2)' }}
+                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '12px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(37, 99, 235,0.2)' }}
                 >
                   <Plus size={16} /> Create New Role
                 </button>
@@ -2538,7 +2503,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                                   setViewingRole(role);
                                   setShowRoleViewModal(true);
                                 }}
-                                style={{ background: '#f1f5f9', color: '#1e3a5f', border: 'none', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+                                style={{ background: '#f1f5f9', color: '#0d1b4b', border: 'none', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
                               >
                                 View
                               </button>
@@ -2814,7 +2779,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                             return (
                               <div key={actIdx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderRadius: '12px', background: '#f8fafc', border: '1px solid #e2e8f0' }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxWidth: '70%' }}>
-                                  <span style={{ fontSize: '14px', fontWeight: '700', color: '#1e3a5f' }}>
+                                  <span style={{ fontSize: '14px', fontWeight: '700', color: '#0d1b4b' }}>
                                     {act.name}
                                     {act.notEnforced && (
                                       <span title="Configurable, but not yet enforced by any backend route." style={{ marginLeft: '8px', fontSize: '10px', fontWeight: '700', color: '#94a3b8', background: '#f1f5f9', padding: '2px 6px', borderRadius: '6px', textTransform: 'uppercase' }}>Not Enforced</span>
@@ -2860,7 +2825,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
               
               {/* Header Controls */}
               <div style={{ padding: '24px', borderBottom: '1px solid #f1f5f9', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-                <h3 style={{ margin: 0, color: '#1e3a5f', fontSize: '16px', fontWeight: '700' }}>System Audit Logs</h3>
+                <h3 style={{ margin: 0, color: '#0d1b4b', fontSize: '16px', fontWeight: '700' }}>System Audit Logs</h3>
                 
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                   
@@ -2895,7 +2860,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
               {/* Table */}
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                 <thead>
-                  <tr style={{ background: '#1e3a5f', color: 'white' }}>
+                  <tr style={{ background: '#0d1b4b', color: 'white' }}>
                     {['User', 'Action Executed', 'System Module', 'Real Timestamp', 'Status'].map(h => (
                       <th key={h} style={{ padding: '16px 24px', fontSize: '13px', fontWeight: '600' }}>{h}</th>
                     ))}
@@ -3191,7 +3156,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         readOnly
                         title="Auto-generated by the system and cannot be edited"
                         style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f1f5f9', color: '#475569', cursor: 'not-allowed' }}
-                        placeholder="e.g. MAT-0001"
+                        placeholder="e.g. MAT0001"
                         required
                       />
                     </div>
@@ -3242,6 +3207,39 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
                         placeholder="e.g. 1850"
                         required
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Minimum Stock</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={materialForm.minimumStock}
+                        onChange={(e) => setMaterialForm({ ...materialForm, minimumStock: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. 10"
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Maximum Stock</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={materialForm.maximumStock}
+                        onChange={(e) => setMaterialForm({ ...materialForm, maximumStock: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. 100"
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Reorder Level</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={materialForm.reorderLevel}
+                        onChange={(e) => setMaterialForm({ ...materialForm, reorderLevel: e.target.value })}
+                        style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                        placeholder="e.g. 50"
                       />
                     </div>
                     <div>

@@ -2,9 +2,24 @@ import MaterialIssuanceNote from '../models/MaterialIssuanceNote.js';
 import Material from '../models/Material.js';
 import TransferLog from '../models/TransferLog.js';
 import BOM from '../models/BOM.js';
+import User from '../models/userModel.js';
 import { encryptDB, decryptDB } from '../utils/cryptoUtils.js';
 import { recordMovement } from '../utils/stockService.js';
 import { createNotificationHelper } from './notificationController.js';
+
+// Notifies every Main Store Officer that a new Site Store material request is
+// awaiting their review, so it doesn't rely on them noticing it themselves.
+const notifyMainStoreOfNewRequest = async (min) => {
+  try {
+    const mainStoreOfficers = await User.find({ role: 'MainStoreOfficer' });
+    const msg = `New material request ${min.minNumber} from ${min.projectName} awaiting review (${min.materials.length} item${min.materials.length === 1 ? '' : 's'})`;
+    for (const officer of mainStoreOfficers) {
+      await createNotificationHelper(officer._id, msg, 'MIN_REQUEST_SUBMITTED', '/main-store-dashboard');
+    }
+  } catch (nErr) {
+    console.error('Error creating new material request notification:', nErr);
+  }
+};
 
 // @desc    Get all Material Issuance Notes
 // @route   GET /api/min
@@ -93,6 +108,8 @@ export const createMIN = async (req, res) => {
       console.error('Error creating MIN BOM-exceeded notification:', nErr);
     }
 
+    await notifyMainStoreOfNewRequest(min);
+
     res.status(201).json({ success: true, data: min });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -154,6 +171,7 @@ export const createMaterialRequest = async (req, res) => {
     });
 
     await min.save();
+    await notifyMainStoreOfNewRequest(min);
     res.status(201).json({ success: true, data: min });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

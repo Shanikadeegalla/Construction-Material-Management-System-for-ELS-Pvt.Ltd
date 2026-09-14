@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock } from 'lucide-react';
 import AdminDashboard from './pages/AdminDashboard';
 import PMDashboard from './pages/PMDashboard';
 import PurchaseOrderPage from './pages/PurchaseOrderPage';
@@ -112,32 +112,38 @@ function App() {
   };
 
   const renderLogin = () => (
-    <div style={styles.card}>
+    <div className="els-login-card" style={styles.loginCard}>
+      <style>{loginStyles}</style>
+
       {/* Brand Logo & Header */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '24px' }}>
-        <img 
-          src="/els-logo.png" 
-          alt="ELS Logo" 
-          style={{ width: '80px', height: '80px', objectFit: 'contain', marginBottom: '16px' }} 
+        <img
+          src="/els-logo.png"
+          alt="ELS Logo"
+          style={{ width: '76px', height: '76px', objectFit: 'cover', borderRadius: '50%', marginBottom: '14px' }}
         />
-        <h2 style={{ fontSize: '22px', fontWeight: '800', color: '#0d1b4b', margin: '0 0 6px', textAlign: 'center' }}>ELS Construction (Pvt) Ltd</h2>
+        <h2 style={{ fontSize: '21px', fontWeight: '800', color: '#0d1b4b', margin: '0 0 4px', textAlign: 'center' }}>ELS Construction (Pvt) Ltd</h2>
       </div>
 
-      <h3 style={{ ...styles.cardTitle, fontSize: '18px', marginTop: '16px', marginBottom: '8px' }}>Account Sign In</h3>
+      <h3 style={{ ...styles.cardTitle, fontSize: '18px', marginTop: '12px', marginBottom: '6px' }}>Account Sign In</h3>
       <p style={styles.cardSub}>Welcome! Please enter your details.</p>
       {error && <div style={styles.errorAlert}>{error}</div>}
       {success && <div style={styles.successAlert}>{success}</div>}
       <form onSubmit={handleLogin} style={styles.form}>
         <div style={styles.formGroup}>
           <label style={styles.label}>Email Address</label>
-          <input type="email" placeholder="enter your email" value={loginEmail}
-            onChange={(e) => setLoginEmail(e.target.value)} style={styles.input} required />
+          <div className="els-input-wrap">
+            <Mail size={16} className="els-input-icon" />
+            <input type="email" placeholder="enter your email" value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)} className="els-input" style={styles.loginInput} required />
+          </div>
         </div>
         <div style={styles.formGroup}>
           <label style={styles.label}>Password</label>
-          <div style={{ position: 'relative' }}>
+          <div className="els-input-wrap">
+            <Lock size={16} className="els-input-icon" />
             <input type={showLoginPassword ? 'text' : 'password'} placeholder="••••••••" value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)} style={{ ...styles.input, width: '100%', boxSizing: 'border-box', paddingRight: '44px' }} required />
+              onChange={(e) => setLoginPassword(e.target.value)} className="els-input" style={{ ...styles.loginInput, paddingRight: '44px' }} required />
             {loginPassword && (
               <span onClick={() => setShowLoginPassword(!showLoginPassword)}
                 style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: '#64748b', display: 'flex' }}>
@@ -146,7 +152,8 @@ function App() {
             )}
           </div>
         </div>
-        <button type="submit" disabled={loading} style={styles.button}>
+        <button type="submit" disabled={loading} className="els-login-btn">
+          {loading && <span className="els-login-spinner" />}
           {loading ? 'Authenticating...' : 'Sign In'}
         </button>
       </form>
@@ -254,17 +261,6 @@ function App() {
   return (
     <div style={getPageContainerStyle()}>
       <style>{globalStyles}</style>
-      {!user && (
-        <header style={styles.header}>
-          <div style={styles.logoContainer}>
-            <div style={styles.logoIcon}>E</div>
-            <h1 style={styles.logoText}>ELS Construction CMMS</h1>
-          </div>
-          <div style={styles.navStatus}>
-            <span style={styles.guestBadge}>🔒 Protected Session</span>
-          </div>
-        </header>
-      )}
       <main style={!user ? styles.main : {}}>
         {view === 'login' && renderLogin()}
         {view === 'register' && renderRegister()}
@@ -281,6 +277,79 @@ function App() {
 
 const globalStyles = `* { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; } body { background-color: #030712; color: #f9fafb; }`;
 
+const loginStyles = `
+  .els-login-card {
+    position: relative;
+    animation: els-card-in 0.5s ease;
+  }
+  @keyframes els-card-in {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .els-input-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .els-input-icon {
+    position: absolute;
+    left: 14px;
+    color: #94a3b8;
+    pointer-events: none;
+  }
+  .els-input {
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  }
+  .els-input:focus {
+    border-color: #fb923c !important;
+    background-color: #ffffff !important;
+    box-shadow: 0 0 0 4px rgba(251, 146, 60, 0.15);
+  }
+  .els-login-btn {
+    width: 100%;
+    border: none;
+    border-radius: 12px;
+    padding: 14px;
+    margin-top: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #ffffff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: linear-gradient(120deg, #ff7a18 0%, #ff5f6d 45%, #a239ea 100%);
+    background-size: 200% 200%;
+    background-position: 0% 50%;
+    box-shadow: 0 10px 25px -8px rgba(162, 57, 234, 0.55);
+    transition: background-position 0.4s ease, box-shadow 0.2s ease, transform 0.1s ease;
+  }
+  .els-login-btn:hover:not(:disabled) {
+    background-position: 100% 50%;
+    box-shadow: 0 14px 30px -8px rgba(255, 95, 109, 0.6);
+  }
+  .els-login-btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .els-login-btn:disabled {
+    opacity: 0.75;
+    cursor: not-allowed;
+  }
+  .els-login-spinner {
+    width: 15px;
+    height: 15px;
+    border: 2px solid rgba(255,255,255,0.45);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: els-spin 0.7s linear infinite;
+  }
+  @keyframes els-spin {
+    to { transform: rotate(360deg); }
+  }
+`;
+
 const styles = {
   pageContainer: { minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#030712', backgroundImage: 'radial-gradient(circle at 50% 0%, #1e1b4b 0%, #030712 60%)', color: '#f9fafb' },
   container: { minHeight: '100vh', backgroundColor: '#0f172a' },
@@ -290,14 +359,20 @@ const styles = {
   navBtn: { color: 'white', border: '1px solid #2563eb', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '14px' },
   navUser: { color: '#9ca3af', fontSize: '14px' },
   content: { padding: '24px' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 40px', borderBottom: '1px solid #1f2937', backgroundColor: 'rgba(3,7,18,0.7)', backdropFilter: 'blur(12px)' },
-  logoContainer: { display: 'flex', alignItems: 'center', gap: '12px' },
-  logoIcon: { width: '38px', height: '38px', borderRadius: '10px', background: 'linear-gradient(135deg, #ff9800 0%, #f57c00 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '18px', color: 'white' },
-  logoText: { fontSize: '20px', fontWeight: '700', color: 'white' },
-  navStatus: { display: 'flex', alignItems: 'center' },
-  guestBadge: { padding: '6px 12px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', backgroundColor: 'rgba(255,152,0,0.1)', color: '#ff9800', border: '1px solid rgba(255,152,0,0.2)' },
   main: { flex: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' },
   card: { backgroundColor: '#ffffff', borderRadius: '12px', padding: '40px', width: '100%', maxWidth: '450px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)' },
+  loginCard: {
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    backdropFilter: 'blur(18px)',
+    WebkitBackdropFilter: 'blur(18px)',
+    borderRadius: '20px',
+    padding: '44px 40px',
+    width: '100%',
+    maxWidth: '440px',
+    border: '1px solid rgba(255,255,255,0.6)',
+    boxShadow: '0 25px 60px -15px rgba(13, 27, 75, 0.35), 0 0 0 1px rgba(255,255,255,0.4) inset',
+  },
+  loginInput: { backgroundColor: '#f8fafc', border: '1.5px solid #e2e8f0', borderRadius: '12px', padding: '12px 16px 12px 42px', fontSize: '14px', color: '#0f172a', outline: 'none', width: '100%', boxSizing: 'border-box' },
   cardTitle: { fontSize: '24px', fontWeight: '700', marginBottom: '8px', textAlign: 'center', color: '#1e293b' },
   cardSub: { fontSize: '14px', color: '#64748b', marginBottom: '30px', textAlign: 'center' },
   form: { display: 'flex', flexDirection: 'column', gap: '20px' },

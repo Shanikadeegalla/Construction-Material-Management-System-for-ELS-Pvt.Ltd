@@ -1,7 +1,9 @@
 import Material from '../models/Material.js';
 import MaterialUsage from '../models/MaterialUsage.js';
 import Project from '../models/Project.js';
-import { decryptDB, encryptDB } from '../utils/cryptoUtils.js';
+import BOM from '../models/BOM.js';
+import { decryptDB } from '../utils/cryptoUtils.js';
+import { recordMovement, getDecryptedQuantity } from '../utils/stockService.js';
 
 // Helper to decrypt a string
 const decryptIfNeeded = (val) => {
@@ -63,82 +65,124 @@ export const getProjectsOverview = async (req, res) => {
   }
 };
 
-// @desc    Log material usage for a project
+// @desc    Site Store's combined "Material Issue & Usage" transaction: takes
+//          materials already sitting in Site Store inventory and issues them
+//          to a project's construction activity in one step. Validates the
+//          project/material/quantity, decreases Site Store stock through the
+//          shared recordMovement helper (the only sanctioned way to mutate
+//          Material.quantity, which also writes the StockMovement audit
+//          trail), and records the same quantity as actual project material
+//          usage - a single submission, a single stock deduction. Replaces
+//          the old logMaterialUsage, which deducted stock without a project
+//          selection and without going through recordMovement.
 // @route   POST /api/site/material-usage
-// @access  Private (SiteStoreOfficer)
-export const logMaterialUsage = async (req, res) => {
+// @access  Private (SiteStoreOfficer - "Log Material Usage" permission)
+export const issueMaterialToProject = async (req, res) => {
   try {
-    const { materialId, quantity_used, date, purpose } = req.body;
-    const userProjectId = req.user.project_id || req.user.projectId;
+    const { projectId, materialId, quantity, activity, notes, date } = req.body;
+    const qty = Number(quantity);
 
-    if (!materialId || !quantity_used || Number(quantity_used) <= 0) {
-      return res.status(400).json({ success: false, message: 'Valid material and quantity are required.' });
+    if (!projectId) {
+      return res.status(400).json({ success: false, message: 'Please select a project.' });
+    }
+    if (!materialId) {
+      return res.status(400).json({ success: false, message: 'Please select a material.' });
+    }
+    if (!quantity || Number.isNaN(qty) || qty <= 0) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid quantity greater than 0.' });
+    }
+    if (!activity || !String(activity).trim()) {
+      return res.status(400).json({ success: false, message: 'Activity / Purpose is required.' });
     }
 
-    const siteMaterial = await Material.findById(materialId);
+    const project = await Project.findById(projectId);
+    if (!project) {
+      return res.status(404).json({ success: false, message: 'Project not found.' });
+    }
+
+    const siteMaterial = await Material.findOne({
+      _id: materialId,
+      location: 'SiteStore',
+      $or: [{ project_id: projectId }, { projectId }]
+    });
     if (!siteMaterial) {
-      return res.status(404).json({ success: false, message: 'Material not found.' });
+      return res.status(404).json({ success: false, message: 'Material not found in Site Store inventory for this project.' });
     }
 
-    let localQty = siteMaterial.quantity;
-    let decryptedName = siteMaterial.name;
-    if (siteMaterial.location === 'SiteStore') {
-      decryptedName = decryptDB(siteMaterial.name);
-      localQty = Number(decryptDB(siteMaterial.quantity)) || 0;
-    }
+    const decryptedName = decryptDB(siteMaterial.name);
+    const availableQty = getDecryptedQuantity(siteMaterial);
 
-    if (localQty < Number(quantity_used)) {
-      // Shortage triggers read-only central stock lookup
-      const mainMaterial = await Material.findOne({
-        name: decryptedName,
-        location: 'MainStore'
-      });
-
-      const mainQty = mainMaterial ? mainMaterial.quantity : 0;
-      const errorMsg = mainQty > 0
-        ? `Insufficient stock at the site. However, the Main Store currently has ${mainQty} units.`
-        : 'Insufficient stock at both the Site Store and Main Store.';
-
+    if (qty > availableQty) {
       return res.status(400).json({
         success: false,
-        insufficient: true,
-        message: errorMsg,
-        mainStoreStock: {
-          name: decryptedName,
-          quantity: mainQty,
-          updatedAt: mainMaterial ? mainMaterial.updatedAt : new Date()
-        }
+        message: `Insufficient site stock. Available quantity: ${availableQty} ${siteMaterial.unit}.`
       });
     }
 
-    // Deduct and save
-    const remainingQty = localQty - Number(quantity_used);
-    if (siteMaterial.location === 'SiteStore') {
-      siteMaterial.quantity = encryptDB(String(remainingQty));
-    } else {
-      siteMaterial.quantity = remainingQty;
+    const issuedBy = req.user ? req.user.name : 'Site Store Officer';
+    const projectName = project.projectName || project.name;
+
+    // Reuses the app-wide MIN-YYYY-NNN format, but on its own sequence within
+    // MaterialUsage - this transaction is a Site Store -> project issuance,
+    // a different business event from the Main Store request/MTN Material
+    // Issuance Notes (mounted at /api/min), so it doesn't share their counter.
+    const priorCount = await MaterialUsage.countDocuments({ minNumber: { $exists: true, $ne: '' } });
+    const minNumber = `MIN-${new Date().getFullYear()}-${String(priorCount + 1).padStart(3, '0')}`;
+
+    // Best-effort planned-quantity lookup against the project's approved BOM,
+    // purely to keep the existing variance report (actual vs planned) useful.
+    let plannedQty = 0;
+    const approvedBOM = await BOM.findOne({ projectId, status: 'Approved' });
+    if (approvedBOM) {
+      const match = approvedBOM.materials.find(m => m.name.toLowerCase() === decryptedName.toLowerCase());
+      if (match) plannedQty = Number(match.plannedQty) || 0;
     }
-    await siteMaterial.save();
 
-    // Save consumption log
-    const projectDoc = await Project.findById(userProjectId);
-    const projName = projectDoc ? (projectDoc.projectName || projectDoc.name) : 'N/A';
-
-    const usage = new MaterialUsage({
-      projectId: userProjectId,
-      project_id: userProjectId,
-      projectName: projName,
-      materialName: decryptedName,
-      actualQty: Number(quantity_used),
-      recordedBy: req.user.name,
-      usageDate: date || new Date(),
-      purpose: purpose || 'N/A'
+    // The one, audited inventory deduction for this transaction.
+    await recordMovement({
+      materialDoc: siteMaterial,
+      type: 'Usage',
+      quantityChange: -qty,
+      reference: minNumber,
+      performedBy: issuedBy,
+      reason: activity,
+      notes: notes || ''
     });
-    await usage.save();
+
+    let usage;
+    try {
+      usage = await MaterialUsage.create({
+        minNumber,
+        projectId,
+        materialId: siteMaterial._id,
+        projectName,
+        materialName: decryptedName,
+        unit: siteMaterial.unit,
+        plannedQty,
+        actualQty: qty,
+        variance: qty - plannedQty,
+        activity: String(activity).trim(),
+        notes: notes || '',
+        recordedBy: issuedBy,
+        usageDate: date || new Date()
+      });
+    } catch (usageErr) {
+      // Never leave inventory deducted with no usage record to show for it -
+      // restore the stock we just took before surfacing the error.
+      await recordMovement({
+        materialDoc: siteMaterial,
+        type: 'Adjustment',
+        quantityChange: qty,
+        reference: minNumber,
+        performedBy: issuedBy,
+        reason: 'Rollback: Material Issue & Usage record failed to save'
+      });
+      throw usageErr;
+    }
 
     res.status(201).json({
       success: true,
-      message: 'Usage successfully logged.',
+      message: `Material issued and usage recorded successfully (${minNumber}).`,
       data: usage
     });
   } catch (error) {
@@ -147,7 +191,8 @@ export const logMaterialUsage = async (req, res) => {
 };
 
 // Note: issuing materials from Main Store to Site Store and confirming their
-// receipt is now handled end-to-end by the Material Issuance Note flow
-// (see controllers/materialIssuanceController.js, mounted at /api/min),
-// which ties every issuance back to an approved BOM instead of being raised
-// ad hoc.
+// receipt is handled separately by the Material Issuance Note flow (see
+// controllers/materialIssuanceController.js, mounted at /api/min). That is a
+// distinct business event (Site Store requesting/receiving replenishment
+// stock from Main Store) from issueMaterialToProject above (Site Store
+// issuing its own on-hand stock to a project's construction activity).

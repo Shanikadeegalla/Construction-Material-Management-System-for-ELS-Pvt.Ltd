@@ -277,6 +277,17 @@ export const approveBOM = async (req, res) => {
     const msg = `BOM ${bom.version} for ${projectName} Approved by Director${note ? `: ${note}` : ''}`;
     await createNotificationHelper(bom.createdBy, msg, 'BOM_approved', '/bom');
 
+    // Prompt Main Store to check the newly-approved plan against current stock.
+    try {
+      const mainStoreOfficers = await User.find({ role: 'MainStoreOfficer' });
+      const stockCheckMsg = `BOM ${bom.version} for ${projectName} was approved - check Main Store stock against this plan.`;
+      for (const officer of mainStoreOfficers) {
+        await createNotificationHelper(officer._id, stockCheckMsg, 'BOM_STOCK_CHECK_REQUIRED', '/main-store-dashboard');
+      }
+    } catch (nErr) {
+      console.error('Error creating BOM stock-check notification:', nErr);
+    }
+
     res.status(200).json({ success: true, message: 'BOM approved successfully!', data: bom });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
