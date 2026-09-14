@@ -23,22 +23,28 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [modal, setModal] = useState(null);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
 
-  // Material Issuance Notes and Usage charts state
-  const [minList, setMinList] = useState([]);
+  // Usage charts state
   const [usageLogs, setUsageLogs] = useState([]);
   const [selectedMonth, setSelectedMonth] = useState('2026-07');
   const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
 
+  // Site Store material requests (SSR) awaiting review, and the resulting
+  // Material Transfer Notes (MTN) history - pure store-to-store stock
+  // replenishment, not tied to any project/BOM.
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [transferNotes, setTransferNotes] = useState([]);
+
   // Create Material Transfer Note form (Main Store -> Site Store). Used both
-  // to push a brand new transfer, and - when opened from a Pending FreeForm
-  // Site Store request - to fulfil that request in one step (sourceRequestId
-  // is set in that case).
+  // to push a brand new transfer, and - when opened from a Pending Site
+  // Store request - to fulfil that request in one step (sourceRequestId is
+  // set in that case).
   const emptyTransferItemRow = { materialName: '', unit: '', quantity: '' };
   const [showTransferForm, setShowTransferForm] = useState(false);
   const [transferForm, setTransferForm] = useState({
     sourceRequestId: '',
-    projectId: '',
-    projectName: '',
+    requestNo: '',
+    siteStoreId: '',
+    siteStoreName: '',
     transferDate: new Date().toISOString().substring(0, 10),
     reference: '',
     notes: '',
@@ -146,20 +152,32 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
-  const fetchMINs = async () => {
+  // Requests still needing Main Store's attention - Pending (never touched)
+  // and Partially Transferred (an auto/manual transfer already moved some
+  // stock, but a shortfall remains) both stay actionable here.
+  const fetchPendingRequests = async () => {
     try {
       const headers = getHeaders();
-      const res = await fetch('http://localhost:5000/api/min', { headers });
+      const res = await fetch('http://localhost:5000/api/material-requests', { headers });
       const data = await res.json();
-      let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
-      if (finalData.success && Array.isArray(finalData.data)) {
-        setMinList(finalData.data);
+      if (data.success && Array.isArray(data.data)) {
+        setPendingRequests(data.data.filter(r => ['Pending', 'Partially Transferred'].includes(r.status)));
       }
     } catch (err) {
-      console.error('Error fetching Material Issuance Notes:', err);
+      console.error('Error fetching Site Store requests:', err);
+    }
+  };
+
+  const fetchTransferNotes = async () => {
+    try {
+      const headers = getHeaders();
+      const res = await fetch('http://localhost:5000/api/material-transfer-notes', { headers });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setTransferNotes(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching Material Transfer Notes:', err);
     }
   };
 
@@ -280,10 +298,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         setProjects(projData.data);
       }
 
-      // Fetch Material Issuance Notes and Usage Logs
-      await fetchMINs();
+      // Fetch Usage Logs
       await fetchUsageLogs();
       await fetchPurchaseOrders();
+      await fetchPendingRequests();
+      await fetchTransferNotes();
       await fetchPersistedNotifications();
 
       // Fetch Director-Approved BOMs so Main Store can compare planned quantities
@@ -328,9 +347,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
   useEffect(() => {
     fetchData();
+    // Polls fairly frequently so stock a Site Store officer moves/consumes
+    // shows up here without a manual refresh.
     const interval = setInterval(() => {
       fetchData();
-    }, 30000);
+    }, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -494,159 +515,45 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
-  // Material Issuance Note Handlers
-  const handleApproveMIN = async (id) => {
-    setError(''); setSuccess('');
-    try {
-      const payload = { status: 'Approved' };
-      const ciphertext = encryptTransit(JSON.stringify(payload));
-      const res = await fetch(`http://localhost:5000/api/min/${id}/status`, {
-        method: 'PUT',
-        headers: getHeaders(),
-        body: JSON.stringify({ ciphertext })
-      });
-      const data = await res.json();
-      let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
-      if (res.ok && finalData.success) {
-        setSuccess('Material Issuance Note approved successfully!');
-        fetchData();
-      } else {
-        setError(finalData.message || 'Failed to approve Material Issuance Note.');
-      }
-    } catch (err) {
-      setError('Error approving Material Issuance Note.');
-    }
-  };
-
-  const handleRejectMIN = async (id) => {
-    const reason = window.prompt('Please enter the reason for rejection:');
-    if (reason === null) return; // cancel
-    setError(''); setSuccess('');
-    try {
-      const payload = { status: 'Rejected', rejectionReason: reason || 'Rejected by Main Store' };
-      const ciphertext = encryptTransit(JSON.stringify(payload));
-      const res = await fetch(`http://localhost:5000/api/min/${id}/status`, {
-        method: 'PUT',
-        headers: getHeaders(),
-        body: JSON.stringify({ ciphertext })
-      });
-      const data = await res.json();
-      let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
-      if (res.ok && finalData.success) {
-        setSuccess('Material Issuance Note rejected.');
-        fetchData();
-      } else {
-        setError(finalData.message || 'Failed to reject Material Issuance Note.');
-      }
-    } catch (err) {
-      setError('Error rejecting Material Issuance Note.');
-    }
-  };
-
-  const handleIssueMIN = async (id) => {
-    setError(''); setSuccess('');
-    try {
-      const res = await fetch(`http://localhost:5000/api/min/${id}/issue`, {
-        method: 'POST',
-        headers: getHeaders()
-      });
-      const data = await res.json();
-      let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
-      if (res.ok && finalData.success) {
-        setSuccess('✅ Materials issued to Site Store! Awaiting delivery confirmation.');
-        fetchData();
-      } else {
-        setError(finalData.message || 'Failed to issue materials.');
-      }
-    } catch (err) {
-      setError('Error issuing materials.');
-    }
-  };
-
-  const handleMINShortagePR = async (min) => {
-    setError(''); setSuccess('');
-    try {
-      // Find shortages
-      const prItems = [];
-      for (const item of min.materials) {
-        const mainMat = materials.find(m => m.name === item.materialName && m.location === 'MainStore');
-        const available = mainMat ? mainMat.quantity : 0;
-        if (available < item.quantity) {
-          prItems.push({
-            materialName: item.materialName,
-            quantity: item.quantity - available,
-            unit: item.unit
-          });
-        }
-      }
-
-      if (prItems.length === 0) {
-        setError('No shortage detected for this requisition. Main Store has sufficient stock.');
-        return;
-      }
-
-      const payload = {
-        projectName: min.projectName,
-        urgency: 'High',
-        notes: `Auto-generated shortage PR from Main Store for Material Issuance Note ${min.minNumber}`,
-        materials: prItems,
-        requestedBy: user ? user.name : 'Main Store Officer'
-      };
-
-      const ciphertext = encryptTransit(JSON.stringify(payload));
-      const res = await fetch('http://localhost:5000/api/purchase-requests', {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({ ciphertext })
-      });
-      const data = await res.json();
-      let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
-
-      if (res.ok && finalData.success) {
-        setSuccess(`✅ PR successfully generated for shortages: ${prItems.map(p => `${p.materialName} (${p.quantity})`).join(', ')}`);
-        fetchData();
-      } else {
-        setError(finalData.message || 'Failed to generate Purchase Request.');
-      }
-    } catch (err) {
-      setError('Error generating PR.');
-    }
-  };
-
   // Opens the Create Material Transfer Note form. With no argument it opens
-  // blank for a brand new Main Store-initiated transfer. Passed a Pending
-  // FreeForm Material Transfer Note (a Site Store request), it pre-fills the
-  // project, materials and reference from that request so Main Store can
-  // review/adjust the transfer quantities before sending.
+  // blank for a brand new ad hoc Main Store-initiated transfer. Passed a
+  // Pending Site Store request, it pre-fills the destination Site Store,
+  // materials and reference from that request so Main Store only reviews
+  // and confirms the transfer quantities rather than re-entering them.
   const openTransferForm = (sourceRequest) => {
     setError(''); setSuccess('');
     if (sourceRequest) {
       setTransferForm({
         sourceRequestId: sourceRequest._id,
-        projectId: sourceRequest.projectId,
-        projectName: sourceRequest.projectName,
+        requestNo: sourceRequest.requestNo,
+        siteStoreId: sourceRequest.siteStoreId,
+        siteStoreName: sourceRequest.siteStoreName,
         transferDate: new Date().toISOString().substring(0, 10),
-        reference: sourceRequest.minNumber,
+        reference: sourceRequest.requestNo,
         notes: sourceRequest.notes || '',
-        items: sourceRequest.materials.map(m => ({ materialName: m.materialName, unit: m.unit, quantity: m.quantity }))
+        // Pre-fill only the outstanding quantity per line - for a Partially
+        // Transferred request, part of it may already have been moved by an
+        // earlier transfer, and a fully-covered line is left out. requestedQty/
+        // alreadyFulfilled/availableAtSite are carried along purely for display
+        // in the review table below (Main Store can only send once every
+        // outstanding line here is fully in stock - see createTransferNote).
+        items: sourceRequest.materials
+          .map(m => ({
+            materialName: m.materialName,
+            unit: m.unit,
+            quantity: m.quantity - (m.fulfilledQty || 0),
+            requestedQty: m.quantity,
+            alreadyFulfilled: m.fulfilledQty || 0,
+            availableAtSite: m.availableAtSite || 0
+          }))
+          .filter(m => m.quantity > 0)
       });
     } else {
       setTransferForm({
         sourceRequestId: '',
-        projectId: '',
-        projectName: '',
+        requestNo: '',
+        siteStoreId: '',
+        siteStoreName: '',
         transferDate: new Date().toISOString().substring(0, 10),
         reference: '',
         notes: '',
@@ -656,9 +563,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     setShowTransferForm(true);
   };
 
-  const handleTransferProjectChange = (projectId) => {
-    const proj = projects.find(p => p._id === projectId);
-    setTransferForm({ ...transferForm, projectId, projectName: proj ? proj.projectName : '' });
+  const handleTransferSiteStoreChange = (siteStoreId) => {
+    const proj = projects.find(p => p._id === siteStoreId);
+    setTransferForm({ ...transferForm, siteStoreId, siteStoreName: proj ? `${proj.projectName} Site Store` : '' });
   };
 
   const handleTransferItemChange = (idx, field, value) => {
@@ -685,8 +592,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     e.preventDefault();
     setError(''); setSuccess('');
 
-    if (!transferForm.projectId || !transferForm.transferDate) {
-      setError('Please select a project and transfer date.');
+    if (!transferForm.siteStoreId || !transferForm.transferDate) {
+      setError('Please select a Site Store and transfer date.');
       return;
     }
     const invalid = transferForm.items.some(item => !item.materialName || !item.quantity || Number(item.quantity) <= 0);
@@ -694,12 +601,19 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       setError('Please select a material and enter a valid transfer quantity for every row.');
       return;
     }
+    const overStock = transferForm.items.some(item => {
+      const mainMat = mainMaterials.find(m => m.name === item.materialName);
+      return mainMat && Number(item.quantity) > mainMat.quantity;
+    });
+    if (overStock) {
+      setError('One or more transfer quantities exceed available Main Store stock.');
+      return;
+    }
 
     setTransferSubmitting(true);
     try {
       const payload = {
-        projectId: transferForm.projectId,
-        projectName: transferForm.projectName,
+        siteStoreId: transferForm.siteStoreId,
         transferDate: transferForm.transferDate,
         reference: transferForm.reference,
         notes: transferForm.notes,
@@ -707,7 +621,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         materials: transferForm.items.map(item => ({ materialName: item.materialName, quantity: item.quantity, unit: item.unit }))
       };
       const ciphertext = encryptTransit(JSON.stringify(payload));
-      const res = await fetch('http://localhost:5000/api/min/transfer', {
+      const res = await fetch('http://localhost:5000/api/material-transfer-notes', {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ ciphertext })
@@ -718,7 +632,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         finalData = JSON.parse(decryptTransit(data.ciphertext));
       }
       if (res.ok && finalData.success) {
-        setSuccess('✅ Material Transfer Note created and materials issued to Site Store!');
+        setSuccess(`✅ ${finalData.data.mtnNumber} created and materials transferred to Site Store!`);
         setShowTransferForm(false);
         fetchData();
       } else {
@@ -731,36 +645,70 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
-  // Opens the shortage comparison panel for one Director-approved BOM: every
-  // planned material is checked against current Main Store stock, and any
-  // shortfall is pre-selected as an editable PR quantity. The officer can then
-  // adjust quantities or include/exclude rows before submitting.
-  const handleCompareBom = (bom) => {
+  const handleRejectRequest = async (id) => {
+    const reason = window.prompt('Please enter the reason for rejection:');
+    if (reason === null) return;
     setError(''); setSuccess('');
-    const items = (bom.materials || []).map(item => {
-      const mainMat = materials.find(m => m.name === item.name && m.location === 'MainStore');
-      const available = mainMat ? mainMat.quantity : 0;
-      const shortage = Math.max((Number(item.plannedQty) || 0) - available, 0);
-      return {
+    try {
+      const payload = { reason: reason || 'Rejected by Main Store' };
+      const ciphertext = encryptTransit(JSON.stringify(payload));
+      const res = await fetch(`http://localhost:5000/api/material-requests/${id}/reject`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify({ ciphertext })
+      });
+      const data = await res.json();
+      let finalData = data;
+      if (data && data.ciphertext) {
+        finalData = JSON.parse(decryptTransit(data.ciphertext));
+      }
+      if (res.ok && finalData.success) {
+        setSuccess('Request rejected.');
+        fetchPendingRequests();
+      } else {
+        setError(finalData.message || 'Failed to reject request.');
+      }
+    } catch (err) {
+      setError('Error rejecting request.');
+    }
+  };
+
+  // Opens the shortage comparison panel for one Director-approved BOM. The
+  // shortage/available figures come from the authoritative server-side
+  // comparison (GET /api/bom/:bomId/stock-check) rather than being
+  // recomputed here, so there is a single source of truth for BOM shortage
+  // logic shared with any other consumer of that endpoint. Any shortfall is
+  // pre-selected as an editable PR quantity; the officer can then adjust
+  // quantities before submitting.
+  const handleCompareBom = async (bom) => {
+    setError(''); setSuccess('');
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`http://localhost:5000/api/bom/${bom._id}/stock-check`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.message || 'Failed to compare BOM against Main Store stock.');
+        return;
+      }
+      const items = data.data.map(item => ({
         name: item.name,
         category: item.category,
         unit: item.unit,
         plannedQty: item.plannedQty,
-        available,
-        quantity: shortage,
-        include: shortage > 0
-      };
-    });
-    setSelectedBom(bom);
-    setShortageItems(items);
+        available: item.available,
+        quantity: item.shortage
+      }));
+      setSelectedBom(bom);
+      setShortageItems(items);
+    } catch (err) {
+      setError('Error connecting to server while comparing BOM stock.');
+    }
   };
 
   const handleShortageQtyChange = (idx, val) => {
     setShortageItems(prev => prev.map((it, i) => i === idx ? { ...it, quantity: val } : it));
-  };
-
-  const handleShortageIncludeToggle = (idx) => {
-    setShortageItems(prev => prev.map((it, i) => i === idx ? { ...it, include: !it.include } : it));
   };
 
   const handleCancelBomCompare = () => {
@@ -777,7 +725,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     if (!selectedBom) return;
 
     const prItems = shortageItems
-      .filter(it => it.include && Number(it.quantity) > 0)
+      .filter(it => Number(it.quantity) > 0)
       .map(it => ({
         materialName: it.name,
         quantity: Number(it.quantity),
@@ -1041,8 +989,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const mainMaterials = materials.filter(m => m.location === 'MainStore');
   const totalSKUs = mainMaterials.length;
   const stockValue = mainMaterials.reduce((sum, m) => sum + (m.quantity * m.unitPrice), 0);
-  const lowStockItems = mainMaterials.filter(m => m.quantity <= m.minimumStock).length;
-  const lastGRNDate = grns.length > 0 ? formatDate(grns[0].receivedDate || grns[0].createdAt) : 'N/A';
 
   const filteredMaterials = mainMaterials.filter(m => {
     const matchesSearch = m.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -1050,21 +996,22 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     return matchesSearch && matchesCategory;
   });
 
-  // Additional dashboard/report stats
-  const outOfStockItems = mainMaterials.filter(m => m.quantity === 0).length;
-  const reorderRequiredItems = mainMaterials.filter(m => m.quantity > m.minimumStock && m.quantity <= (m.reorderLevel || m.minimumStock)).length;
-  const pendingGRNs = grns.filter(g => g.status === 'Pending' || g.status === 'Partial').length;
-  const pendingPRs = prs.filter(p => p.status === 'Pending').length;
-  const pendingMINs = minList.filter(m => m.status === 'Pending').length;
-  const todayStr = new Date().toISOString().substring(0, 10);
-  const todaysTransfers = transfers.filter(t => String(t.date || '').substring(0, 10) === todayStr).length;
-
+  // Stock status tiers, driven entirely by the thresholds stored on the
+  // Material record (never hard-coded per material in the UI):
+  //   NORMAL     — quantity above the Pre-Order Level (reorderLevel)
+  //   PRE_ORDER  — quantity at/below Pre-Order Level but above Minimum Level
+  //   CRITICAL   — quantity at/below Minimum Level (minimumStock)
   const materialStatus = (m) => {
-    if (m.quantity === 0) return { label: 'Out of Stock', bg: '#ffebee', color: '#c62828' };
-    if (m.quantity <= m.minimumStock) return { label: 'Low', bg: '#ffebee', color: '#c62828' };
-    if (m.quantity <= (m.reorderLevel || m.minimumStock)) return { label: 'Reorder', bg: '#fff3e0', color: '#b7791f' };
-    return { label: 'Healthy', bg: '#e8f5e9', color: '#2e7d32' };
+    const preOrderLevel = m.reorderLevel ?? m.minimumStock;
+    if (m.quantity <= m.minimumStock) return { label: 'Critical', tier: 'CRITICAL', bg: '#ffebee', color: '#c62828' };
+    if (m.quantity <= preOrderLevel) return { label: 'Pre-Order', tier: 'PRE_ORDER', bg: '#fff3e0', color: '#b7791f' };
+    return { label: 'Normal', tier: 'NORMAL', bg: '#e8f5e9', color: '#2e7d32' };
   };
+
+  const normalStockItems = mainMaterials.filter(m => materialStatus(m).tier === 'NORMAL').length;
+  const preOrderItems = mainMaterials.filter(m => materialStatus(m).tier === 'PRE_ORDER').length;
+  const criticalStockItems = mainMaterials.filter(m => materialStatus(m).tier === 'CRITICAL').length;
+  const pendingGRNs = grns.filter(g => g.status === 'Pending' || g.status === 'Partial').length;
 
   // Category breakdown (by stock value) for the dashboard donut chart
   const categoryChartData = Object.entries(
@@ -1075,17 +1022,17 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }, {})
   ).map(([name, value]) => ({ name, value })).filter(c => c.value > 0);
 
-  // Recent activity feed combining GRNs, MIN status changes, and PR submissions
+  // Recent activity feed combining GRNs, Material Transfer Notes, and PR submissions
   const recentActivities = [
     ...grns.map(g => ({
       date: g.createdAt || g.receivedDate,
       icon: '📥',
       text: `${g.grnNumber} created for ${g.supplier}`
     })),
-    ...minList.filter(m => ['Issued', 'Approved', 'Received', 'Rejected'].includes(m.status)).map(m => ({
-      date: m.updatedAt || m.issuedAt || m.createdAt,
-      icon: m.status === 'Rejected' ? '⛔' : '🚚',
-      text: `${m.minNumber} ${m.status.toLowerCase()}${m.status === 'Issued' ? ` to ${m.projectName || 'site'}` : ''}`
+    ...transferNotes.map(m => ({
+      date: m.createdAt,
+      icon: '🚚',
+      text: `${m.mtnNumber} transferred to ${m.siteStoreName}`
     })),
     ...prs.map(pr => ({
       date: pr.createdAt,
@@ -1367,7 +1314,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       {/* Navigation Sidebar */}
       <aside style={styles.sidebar}>
         <div style={styles.sidebarHeader}>
-          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
+          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }} />
           <div>
             <div style={styles.sidebarTitle}>ELS Construction</div>
             <div style={styles.sidebarSubtitle}>Main Store Panel</div>
@@ -1513,33 +1460,21 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                 <div style={styles.statLabel}>Total Materials</div>
                 <div style={styles.statValue}>{totalSKUs}</div>
               </div>
-              <div style={styles.statCard}>
-                <div style={styles.statLabel}>Inventory Value</div>
-                <div style={styles.statValue}>LKR {stockValue.toLocaleString()}</div>
-              </div>
               <div style={{ ...styles.statCard, borderLeft: pendingGRNs > 0 ? '4px solid #f59e0b' : '4px solid #0d1b4b' }}>
                 <div style={styles.statLabel}>Pending GRNs</div>
                 <div style={styles.statValue}>{pendingGRNs}</div>
               </div>
-              <div style={{ ...styles.statCard, borderLeft: (pendingPRs + pendingMINs) > 0 ? '4px solid #f59e0b' : '4px solid #0d1b4b' }}>
-                <div style={styles.statLabel}>Pending Requests</div>
-                <div style={styles.statValue}>{pendingPRs + pendingMINs}</div>
+              <div style={{ ...styles.statCard, borderLeft: '4px solid #2e7d32' }}>
+                <div style={styles.statLabel}>Normal Stock</div>
+                <div style={{ ...styles.statValue, color: '#2e7d32' }}>{normalStockItems}</div>
               </div>
-              <div style={{ ...styles.statCard, borderLeft: lowStockItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
-                <div style={styles.statLabel}>Low Stock Items</div>
-                <div style={{ ...styles.statValue, color: lowStockItems > 0 ? '#ef4444' : '#0d1b4b' }}>{lowStockItems}</div>
+              <div style={{ ...styles.statCard, borderLeft: preOrderItems > 0 ? '4px solid #b7791f' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Pre-Order</div>
+                <div style={{ ...styles.statValue, color: preOrderItems > 0 ? '#b7791f' : '#0d1b4b' }}>{preOrderItems}</div>
               </div>
-              <div style={{ ...styles.statCard, borderLeft: outOfStockItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
-                <div style={styles.statLabel}>Out of Stock</div>
-                <div style={{ ...styles.statValue, color: outOfStockItems > 0 ? '#ef4444' : '#0d1b4b' }}>{outOfStockItems}</div>
-              </div>
-              <div style={styles.statCard}>
-                <div style={styles.statLabel}>Today's Transfers</div>
-                <div style={styles.statValue}>{todaysTransfers}</div>
-              </div>
-              <div style={styles.statCard}>
-                <div style={styles.statLabel}>Last GRN Date</div>
-                <div style={styles.statValue}>{lastGRNDate}</div>
+              <div style={{ ...styles.statCard, borderLeft: criticalStockItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Critical Stock</div>
+                <div style={{ ...styles.statValue, color: criticalStockItems > 0 ? '#ef4444' : '#0d1b4b' }}>{criticalStockItems}</div>
               </div>
             </div>
 
@@ -1712,12 +1647,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
+                      <th style={styles.th}>Code</th>
                       <th style={styles.th}>Name</th>
                       <th style={styles.th}>Category</th>
                       <th style={styles.th}>Unit</th>
                       <th style={styles.th}>Qty</th>
-                      <th style={styles.th}>Min Stock</th>
-                      <th style={styles.th}>Reorder Level</th>
+                      <th style={styles.th}>Min Level</th>
+                      <th style={styles.th}>Pre-Order Level</th>
+                      <th style={styles.th}>Max Level</th>
                       <th style={styles.th}>Unit Price (LKR)</th>
                       <th style={styles.th}>Status</th>
                       <th style={styles.th}>Actions</th>
@@ -1727,13 +1664,15 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     {filteredMaterials.map(m => {
                       const status = materialStatus(m);
                       return (
-                        <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: status.label !== 'Healthy' ? 'rgba(239,68,68,0.05)' : 'white' }}>
-                          <td style={{ ...styles.tdBold, color: status.label !== 'Healthy' ? '#c62828' : '#0d1b4b' }}>{m.name}</td>
+                        <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: status.tier !== 'NORMAL' ? 'rgba(239,68,68,0.05)' : 'white' }}>
+                          <td style={styles.td}>{m.materialCode}</td>
+                          <td style={{ ...styles.tdBold, color: status.tier !== 'NORMAL' ? '#c62828' : '#0d1b4b' }}>{m.name}</td>
                           <td style={styles.td}>{m.category}</td>
                           <td style={styles.td}>{m.unit}</td>
                           <td style={styles.td}>{m.quantity}</td>
                           <td style={styles.td}>{m.minimumStock}</td>
                           <td style={styles.td}>{m.reorderLevel}</td>
+                          <td style={styles.td}>{m.maximumStock}</td>
                           <td style={styles.td}>{m.unitPrice?.toLocaleString()}</td>
                           <td style={styles.td}>
                             <span style={{ background: status.bg, color: status.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{status.label}</span>
@@ -2247,61 +2186,72 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           <div style={styles.container}>
             <h1 style={styles.pageTitle}>Purchase Requests (PR) Workspace</h1>
             
-            {/* Low Stock Items Section */}
+            {/* Stock Alerts Section: Pre-Order and Critical items, so Main
+                Store can review before deciding whether to raise a PR. This
+                list is informational only - it never creates a PR by itself. */}
             <div style={{ ...styles.tableContainer, marginBottom: '30px' }}>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#c62828' }}>
-                <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>⚠️ Low Stock Items Registry</h3>
+                <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>⚠️ Stock Alerts Registry (Pre-Order &amp; Critical)</h3>
               </div>
               <table style={styles.table}>
                 <thead>
                   <tr style={{ background: '#f5f6fa' }}>
                     <th style={{ ...styles.th, color: '#333' }}>Material Name</th>
                     <th style={{ ...styles.th, color: '#333' }}>Current Qty</th>
-                    <th style={{ ...styles.th, color: '#333' }}>Min Stock</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Min Level</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Pre-Order Level</th>
                     <th style={{ ...styles.th, color: '#333' }}>Unit</th>
+                    <th style={{ ...styles.th, color: '#333' }}>Status</th>
                     <th style={{ ...styles.th, color: '#333' }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {materials.filter(m => m.location === 'MainStore' && m.quantity <= m.minimumStock).map((m, i) => (
-                    <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: 'rgba(239,68,68,0.08)' }}>
-                      <td style={{ ...styles.tdBold, color: '#c62828' }}>{m.name}</td>
-                      <td style={styles.td}>{m.quantity}</td>
-                      <td style={styles.td}>{m.minimumStock}</td>
-                      <td style={styles.td}>{m.unit}</td>
-                      <td style={styles.td}>
-                        <button
-                          onClick={() => {
-                            setPrForm({
-                              projectName: '',
-                              materialName: m.name,
-                              unit: m.unit,
-                              quantity: '',
-                              urgency: 'Normal',
-                              notes: ''
-                            });
-                            setShowPrForm(true);
-                          }}
-                          style={{
-                            background: '#2563eb',
-                            color: 'white',
-                            border: 'none',
-                            padding: '6px 12px',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '12px',
-                            fontWeight: 'bold',
-                            boxShadow: '0 2px 4px rgba(37, 99, 235,0.2)'
-                          }}
-                        >
-                          Create PR
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {materials.filter(m => m.location === 'MainStore' && m.quantity <= m.minimumStock).length === 0 && (
+                  {materials.filter(m => m.location === 'MainStore' && materialStatus(m).tier !== 'NORMAL').map((m, i) => {
+                    const status = materialStatus(m);
+                    return (
+                      <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: 'rgba(239,68,68,0.08)' }}>
+                        <td style={{ ...styles.tdBold, color: '#c62828' }}>{m.name}</td>
+                        <td style={styles.td}>{m.quantity}</td>
+                        <td style={styles.td}>{m.minimumStock}</td>
+                        <td style={styles.td}>{m.reorderLevel}</td>
+                        <td style={styles.td}>{m.unit}</td>
+                        <td style={styles.td}>
+                          <span style={{ background: status.bg, color: status.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{status.label}</span>
+                        </td>
+                        <td style={styles.td}>
+                          <button
+                            onClick={() => {
+                              setPrForm({
+                                projectName: '',
+                                materialName: m.name,
+                                unit: m.unit,
+                                quantity: '',
+                                urgency: 'Normal',
+                                notes: ''
+                              });
+                              setShowPrForm(true);
+                            }}
+                            style={{
+                              background: '#2563eb',
+                              color: 'white',
+                              border: 'none',
+                              padding: '6px 12px',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                              boxShadow: '0 2px 4px rgba(37, 99, 235,0.2)'
+                            }}
+                          >
+                            Create PR
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {materials.filter(m => m.location === 'MainStore' && materialStatus(m).tier !== 'NORMAL').length === 0 && (
                     <tr>
-                      <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
+                      <td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
                         All Main Store material stock levels are normal!
                       </td>
                     </tr>
@@ -2471,7 +2421,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           <td style={styles.td}>
                             <span style={{
                               background: pr.urgency === 'Critical' ? '#ffebee' : pr.urgency === 'Urgent' ? '#dbeafe' : '#e3f2fd',
-                              color: pr.urgency === 'Critical' ? '#c62828' : pr.urgency === 'Urgent' ? '#1e3a8a' : '#1565c0',
+                              color: pr.urgency === 'Critical' ? '#c62828' : pr.urgency === 'Urgent' ? '#0d1b4b' : '#1565c0',
                               padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
                             }}>{pr.urgency || 'Normal'}</span>
                           </td>
@@ -2629,31 +2579,21 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   {transferForm.sourceRequestId ? `Transfer Materials for Request ${transferForm.reference}` : 'Create Material Transfer Note'}
                 </h3>
                 <form onSubmit={handleCreateTransferSubmit} style={{ display: 'grid', gap: '16px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
                     <div>
-                      <label style={styles.fieldLabel}>Project *</label>
+                      <label style={styles.fieldLabel}>Site Store *</label>
                       <select
-                        value={transferForm.projectId}
-                        onChange={e => handleTransferProjectChange(e.target.value)}
+                        value={transferForm.siteStoreId}
+                        onChange={e => handleTransferSiteStoreChange(e.target.value)}
                         style={styles.formSelect}
                         disabled={!!transferForm.sourceRequestId}
                         required
                       >
-                        <option value="">-- Select project --</option>
+                        <option value="">-- Select Site Store --</option>
                         {projects.map(p => (
-                          <option key={p._id} value={p._id}>{p.projectName}</option>
+                          <option key={p._id} value={p._id}>{p.projectName} Site Store</option>
                         ))}
                       </select>
-                    </div>
-                    <div>
-                      <label style={styles.fieldLabel}>Site Store *</label>
-                      <input
-                        type="text"
-                        value={transferForm.projectName ? `${transferForm.projectName} Site Store` : ''}
-                        placeholder="Select a project first"
-                        style={{ ...styles.formInput, background: '#f1f5f9', cursor: 'not-allowed' }}
-                        disabled
-                      />
                     </div>
                     <div>
                       <label style={styles.fieldLabel}>Transfer Date *</label>
@@ -2665,24 +2605,34 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                       />
                     </div>
                     <div>
-                      <label style={styles.fieldLabel}>Reference</label>
+                      <label style={styles.fieldLabel}>Request No. / Reference</label>
                       <input
                         type="text"
-                        placeholder="e.g. BOM-PRJ-2026-013"
+                        placeholder="e.g. SSR-2026-001"
                         value={transferForm.reference}
                         onChange={e => setTransferForm({ ...transferForm, reference: e.target.value })}
-                        style={styles.formInput}
+                        style={{ ...styles.formInput, background: transferForm.sourceRequestId ? '#f1f5f9' : undefined }}
+                        readOnly={!!transferForm.sourceRequestId}
                       />
                     </div>
                   </div>
 
                   <div>
+                    {transferForm.sourceRequestId && transferForm.items.length === 0 && (
+                      <div style={{ background: '#e8f5e9', color: '#2e7d32', padding: '10px 14px', borderRadius: '6px', fontSize: '13px', marginBottom: '10px' }}>
+                        Every material on this request has already been transferred.
+                      </div>
+                    )}
                     <table style={styles.table}>
                       <thead>
                         <tr style={styles.tableHeaderRow}>
                           <th style={styles.th}>Material</th>
+                          {transferForm.sourceRequestId && <th style={styles.th}>Requested Qty</th>}
+                          {transferForm.sourceRequestId && <th style={styles.th}>Already Sent</th>}
+                          {transferForm.sourceRequestId && <th style={styles.th}>Site Had</th>}
                           <th style={styles.th}>Available (Main Store)</th>
-                          <th style={styles.th}>Transfer Qty</th>
+                          <th style={styles.th}>{transferForm.sourceRequestId ? 'To Transfer' : 'Transfer Qty'}</th>
+                          {transferForm.sourceRequestId && <th style={styles.th}>Status</th>}
                           <th style={styles.th}></th>
                         </tr>
                       </thead>
@@ -2694,32 +2644,62 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           return (
                             <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
                               <td style={styles.td}>
-                                <select
-                                  value={item.materialName}
-                                  onChange={e => handleTransferItemChange(idx, 'materialName', e.target.value)}
-                                  style={styles.formSelect}
-                                  required
-                                >
-                                  <option value="">-- Select material --</option>
-                                  {mainMaterials.map(m => (
-                                    <option key={m._id} value={m.name}>{m.name} ({m.unit})</option>
-                                  ))}
-                                </select>
+                                {transferForm.sourceRequestId ? (
+                                  <span style={{ fontWeight: '600' }}>{item.materialName}</span>
+                                ) : (
+                                  <select
+                                    value={item.materialName}
+                                    onChange={e => handleTransferItemChange(idx, 'materialName', e.target.value)}
+                                    style={styles.formSelect}
+                                    required
+                                  >
+                                    <option value="">-- Select material --</option>
+                                    {mainMaterials.map(m => (
+                                      <option key={m._id} value={m.name}>{m.name} ({m.unit})</option>
+                                    ))}
+                                  </select>
+                                )}
                               </td>
+                              {transferForm.sourceRequestId && (
+                                <td style={styles.td}>{item.requestedQty} {item.unit}</td>
+                              )}
+                              {transferForm.sourceRequestId && (
+                                <td style={styles.td}>{item.alreadyFulfilled > 0 ? `${item.alreadyFulfilled} ${item.unit}` : '-'}</td>
+                              )}
+                              {transferForm.sourceRequestId && (
+                                <td style={styles.td}>{item.availableAtSite} {item.unit}</td>
+                              )}
                               <td style={styles.td}>{available} {item.unit}</td>
                               <td style={styles.td}>
-                                <input
-                                  type="number"
-                                  min="1"
-                                  value={item.quantity}
-                                  onChange={e => handleTransferItemChange(idx, 'quantity', e.target.value)}
-                                  style={{ ...styles.formInput, borderColor: over ? '#ef4444' : undefined }}
-                                  required
-                                />
+                                {transferForm.sourceRequestId ? (
+                                  <span style={{ fontWeight: '600', color: over ? '#c62828' : undefined }}>{item.quantity} {item.unit}</span>
+                                ) : (
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={item.quantity}
+                                    onChange={e => handleTransferItemChange(idx, 'quantity', e.target.value)}
+                                    style={{ ...styles.formInput, borderColor: over ? '#ef4444' : undefined }}
+                                    required
+                                  />
+                                )}
                                 {over && <div style={{ color: '#c62828', fontSize: '11px', marginTop: '2px' }}>Exceeds available stock</div>}
                               </td>
+                              {transferForm.sourceRequestId && (
+                                <td style={styles.td}>
+                                  {over ? (
+                                    <span style={{ background: '#fde8e8', color: '#c62828', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                                      Insufficient
+                                    </span>
+                                  ) : (
+                                    <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                                      Ready
+                                    </span>
+                                  )}
+                                </td>
+                              )}
                               <td style={styles.td}>
-                                {transferForm.items.length > 1 && (
+                                {!transferForm.sourceRequestId && transferForm.items.length > 1 && (
                                   <button
                                     type="button"
                                     onClick={() => removeTransferItemRow(idx)}
@@ -2734,13 +2714,15 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         })}
                       </tbody>
                     </table>
-                    <button
-                      type="button"
-                      onClick={addTransferItemRow}
-                      style={{ marginTop: '10px', background: '#e2e8f0', color: '#1a365d', border: 'none', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                    >
-                      + Add Material
-                    </button>
+                    {!transferForm.sourceRequestId && (
+                      <button
+                        type="button"
+                        onClick={addTransferItemRow}
+                        style={{ marginTop: '10px', background: '#e2e8f0', color: '#1a365d', border: 'none', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                      >
+                        + Add Material
+                      </button>
+                    )}
                   </div>
 
                   <div>
@@ -2753,25 +2735,42 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     />
                   </div>
 
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                    <button type="submit" disabled={transferSubmitting} style={styles.orangeBtn}>
-                      {transferSubmitting ? 'Creating...' : 'Create Transfer'}
-                    </button>
-                    <button type="button" onClick={() => setShowTransferForm(false)} style={{ background: '#cbd5e1', color: '#333', border: 'none', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
-                      Cancel
-                    </button>
-                  </div>
+                  {(() => {
+                    const insufficientItems = transferForm.items.filter(item => {
+                      const mainMat = mainMaterials.find(m => m.name === item.materialName);
+                      const available = mainMat ? mainMat.quantity : 0;
+                      return item.quantity && Number(item.quantity) > available;
+                    });
+                    const blocked = transferForm.sourceRequestId && (insufficientItems.length > 0 || transferForm.items.length === 0);
+                    return (
+                      <>
+                        {transferForm.sourceRequestId && insufficientItems.length > 0 && (
+                          <div style={{ background: '#fde8e8', color: '#c62828', padding: '10px 14px', borderRadius: '6px', fontSize: '13px' }}>
+                            Main Store cannot send part of a request - every material must be fully in stock first. Still short: {insufficientItems.map(i => i.materialName).join(', ')}.
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <button type="submit" disabled={transferSubmitting || blocked} style={{ ...styles.orangeBtn, ...(blocked ? { background: '#94a3b8', cursor: 'not-allowed' } : {}) }}>
+                            {transferSubmitting ? 'Creating...' : 'Create Transfer'}
+                          </button>
+                          <button type="button" onClick={() => setShowTransferForm(false)} style={{ background: '#cbd5e1', color: '#333', border: 'none', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </form>
               </div>
             )}
 
             <div style={styles.tableContainer}>
+              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>Pending Site Store Requests</h3>
               <table style={styles.table}>
                 <thead>
                   <tr style={styles.tableHeaderRow}>
-                    <th style={styles.th}>MIN No.</th>
-                    <th style={styles.th}>Project / Requestor</th>
-                    <th style={styles.th}>Requested Materials</th>
+                    <th style={styles.th}>Request No.</th>
+                    <th style={styles.th}>Site Store</th>
                     <th style={styles.th}>Required Date</th>
                     <th style={styles.th}>Status</th>
                     <th style={styles.th}>Notes</th>
@@ -2779,122 +2778,103 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {minList.length === 0 ? (
+                  {pendingRequests.length === 0 ? (
                     <tr>
-                      <td colSpan="7" style={styles.emptyState}>No Material Transfer Notes submitted yet.</td>
+                      <td colSpan="6" style={styles.emptyState}>No pending Site Store requests.</td>
                     </tr>
                   ) : (
-                    minList.map(m => {
-                      const shortages = [];
-                      m.materials.forEach(item => {
+                    pendingRequests.map(r => {
+                      const hasShortage = r.materials.some(item => {
+                        const outstanding = item.quantity - (item.fulfilledQty || 0);
+                        if (outstanding <= 0) return false;
                         const mainMat = materials.find(x => x.name === item.materialName && x.location === 'MainStore');
                         const available = mainMat ? mainMat.quantity : 0;
-                        if (available < item.quantity) {
-                          shortages.push({ name: item.materialName, needed: item.quantity - available });
-                        }
+                        return available < outstanding;
                       });
 
+                      const statusStyle = {
+                        Pending: { bg: '#fff3e0', color: '#b7791f' },
+                        'Partially Transferred': { bg: '#e0f2f1', color: '#00695c' }
+                      }[r.status] || { bg: '#fff3e0', color: '#b7791f' };
+
                       return (
-                        <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
-                          <td style={{ ...styles.tdBold, color: '#1a365d' }}>{m.minNumber}</td>
+                        <tr key={r._id} style={{ borderBottom: '1px solid #eee' }}>
+                          <td style={{ ...styles.tdBold, color: '#1a365d' }}>{r.requestNo}</td>
                           <td style={styles.td}>
-                            <div style={{ fontWeight: 'bold' }}>{m.projectName}</div>
-                            <div style={{ fontSize: '11px', color: '#64748b' }}>By: {m.requestedBy}</div>
+                            <div style={{ fontWeight: 'bold' }}>{r.siteStoreName}</div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>By: {r.requestedBy}</div>
                           </td>
+                          <td style={styles.td}>{r.requiredDate ? formatDate(r.requiredDate) : '-'}</td>
                           <td style={styles.td}>
-                            {m.requestType === 'FreeForm' && (
-                              <span style={{ background: '#ede9fe', color: '#6d28d9', padding: '1px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', display: 'inline-block', marginBottom: '4px' }}>
-                                Site Request
-                              </span>
-                            )}
-                            {m.materials.map((mat, i) => {
-                              const mainMat = materials.find(x => x.name === mat.materialName && x.location === 'MainStore');
-                              const isShort = mainMat ? mainMat.quantity < mat.quantity : true;
-                              return (
-                                <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '4px' }}>
-                                  <span>{mat.materialName} ({mat.quantity} {mat.unit})</span>
-                                  {mat.availableAtSite !== undefined && (
-                                    <span style={{ fontSize: '10px', color: '#64748b' }}>
-                                      Site had: {mat.availableAtSite}
-                                    </span>
-                                  )}
-                                  {isShort && (
-                                    <span style={{ background: '#fde8e8', color: '#c62828', padding: '1px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' }}>
-                                      Shortage ({mainMat ? mainMat.quantity : 0} avail)
-                                    </span>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </td>
-                          <td style={styles.td}>{m.requiredDate ? formatDate(m.requiredDate) : '-'}</td>
-                          <td style={styles.td}>
-                            <span style={{
-                              background: m.status === 'Received' ? '#e8f5e9' : m.status === 'Issued' ? '#e0f2f1' : m.status === 'Approved' ? '#e3f2fd' : m.status === 'Rejected' ? '#ffebee' : '#fff3e0',
-                              color: m.status === 'Received' ? '#2e7d32' : m.status === 'Issued' ? '#00695c' : m.status === 'Approved' ? '#1565c0' : m.status === 'Rejected' ? '#c62828' : '#b7791f',
-                              padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
-                            }}>
-                              {m.status}
+                            <span style={{ background: statusStyle.bg, color: statusStyle.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                              {r.status}
                             </span>
                           </td>
-                          <td style={styles.td}>{m.notes || '-'}</td>
+                          <td style={styles.td}>{r.notes || '-'}</td>
                           <td style={styles.td}>
-                            {m.status === 'Pending' && (
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                {m.requestType === 'FreeForm' ? (
-                                  <button
-                                    onClick={() => openTransferForm(m)}
-                                    disabled={shortages.length > 0}
-                                    title={shortages.length > 0 ? 'Insufficient Main Store stock for one or more materials' : ''}
-                                    style={{ background: shortages.length > 0 ? '#94a3b8' : '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: shortages.length > 0 ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                                  >
-                                    Transfer to Site
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => handleApproveMIN(m._id)}
-                                    style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                                  >
-                                    Approve
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => handleRejectMIN(m._id)}
-                                  style={{ background: '#ef4444', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                                >
-                                  Reject
-                                </button>
-                              </div>
-                            )}
-                            {m.status === 'Approved' && (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                {shortages.length > 0 ? (
-                                  <>
-                                    <div style={{ fontSize: '11px', color: '#c62828', fontWeight: 'bold' }}>⚠️ Insufficient Stock to Issue</div>
-                                    <button
-                                      onClick={() => handleMINShortagePR(m)}
-                                      style={{ background: '#f59e0b', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                                    >
-                                      Generate Shortage PR
-                                    </button>
-                                  </>
-                                ) : (
-                                  <button
-                                    onClick={() => handleIssueMIN(m._id)}
-                                    style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                                  >
-                                    Issue Materials
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                            {m.status === 'Issued' && <span style={{ fontSize: '12px', color: '#00695c', fontWeight: '600' }}>🚚 Shipped, awaiting site confirmation</span>}
-                            {m.status === 'Received' && <span style={{ fontSize: '12px', color: '#2e7d32', fontWeight: '600' }}>✓ Delivered & confirmed at site</span>}
-                            {m.status === 'Rejected' && <div style={{ fontSize: '12px', color: '#c62828' }}>Rejected: {m.rejectionReason}</div>}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                              <button
+                                onClick={() => openTransferForm(r)}
+                                title={hasShortage ? 'Main Store stock is short for one or more materials on this request - open Review to see details' : 'Review the requested materials and create the transfer'}
+                                style={{ background: hasShortage ? '#b7791f' : '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                              >
+                                Review / Create MTN
+                              </button>
+                              <button
+                                onClick={() => handleRejectRequest(r._id)}
+                                disabled={r.status !== 'Pending'}
+                                title={r.status !== 'Pending' ? 'Only untouched Pending requests can be rejected' : ''}
+                                style={{ background: r.status !== 'Pending' ? '#94a3b8' : '#ef4444', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: r.status !== 'Pending' ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                              >
+                                Reject
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
                     })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ ...styles.tableContainer, marginTop: '24px' }}>
+              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>Material Transfer Note History</h3>
+              <table style={styles.table}>
+                <thead>
+                  <tr style={styles.tableHeaderRow}>
+                    <th style={styles.th}>MTN No.</th>
+                    <th style={styles.th}>Site Store</th>
+                    <th style={styles.th}>Request No.</th>
+                    <th style={styles.th}>Materials Transferred</th>
+                    <th style={styles.th}>Transfer Date</th>
+                    <th style={styles.th}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transferNotes.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" style={styles.emptyState}>No Material Transfer Notes created yet.</td>
+                    </tr>
+                  ) : (
+                    transferNotes.map(m => (
+                      <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ ...styles.tdBold, color: '#1a365d' }}>{m.mtnNumber}</td>
+                        <td style={styles.td}>{m.siteStoreName}</td>
+                        <td style={styles.td}>{m.requestNo || '-'}</td>
+                        <td style={styles.td}>
+                          {m.materials.map((mat, i) => (
+                            <div key={i}>{mat.materialName} ({mat.transferQty} {mat.unit})</div>
+                          ))}
+                        </td>
+                        <td style={styles.td}>{m.transferDate ? formatDate(m.transferDate) : '-'}</td>
+                        <td style={styles.td}>
+                          <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                            {m.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>
@@ -2965,13 +2945,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </button>
                 </div>
                 <p style={{ fontSize: '12px', color: '#64748b', marginTop: 0, marginBottom: '16px' }}>
-                  Quantities below default to the shortfall (Planned Qty − Available in Main Store). Untick a row to exclude it, or edit the quantity before submitting — it cannot exceed the BOM's planned quantity.
+                  Quantities below default to the shortfall (Planned Qty − Available in Main Store). Set a row's quantity to 0 to exclude it, or edit the quantity before submitting — it cannot exceed the BOM's planned quantity.
                 </p>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={styles.table}>
                     <thead>
                       <tr style={styles.tableHeaderRow}>
-                        <th style={styles.th}>Include</th>
                         <th style={styles.th}>Material</th>
                         <th style={styles.th}>Category</th>
                         <th style={styles.th}>Planned Qty</th>
@@ -2983,9 +2962,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     <tbody>
                       {shortageItems.map((it, idx) => (
                         <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
-                          <td style={styles.td}>
-                            <input type="checkbox" checked={it.include} onChange={() => handleShortageIncludeToggle(idx)} />
-                          </td>
                           <td style={{ ...styles.tdBold, color: '#0d1b4b' }}>{it.name}</td>
                           <td style={styles.td}>{it.category}</td>
                           <td style={styles.td}>{it.plannedQty} {it.unit}</td>
@@ -2997,7 +2973,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                               max={it.plannedQty}
                               value={it.quantity}
                               onChange={e => handleShortageQtyChange(idx, e.target.value)}
-                              disabled={!it.include}
                               style={{ width: '90px', padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px' }}
                             />
                           </td>
@@ -3247,7 +3222,61 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         </div>
       </main>
 
-
+      {/* Low Stock Popup Alerts (Mandatory overlay) */}
+      {(() => {
+        const alertsToTrigger = materials.filter(m => {
+          const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+          return m.quantity < reorder && m.location === 'MainStore';
+        });
+        const unacknowledged = alertsToTrigger.filter(m => !acknowledgedAlerts[m._id]);
+        if (unacknowledged.length === 0) return null;
+        
+        return (
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+            <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '500px', boxShadow: '0 10px 25px rgba(0,0,0,0.3)', borderTop: '6px solid #ef4444', textAlign: 'left' }}>
+              <h3 style={{ color: '#ef4444', margin: '0 0 16px', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                🚨 Low Stock Alert Notification (Main Store)
+              </h3>
+              <p style={{ color: '#475569', fontSize: '14px', marginBottom: '20px' }}>
+                The following materials have fallen below their reorder levels. Please review and restock:
+              </p>
+              <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '24px' }}>
+                {unacknowledged.map(m => {
+                  const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+                  const isCritical = m.quantity <= (m.minimumStock || 10);
+                  return (
+                    <div key={m._id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}>
+                      <div>
+                        <strong style={{ color: '#0f172a' }}>{m.name}</strong>
+                        <div style={{ fontSize: '11px', color: '#64748b' }}>Stock: {m.quantity} {m.unit} / Reorder: {reorder} {m.unit}</div>
+                      </div>
+                      <span style={{ 
+                        background: isCritical ? '#fee2e2' : '#ffedd5', 
+                        color: isCritical ? '#991b1b' : '#c2410c',
+                        padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' 
+                      }}>
+                        {isCritical ? 'Critical' : 'Pre-Order'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <button 
+                onClick={() => {
+                  const updated = { ...acknowledgedAlerts };
+                  alertsToTrigger.forEach(m => {
+                    updated[m._id] = true;
+                  });
+                  setAcknowledgedAlerts(updated);
+                }}
+                style={{ width: '100%', padding: '12px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+              >
+                Acknowledge & Dismiss Alerts
+              </button>
+            </div>
+          </div>
+        );
+      })()}
       {renderStoreStatsModal()}
     </div>
   );

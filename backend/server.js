@@ -1,5 +1,5 @@
+import 'dotenv/config';
 import express from 'express';
-import dotenv from 'dotenv';
 import cors from 'cors';
 import path from 'path';
 import connectDB from './config/db.js';
@@ -19,15 +19,14 @@ import roleRoutes from './routes/roleRoutes.js';
 import permissionRoutes from './routes/permissionRoutes.js';
 import itemMasterRoutes from './routes/itemMasterRoutes.js';
 import materialIssuanceRoutes from './routes/materialIssuanceRoutes.js';
+import materialRequestRoutes from './routes/materialRequestRoutes.js';
+import materialTransferNoteRoutes from './routes/materialTransferNoteRoutes.js';
 import quotationRoutes from './routes/quotations.js';
 import invoiceRoutes from './routes/invoices.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import { stripeWebhookHandler } from './controllers/paymentController.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 import { handleEncryption } from './middleware/encryptionMiddleware.js';
-
-// Load env vars
-dotenv.config();
 
 // Connect to Database
 connectDB();
@@ -63,6 +62,8 @@ app.use('/api/roles', roleRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/item-master', itemMasterRoutes);
 app.use('/api/min', materialIssuanceRoutes);
+app.use('/api/material-requests', materialRequestRoutes);
+app.use('/api/material-transfer-notes', materialTransferNoteRoutes);
 app.use('/api/quotations', quotationRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/payments', paymentRoutes);

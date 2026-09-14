@@ -1,7 +1,9 @@
 import Material from '../models/Material.js';
 import MaterialUsage from '../models/MaterialUsage.js';
 import Project from '../models/Project.js';
-import { decryptDB, encryptDB } from '../utils/cryptoUtils.js';
+import BOM from '../models/BOM.js';
+import { decryptDB } from '../utils/cryptoUtils.js';
+import { recordMovement, getDecryptedQuantity } from '../utils/stockService.js';
 
 // Helper to decrypt a string
 const decryptIfNeeded = (val) => {
@@ -63,30 +65,50 @@ export const getProjectsOverview = async (req, res) => {
   }
 };
 
-export const logMaterialUsage = async (req, res) => {
+// @desc    Site Store's combined "Material Issue & Usage" transaction: takes
+//          materials already sitting in Site Store inventory and issues them
+//          to a project's construction activity in one step. Validates the
+//          project/material/quantity, decreases Site Store stock through the
+//          shared recordMovement helper (the only sanctioned way to mutate
+//          Material.quantity, which also writes the StockMovement audit
+//          trail), and records the same quantity as actual project material
+//          usage - a single submission, a single stock deduction.
+// @route   POST /api/site/material-usage
+// @access  Private (SiteStoreOfficer - "Log Material Usage" permission)
+export const issueMaterialToProject = async (req, res) => {
   try {
-    const { materialId, quantity_used, date, purpose } = req.body;
+    const { projectId, materialId, quantity, quantity_used, activity, purpose, notes, date } = req.body;
+    const qty = Number(quantity || quantity_used);
 
-    if (!materialId || !quantity_used || Number(quantity_used) <= 0) {
-      return res.status(400).json({ success: false, message: 'Valid material and quantity are required.' });
+    if (!projectId) {
+      return res.status(400).json({ success: false, message: 'Please select a project.' });
+    }
+    if (!materialId) {
+      return res.status(400).json({ success: false, message: 'Please select a material.' });
+    }
+    if (!qty || Number.isNaN(qty) || qty <= 0) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid quantity greater than 0.' });
     }
 
-    const siteMaterial = await Material.findById(materialId);
+    const project = await Project.findById(projectId);
+    if (!project) {
+      return res.status(404).json({ success: false, message: 'Project not found.' });
+    }
+
+    const siteMaterial = await Material.findOne({
+      _id: materialId,
+      location: 'SiteStore',
+      $or: [{ project_id: projectId }, { projectId }]
+    });
     if (!siteMaterial) {
-      return res.status(404).json({ success: false, message: 'Material not found.' });
+      return res.status(404).json({ success: false, message: 'Material not found in Site Store inventory for this project.' });
     }
 
-    const userProjectId = (req.user ? (req.user.project_id || req.user.projectId) : null) || siteMaterial.project_id || siteMaterial.projectId;
+    const decryptedName = decryptDB(siteMaterial.name);
+    const availableQty = getDecryptedQuantity(siteMaterial);
 
-    let localQty = siteMaterial.quantity;
-    let decryptedName = siteMaterial.name;
-    if (siteMaterial.location === 'SiteStore') {
-      decryptedName = decryptDB(siteMaterial.name);
-      localQty = Number(decryptDB(siteMaterial.quantity)) || 0;
-    }
-
-    if (localQty < Number(quantity_used)) {
-      // Shortage triggers read-only central stock lookup
+    if (qty > availableQty) {
+      // Shortage check against Main Store
       const mainMaterial = await Material.findOne({
         name: decryptedName,
         location: 'MainStore'
@@ -94,8 +116,8 @@ export const logMaterialUsage = async (req, res) => {
 
       const mainQty = mainMaterial ? mainMaterial.quantity : 0;
       const errorMsg = mainQty > 0
-        ? `Insufficient stock at the site. However, the Main Store currently has ${mainQty} units.`
-        : 'Insufficient stock at both the Site Store and Main Store.';
+        ? `Insufficient stock at the site (Available: ${availableQty} ${siteMaterial.unit}). Main Store currently has ${mainQty} units.`
+        : `Insufficient stock at site (Available: ${availableQty} ${siteMaterial.unit}). No stock in Main Store.`;
 
       return res.status(400).json({
         success: false,
@@ -109,34 +131,65 @@ export const logMaterialUsage = async (req, res) => {
       });
     }
 
-    // Deduct and save
-    const remainingQty = localQty - Number(quantity_used);
-    if (siteMaterial.location === 'SiteStore') {
-      siteMaterial.quantity = encryptDB(String(remainingQty));
-    } else {
-      siteMaterial.quantity = remainingQty;
+    const issuedBy = req.user ? req.user.name : 'Site Store Officer';
+    const projectName = project.projectName || project.name;
+    const actStr = String(activity || purpose || 'General Usage').trim();
+
+    const priorCount = await MaterialUsage.countDocuments({ minNumber: { $exists: true, $ne: '' } });
+    const minNumber = `MIN-${new Date().getFullYear()}-${String(priorCount + 1).padStart(3, '0')}`;
+
+    let plannedQty = 0;
+    const approvedBOM = await BOM.findOne({ projectId, status: 'Approved' });
+    if (approvedBOM) {
+      const match = approvedBOM.materials.find(m => m.name.toLowerCase() === decryptedName.toLowerCase());
+      if (match) plannedQty = Number(match.plannedQty) || 0;
     }
-    await siteMaterial.save();
 
-    // Save consumption log
-    const projectDoc = userProjectId ? await Project.findById(userProjectId) : null;
-    const projName = projectDoc ? (projectDoc.projectName || projectDoc.name) : 'N/A';
-
-    const usage = new MaterialUsage({
-      projectId: userProjectId,
-      project_id: userProjectId,
-      projectName: projName,
-      materialName: decryptedName,
-      actualQty: Number(quantity_used),
-      recordedBy: req.user.name,
-      usageDate: date || new Date(),
-      purpose: purpose || 'N/A'
+    // Audited inventory deduction
+    await recordMovement({
+      materialDoc: siteMaterial,
+      type: 'Usage',
+      quantityChange: -qty,
+      reference: minNumber,
+      performedBy: issuedBy,
+      reason: actStr,
+      notes: notes || ''
     });
-    await usage.save();
+
+    let usage;
+    try {
+      usage = await MaterialUsage.create({
+        minNumber,
+        projectId,
+        project_id: projectId,
+        materialId: siteMaterial._id,
+        projectName,
+        materialName: decryptedName,
+        unit: siteMaterial.unit,
+        plannedQty,
+        actualQty: qty,
+        variance: qty - plannedQty,
+        activity: actStr,
+        purpose: actStr,
+        notes: notes || '',
+        recordedBy: issuedBy,
+        usageDate: date || new Date()
+      });
+    } catch (usageErr) {
+      await recordMovement({
+        materialDoc: siteMaterial,
+        type: 'Adjustment',
+        quantityChange: qty,
+        reference: minNumber,
+        performedBy: issuedBy,
+        reason: 'Rollback: Material Issue & Usage record failed to save'
+      });
+      throw usageErr;
+    }
 
     res.status(201).json({
       success: true,
-      message: 'Usage successfully logged.',
+      message: `Material issued and usage recorded successfully (${minNumber}).`,
       data: usage
     });
   } catch (error) {
@@ -144,8 +197,11 @@ export const logMaterialUsage = async (req, res) => {
   }
 };
 
+export const logMaterialUsage = issueMaterialToProject;
+
 // Note: issuing materials from Main Store to Site Store and confirming their
-// receipt is now handled end-to-end by the Material Issuance Note flow
-// (see controllers/materialIssuanceController.js, mounted at /api/min),
-// which ties every issuance back to an approved BOM instead of being raised
-// ad hoc.
+// receipt is handled separately by the Material Issuance Note flow (see
+// controllers/materialIssuanceController.js, mounted at /api/min). That is a
+// distinct business event (Site Store requesting/receiving replenishment
+// stock from Main Store) from issueMaterialToProject above (Site Store
+// issuing its own on-hand stock to a project's construction activity).

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
-import { formatDate, formatDateTime } from '../utils/dateUtils';
+import { formatDate } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 
 function SiteStoreDashboard({ user, onLogout }) {
-  const [view, setView] = useState('dashboard'); // 'dashboard', 'site-inventory', 'create-pr', 'usage'
+  const [view, setView] = useState('dashboard'); // 'dashboard', 'site-inventory', 'request-materials', 'issue-usage'
   const [materials, setMaterials] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -14,23 +14,14 @@ function SiteStoreDashboard({ user, onLogout }) {
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('All');
 
-  // Phase 8 - Approved BOM states
+  // Phase 8 - project selection (drives which project's Site Store inventory/history is shown)
   const [projects, setProjects] = useState([]);
   const [selectedProjId, setSelectedProjId] = useState('');
-  const [bomMaterialsList, setBomMaterialsList] = useState([]);
-  const [noApprovedBomError, setNoApprovedBomError] = useState(false);
-  const [loadingBom, setLoadingBom] = useState(false);
 
-  // Phase 9 - Material Issuance Note (MIN) States
+  // Phase 9 - Material Issuance Note (MIN) States - the Main Store request/receipt
+  // lifecycle (Pending/Approved/Issued/Received), unrelated to Material Issue & Usage below.
   const [mins, setMins] = useState([]);
   const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
-
-  // Material Issuance Note Form State (Requisition)
-  const [minForm, setMinForm] = useState({
-    projectName: '',
-    notes: '',
-    items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }]
-  });
 
   // Request Materials Form State (free-form Material Transfer Request, not
   // gated by an approved BOM)
@@ -46,21 +37,35 @@ function SiteStoreDashboard({ user, onLogout }) {
   const [requestFocusedRowIdx, setRequestFocusedRowIdx] = useState(null);
   const [requestSuggestions, setRequestSuggestions] = useState([]);
   const [requestHighlightedSuggestionIdx, setRequestHighlightedSuggestionIdx] = useState(-1);
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
 
-  // Usage Form State
-  const [usageForm, setUsageForm] = useState({
+  // Site Store's own Material Request (SSR) history, shown below the Request
+  // Materials form - Main Store -> Site Store replenishment requests, not
+  // tied to any project/BOM.
+  const [myRequests, setMyRequests] = useState([]);
+  // The request whose material breakdown is currently shown in the "View
+  // Materials" popup (null when closed) - keeps the history table itself
+  // to one row per request instead of an expanded materials list per row.
+  const [viewRequest, setViewRequest] = useState(null);
+
+  // Material Issue & Usage Form State - combines the old Material Issuance
+  // Note (project selection, MIN numbering) and Material Usage (material,
+  // quantity, activity/purpose) screens into a single site-store-inventory ->
+  // project transaction.
+  const [issueForm, setIssueForm] = useState({
+    projectName: '',
     materialId: '',
-    quantityUsed: '',
-    date: new Date().toISOString().substring(0, 10),
-    purpose: ''
+    quantity: '',
+    activity: '',
+    notes: '',
+    date: new Date().toISOString().substring(0, 10)
   });
+  const [issueSubmitting, setIssueSubmitting] = useState(false);
 
-  // Usage History from LocalStorage
-  const [usageHistory, setUsageHistory] = useState([]);
-
-  // Main Store stock lookup for shortages
-  const [mainStoreStock, setMainStoreStock] = useState(null);
-  const [showMainStoreStock, setShowMainStoreStock] = useState(false);
+  // Material Issue & Usage History, fetched from the backend (MaterialUsage
+  // records created by this screen), scoped to the selected project.
+  const [issueHistory, setIssueHistory] = useState([]);
+  const [expandedHistoryId, setExpandedHistoryId] = useState(null);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -99,7 +104,7 @@ function SiteStoreDashboard({ user, onLogout }) {
         if (!res.ok && finalData && finalData.message) {
           setError(finalData.message);
         } else {
-          setError('Failed to fetch site inventory.');
+          setError(finalData?.message || 'Failed to fetch site inventory.');
         }
       }
     } catch (err) {
@@ -152,6 +157,41 @@ function SiteStoreDashboard({ user, onLogout }) {
     }
   };
 
+  const fetchMyRequests = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/material-requests/my-requests', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setMyRequests(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching material requests:', err);
+    }
+  };
+
+  // Material Issue & Usage history - MaterialUsage records created by this
+  // screen's combined issue-and-use transaction, scoped to the selected project.
+  const fetchIssueHistory = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch('http://localhost:5000/api/material-usage', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        const filtered = selectedProjId
+          ? data.data.filter(u => String(u.projectId) === String(selectedProjId))
+          : data.data;
+        setIssueHistory(filtered);
+      }
+    } catch (err) {
+      console.error('Error fetching Material Issue & Usage history:', err);
+    }
+  };
+
   const fetchProjects = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -167,42 +207,15 @@ function SiteStoreDashboard({ user, onLogout }) {
     }
   };
 
-  const handleProjectChange = async (projectName) => {
+  // Drives the project selector shared by Site Inventory and Material Issue &
+  // Usage - resolves the chosen project name to its _id (selectedProjId),
+  // which everything else (site inventory, MIN history, issue history) is
+  // scoped by.
+  const handleProjectChange = (projectName) => {
     setError(''); setSuccess('');
     const proj = projects.find(p => p.projectName === projectName || p.name === projectName);
-    if (!proj) {
-      setSelectedProjId('');
-      setBomMaterialsList([]);
-      setNoApprovedBomError(false);
-      setMinForm({ ...minForm, projectName, items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }] });
-      return;
-    }
-
-    setSelectedProjId(proj._id);
-    setLoadingBom(true);
-    setNoApprovedBomError(false);
-    setMinForm({ ...minForm, projectName, items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }] });
-
-    try {
-      const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/bom/approved/${proj._id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (res.ok && data.success && data.data) {
-        setBomMaterialsList(data.data.materials || []);
-        setNoApprovedBomError(false);
-      } else {
-        setBomMaterialsList([]);
-        setNoApprovedBomError(true);
-      }
-    } catch (err) {
-      console.error(err);
-      setBomMaterialsList([]);
-      setNoApprovedBomError(true);
-    } finally {
-      setLoadingBom(false);
-    }
+    setSelectedProjId(proj ? proj._id : '');
+    setIssueForm(prev => ({ ...prev, projectName, materialId: '', quantity: '' }));
   };
 
   const handleConfirmReceipt = async (minId) => {
@@ -234,149 +247,96 @@ function SiteStoreDashboard({ user, onLogout }) {
     fetchProjects();
     fetchMINs();
     fetchItemMasters();
-    // Load usage logs
-    const logs = localStorage.getItem('siteUsageLogs');
-    if (logs) {
-      try {
-        setUsageHistory(JSON.parse(logs));
-      } catch (e) {
-        setUsageHistory([]);
-      }
-    }
+    fetchMyRequests();
+    fetchIssueHistory();
   }, [selectedProjId]);
 
   useEffect(() => {
+    // Polls fairly frequently so a transfer/auto-generate Main Store performs
+    // (stock quantities, and this request's fulfilledQty/status) shows up
+    // here without the officer having to switch projects or reload.
     const interval = setInterval(() => {
       fetchMaterials();
       fetchMINs();
-    }, 30000);
+      fetchMyRequests();
+    }, 10000);
     return () => clearInterval(interval);
   }, [selectedProjId]);
 
-  useEffect(() => {
-    if (projects.length > 0 && (user?.projectId || user?.project_id)) {
-      const userProjId = user.projectId || user.project_id;
-      const userProj = projects.find(p => p._id === userProjId);
-      if (userProj && minForm.projectName !== (userProj.projectName || userProj.name)) {
-        handleProjectChange(userProj.projectName || userProj.name);
-      }
-    }
-  }, [projects, user, selectedProjId]);
-
-  const checkShortage = async (matId, qty) => {
-    if (!matId || !qty || Number(qty) <= 0) {
-      setMainStoreStock(null);
-      setShowMainStoreStock(false);
-      return;
-    }
-    const selectedMaterial = materials.find(m => m._id === matId);
-    if (!selectedMaterial) return;
-
-    if (selectedMaterial.quantity < Number(qty)) {
-      try {
-        const res = await fetch(`http://localhost:5000/api/materials/main-store/${matId}`, {
-          headers: getHeaders()
-        });
-        const data = await res.json();
-        if (data.success && data.data) {
-          setMainStoreStock(data.data);
-          setShowMainStoreStock(true);
-        } else {
-          setMainStoreStock(null);
-          setShowMainStoreStock(false);
-        }
-      } catch (err) {
-        console.error('Error fetching main store stock:', err);
-        setMainStoreStock({
-          name: selectedMaterial.name,
-          quantity: 0,
-          updatedAt: new Date().toISOString()
-        });
-        setShowMainStoreStock(true);
-      }
-    } else {
-      setMainStoreStock(null);
-      setShowMainStoreStock(false);
-    }
-  };
-
-  useEffect(() => {
-    checkShortage(usageForm.materialId, usageForm.quantityUsed);
-  }, [usageForm.materialId, usageForm.quantityUsed, materials]);
-
-  const handleMINSubmit = async (e) => {
+  // Submits the combined Material Issue & Usage transaction: one call decreases
+  // Site Store inventory and records the quantity as actual project usage.
+  const handleIssueSubmit = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
 
-    const invalid = minForm.items.some(item => !item.materialName || !item.quantity || Number(item.quantity) <= 0);
-    if (invalid) {
-      setError('Please fill in material name and valid quantity for all request rows.');
+    const { materialId, quantity, activity, notes, date } = issueForm;
+
+    if (!selectedProjId) {
+      setError('Please select a project.');
+      return;
+    }
+    if (!materialId) {
+      setError('Please select a material.');
+      return;
+    }
+    const qty = Number(quantity);
+    if (!quantity || Number.isNaN(qty) || qty <= 0) {
+      setError('Please enter a valid quantity greater than 0.');
+      return;
+    }
+    if (!activity || !activity.trim()) {
+      setError('Activity / Purpose is required.');
       return;
     }
 
-    if (noApprovedBomError) {
-      setError('Cannot submit a Material Issuance Note without an approved BOM for this project.');
+    const selectedMaterial = materials.find(m => m._id === materialId);
+    if (selectedMaterial && qty > selectedMaterial.quantity) {
+      setError(`Insufficient site stock. Available quantity: ${selectedMaterial.quantity} ${selectedMaterial.unit}.`);
       return;
     }
 
-    // Verify each item against approved BOM qty
-    for (const item of minForm.items) {
-      const bomMat = bomMaterialsList.find(bm => bm.name === item.materialName);
-      if (!bomMat) {
-        setError(`Material "${item.materialName}" is not in the approved BOM.`);
-        return;
-      }
-      if (Number(item.quantity) > bomMat.plannedQty) {
-        setError(`Requested quantity for "${item.materialName}" (${item.quantity}) exceeds the approved BOM limit (${bomMat.plannedQty}).`);
-        return;
-      }
-    }
-
+    setIssueSubmitting(true);
     try {
-      const payload = {
-        projectId: selectedProjId,
-        projectName: minForm.projectName,
-        notes: minForm.notes,
-        materials: minForm.items,
-        requestedBy: user ? user.name : 'Store Officer'
-      };
-
-      // Encrypt payload for transit
-      const ciphertext = encryptTransit(JSON.stringify(payload));
-
-      const res = await fetch('http://localhost:5000/api/min', {
+      const res = await fetch('http://localhost:5000/api/site/material-usage', {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ ciphertext })
+        body: JSON.stringify({
+          projectId: selectedProjId,
+          materialId,
+          quantity: qty,
+          activity: activity.trim(),
+          notes: notes || '',
+          date
+        })
       });
       const data = await res.json();
 
-      let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
-
-      if (res.ok && finalData.success) {
-        setSuccess('✅ Material Issuance Note submitted successfully to Main Store!');
-        setMinForm({
-          projectName: '',
+      if (res.ok && data.success) {
+        setSuccess(`✅ ${data.message || 'Material issued and usage recorded successfully.'}`);
+        setIssueForm(prev => ({
+          ...prev,
+          materialId: '',
+          quantity: '',
+          activity: '',
           notes: '',
-          items: [{ materialName: '', quantity: '', unit: 'bag', reason: '' }]
-        });
-        fetchMINs();
-        setView('dashboard');
+          date: new Date().toISOString().substring(0, 10)
+        }));
+        fetchMaterials();
+        fetchIssueHistory();
       } else {
-        setError(finalData.message || 'Failed to submit Material Issuance Note.');
+        setError(data.message || 'Failed to record the material issue.');
       }
     } catch (err) {
-      setError('Could not connect to the backend server to submit the Material Issuance Note.');
+      setError('Could not connect to the backend server to record the material issue.');
+    } finally {
+      setIssueSubmitting(false);
     }
   };
 
   const currentProjectName = (() => {
     const userProjId = user?.projectId || user?.project_id;
     const userProj = projects.find(p => p._id === userProjId);
-    return userProj ? (userProj.projectName || userProj.name) : minForm.projectName;
+    return userProj ? (userProj.projectName || userProj.name) : issueForm.projectName;
   })();
 
   // Sorted list of distinct categories in the active Item Master catalog, used to
@@ -384,6 +344,24 @@ function SiteStoreDashboard({ user, onLogout }) {
   const requestMaterialCategories = Array.from(
     new Set(itemMasterList.map(item => item.category || 'Other'))
   ).sort();
+
+  // Best-effort preview of the next Request No. this officer would receive.
+  // The server numbers requests off a global count across every Site Store
+  // Officer, but this officer can only see their own request history, so this
+  // is an estimate (same caveat as Main Store's GRN Number preview) rather
+  // than a guarantee - the real number is confirmed once the request is submitted.
+  const nextRequestNumber = () => {
+    const year = new Date().getFullYear();
+    const prefix = `SSR-${year}-`;
+    const maxSerial = myRequests.reduce((max, r) => {
+      if (typeof r.requestNo === 'string' && r.requestNo.startsWith(prefix)) {
+        const n = parseInt(r.requestNo.slice(prefix.length), 10);
+        if (!isNaN(n) && n > max) return n;
+      }
+      return max;
+    }, 0);
+    return `${prefix}${String(maxSerial + 1).padStart(3, '0')}`;
+  };
 
   // Returns the active Item Master entries matching a search term (name or code),
   // narrowed to the row's chosen category when set.
@@ -441,21 +419,41 @@ function SiteStoreDashboard({ user, onLogout }) {
     e.preventDefault();
     setError(''); setSuccess('');
 
+    if (!selectedProjId) {
+      setError('Please select which Site Store this request is for.');
+      return;
+    }
+
+    if (!requestForm.requiredDate) {
+      setError('Please choose a required date.');
+      return;
+    }
+
     const invalid = requestForm.items.some(item => !item.materialName || !item.quantity || Number(item.quantity) <= 0);
     if (invalid) {
       setError('Please select a material and enter a valid request quantity for all rows.');
       return;
     }
 
-    if (!selectedProjId) {
-      setError('You must be assigned to a project to request materials.');
+    // A material must actually be picked from the Item Master catalog (not
+    // just typed) - a picked row always has its Unit auto-filled.
+    const unresolved = requestForm.items.some(item => !item.unit);
+    if (unresolved) {
+      setError('Please choose each material from the suggestion list so its category/unit can be confirmed.');
       return;
     }
 
+    const names = requestForm.items.map(item => item.materialName.trim().toLowerCase());
+    const hasDuplicates = new Set(names).size !== names.length;
+    if (hasDuplicates) {
+      setError('Each material can only appear once per request. Please remove the duplicate row.');
+      return;
+    }
+
+    setRequestSubmitting(true);
     try {
       const payload = {
-        projectId: selectedProjId,
-        projectName: currentProjectName,
+        siteStoreId: selectedProjId,
         requiredDate: requestForm.requiredDate,
         notes: requestForm.notes,
         materials: requestForm.items.map(item => ({
@@ -467,7 +465,7 @@ function SiteStoreDashboard({ user, onLogout }) {
 
       const ciphertext = encryptTransit(JSON.stringify(payload));
 
-      const res = await fetch('http://localhost:5000/api/min/request', {
+      const res = await fetch('http://localhost:5000/api/material-requests', {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ ciphertext })
@@ -480,95 +478,36 @@ function SiteStoreDashboard({ user, onLogout }) {
       }
 
       if (res.ok && finalData.success) {
-        setSuccess('✅ Material Transfer Request submitted successfully to Main Store!');
+        setSuccess(`✅ Material request ${finalData.data.requestNo} submitted successfully to Main Store!`);
         setRequestForm({ requiredDate: '', notes: '', items: [{ ...emptyRequestItemRow }] });
-        fetchMINs();
-        setView('dashboard');
+        fetchMyRequests();
       } else {
-        setError(finalData.message || 'Failed to submit Material Transfer Request.');
+        setError(finalData.message || 'Failed to submit material request.');
       }
     } catch (err) {
-      setError('Could not connect to the backend server to submit the Material Transfer Request.');
+      setError('Could not connect to the backend server to submit the material request.');
+    } finally {
+      setRequestSubmitting(false);
     }
   };
 
-  const handleUsageSubmit = async (e) => {
-    e.preventDefault();
+  const handleCancelRequest = async (id) => {
     setError(''); setSuccess('');
-
-    const { materialId, quantityUsed, date, purpose } = usageForm;
-    if (!materialId || !quantityUsed || Number(quantityUsed) <= 0) {
-      setError('Please select a material and enter a valid quantity.');
-      return;
-    }
-
-    const selectedMaterial = materials.find(m => m._id === materialId);
-    if (!selectedMaterial) return;
-
-    if (selectedMaterial.quantity < Number(quantityUsed)) {
-      try {
-        const token = JSON.parse(localStorage.getItem('user'))?.token;
-        const lookupRes = await fetch(`http://localhost:5000/api/materials/main-store/${materialId}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        const lookupData = await lookupRes.json();
-        
-        if (lookupRes.ok && lookupData.success && lookupData.data) {
-          const mainQty = lookupData.data.quantity;
-          if (mainQty > 0) {
-            setError(`Insufficient stock at the site. However, the Main Store currently has ${mainQty} units.`);
-          } else {
-            setError('Insufficient stock at both the Site Store and Main Store.');
-          }
-        } else {
-          setError(`Insufficient stock. Only ${selectedMaterial.quantity} units available at site.`);
-        }
-      } catch (err) {
-        setError(`Insufficient stock. Only ${selectedMaterial.quantity} units available at site.`);
-      }
-      return;
-    }
-
     try {
-      // Update inventory on backend via POST /api/site/material-usage
-      const res = await fetch('http://localhost:5000/api/site/material-usage', {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({
-          materialId,
-          quantity_used: Number(quantityUsed),
-          date,
-          purpose
-        })
+      const res = await fetch(`http://localhost:5000/api/material-requests/${id}/cancel`, {
+        method: 'PUT',
+        headers: getHeaders()
       });
-
       const data = await res.json();
-
-      if (res.ok && data.success) {
-        // Record log locally
-        const newLog = {
-          id: Date.now(),
-          materialName: selectedMaterial.name,
-          quantity: quantityUsed,
-          unit: selectedMaterial.unit,
-          date,
-          purpose
-        };
-        const updatedLogs = [newLog, ...usageHistory];
-        setUsageHistory(updatedLogs);
-        localStorage.setItem('siteUsageLogs', JSON.stringify(updatedLogs));
-
-        setSuccess(`✅ Successfully logged usage of ${quantityUsed} ${selectedMaterial.unit}(s) of ${selectedMaterial.name}!`);
-        setUsageForm({ materialId: '', quantityUsed: '', date: new Date().toISOString().substring(0, 10), purpose: '' });
-        fetchMaterials();
+      let finalData = data;
+      if (data && data.ciphertext) {
+        finalData = JSON.parse(decryptTransit(data.ciphertext));
+      }
+      if (res.ok && finalData.success) {
+        setSuccess('Request cancelled.');
+        fetchMyRequests();
       } else {
-        if (data.insufficient && data.mainStoreStock) {
-          setError(data.message);
-          setMainStoreStock(data.mainStoreStock);
-          setShowMainStoreStock(true);
-        } else {
-          setError(data.message || 'Failed to update inventory during usage log.');
-        }
+        setError(finalData.message || 'Failed to cancel request.');
       }
     } catch (err) {
       setError('Connection error occurred.');
@@ -583,11 +522,22 @@ function SiteStoreDashboard({ user, onLogout }) {
   // Calculations for stats
   const totalSiteSKUs = materials.length;
   const siteStockValue = materials.reduce((sum, m) => sum + (m.quantity * m.unitPrice), 0);
-  const siteLowStockItems = materials.filter(m => m.quantity <= m.minimumStock).length;
+
+  // Stock status tiers, mirroring Main Store: NORMAL (above Pre-Order Level),
+  // PRE_ORDER (at/below Pre-Order Level but above Minimum Level), CRITICAL
+  // (at/below Minimum Level). Thresholds always come from the Material record.
+  const inventoryMaterialStatus = (m) => {
+    const preOrderLevel = m.reorderLevel ?? m.minimumStock;
+    if (m.quantity <= m.minimumStock) return { label: 'Critical', tier: 'CRITICAL', bg: '#ffebee', color: '#c62828' };
+    if (m.quantity <= preOrderLevel) return { label: 'Pre-Order', tier: 'PRE_ORDER', bg: '#fff3e0', color: '#b7791f' };
+    return { label: 'Normal', tier: 'NORMAL', bg: '#e8f5e9', color: '#2e7d32' };
+  };
+
+  const siteWarningItems = materials.filter(m => inventoryMaterialStatus(m).tier !== 'NORMAL').length;
 
   // Site Inventory screen stats
-  const siteOutOfStockItems = materials.filter(m => m.quantity === 0).length;
-  const siteLowStockOnlyItems = materials.filter(m => m.quantity > 0 && m.quantity <= m.minimumStock).length;
+  const sitePreOrderItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'PRE_ORDER').length;
+  const siteCriticalItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'CRITICAL').length;
   const now = new Date();
   const receivedThisMonthCount = mins.filter(m => {
     if (m.status !== 'Received' || !m.receivedAt) return false;
@@ -603,17 +553,11 @@ function SiteStoreDashboard({ user, onLogout }) {
     });
   });
 
-  // Total quantity consumed at site, per material name (from locally logged usage)
+  // Total quantity consumed at site, per material name (from Material Issue & Usage history)
   const consumedByMaterial = {};
-  usageHistory.forEach(u => {
-    consumedByMaterial[u.materialName] = (consumedByMaterial[u.materialName] || 0) + Number(u.quantity || 0);
+  issueHistory.forEach(u => {
+    consumedByMaterial[u.materialName] = (consumedByMaterial[u.materialName] || 0) + Number(u.actualQty || 0);
   });
-
-  const inventoryMaterialStatus = (m) => {
-    if (m.quantity === 0) return { label: 'Out of Stock', bg: '#ffebee', color: '#c62828' };
-    if (m.quantity <= m.minimumStock) return { label: 'Low', bg: '#ffebee', color: '#c62828' };
-    return { label: 'Normal', bg: '#e8f5e9', color: '#2e7d32' };
-  };
 
   const siteFilteredMaterials = materials.filter(m => {
     const matchesSearch = m.name.toLowerCase().includes(inventorySearchQuery.toLowerCase());
@@ -626,7 +570,7 @@ function SiteStoreDashboard({ user, onLogout }) {
       {/* Navigation Sidebar */}
       <aside style={styles.sidebar}>
         <div style={styles.sidebarHeader}>
-          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
+          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }} />
           <div>
             <div style={styles.sidebarTitle}>ELS Construction</div>
             <div style={styles.sidebarSubtitle}>Site Store Panel</div>
@@ -657,8 +601,7 @@ function SiteStoreDashboard({ user, onLogout }) {
             { id: 'dashboard', label: 'Dashboard', icon: '📊' },
             { id: 'site-inventory', label: 'Site Inventory', icon: '🏗️' },
             { id: 'request-materials', label: 'Request Materials', icon: '📦' },
-            { id: 'create-min', label: 'Material Issuance Note', icon: '📋' },
-            { id: 'usage', label: 'Material Usage', icon: '🔧' },
+            { id: 'issue-usage', label: 'Material Issue & Usage', icon: '🔧' },
           ].map(item => (
             <button
               key={item.id}
@@ -733,7 +676,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                                 color: isCritical ? '#991b1b' : '#c2410c',
                                 padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', fontSize: '10px'
                               }}>
-                                {isCritical ? 'Critical' : 'Low Stock'}
+                                {isCritical ? 'Critical' : 'Pre-Order'}
                               </span>
                             </td>
                           </tr>
@@ -755,9 +698,9 @@ function SiteStoreDashboard({ user, onLogout }) {
                 <div style={styles.statLabel}>Site Stock Value</div>
                 <div style={styles.statValue}>LKR {siteStockValue.toLocaleString()}</div>
               </div>
-              <div style={{ ...styles.statCard, borderLeft: siteLowStockItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
-                <div style={styles.statLabel}>Low Stock Warnings</div>
-                <div style={{ ...styles.statValue, color: siteLowStockItems > 0 ? '#ef4444' : '#0d1b4b' }}>{siteLowStockItems}</div>
+              <div style={{ ...styles.statCard, borderLeft: siteWarningItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Stock Warnings</div>
+                <div style={{ ...styles.statValue, color: siteWarningItems > 0 ? '#ef4444' : '#0d1b4b' }}>{siteWarningItems}</div>
               </div>
             </div>
 
@@ -788,7 +731,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                   </thead>
                   <tbody>
                     {materials.slice(0, 5).map(m => {
-                      const isLow = m.quantity <= m.minimumStock;
+                      const status = inventoryMaterialStatus(m);
                       return (
                         <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                           <td style={styles.tdBold}>{m.name}</td>
@@ -796,11 +739,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                           <td style={styles.td}>{m.unit}</td>
                           <td style={styles.td}>{m.quantity}</td>
                           <td style={styles.td}>
-                            {isLow ? (
-                              <span style={{ background: '#ffebee', color: '#c62828', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Low</span>
-                            ) : (
-                              <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>OK</span>
-                            )}
+                            <span style={{ background: status.bg, color: status.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{status.label}</span>
                           </td>
                         </tr>
                       );
@@ -881,13 +820,13 @@ function SiteStoreDashboard({ user, onLogout }) {
                 <div style={styles.statLabel}>Total Materials</div>
                 <div style={styles.statValue}>{totalSiteSKUs}</div>
               </div>
-              <div style={{ ...styles.statCard, borderLeft: siteLowStockOnlyItems > 0 ? '4px solid #f59e0b' : '4px solid #0d1b4b' }}>
-                <div style={styles.statLabel}>Low Stock</div>
-                <div style={{ ...styles.statValue, color: siteLowStockOnlyItems > 0 ? '#f59e0b' : '#0d1b4b' }}>{siteLowStockOnlyItems}</div>
+              <div style={{ ...styles.statCard, borderLeft: sitePreOrderItems > 0 ? '4px solid #b7791f' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Pre-Order</div>
+                <div style={{ ...styles.statValue, color: sitePreOrderItems > 0 ? '#b7791f' : '#0d1b4b' }}>{sitePreOrderItems}</div>
               </div>
-              <div style={{ ...styles.statCard, borderLeft: siteOutOfStockItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
-                <div style={styles.statLabel}>Out of Stock</div>
-                <div style={{ ...styles.statValue, color: siteOutOfStockItems > 0 ? '#ef4444' : '#0d1b4b' }}>{siteOutOfStockItems}</div>
+              <div style={{ ...styles.statCard, borderLeft: siteCriticalItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Critical Stock</div>
+                <div style={{ ...styles.statValue, color: siteCriticalItems > 0 ? '#ef4444' : '#0d1b4b' }}>{siteCriticalItems}</div>
               </div>
               <div style={styles.statCard}>
                 <div style={styles.statLabel}>Received This Month</div>
@@ -935,7 +874,9 @@ function SiteStoreDashboard({ user, onLogout }) {
                       <th style={styles.th}>Available at Site</th>
                       <th style={styles.th}>Issued to Site</th>
                       <th style={styles.th}>Consumed</th>
-                      <th style={styles.th}>Min Stock Limit</th>
+                      <th style={styles.th}>Min Level</th>
+                      <th style={styles.th}>Pre-Order Level</th>
+                      <th style={styles.th}>Max Level</th>
                       <th style={styles.th}>Total Value (LKR)</th>
                       <th style={styles.th}>Status</th>
                     </tr>
@@ -944,14 +885,16 @@ function SiteStoreDashboard({ user, onLogout }) {
                     {siteFilteredMaterials.map(m => {
                       const status = inventoryMaterialStatus(m);
                       return (
-                        <tr key={m._id} style={{ borderBottom: '1px solid #eee', backgroundColor: status.label !== 'Normal' ? 'rgba(239,68,68,0.08)' : 'white' }}>
-                          <td style={{ ...styles.tdBold, color: status.label !== 'Normal' ? '#c62828' : '#0d1b4b' }}>{m.name}</td>
+                        <tr key={m._id} style={{ borderBottom: '1px solid #eee', backgroundColor: status.tier !== 'NORMAL' ? 'rgba(239,68,68,0.08)' : 'white' }}>
+                          <td style={{ ...styles.tdBold, color: status.tier !== 'NORMAL' ? '#c62828' : '#0d1b4b' }}>{m.name}</td>
                           <td style={styles.td}>{m.category}</td>
                           <td style={styles.td}>{m.unit}</td>
                           <td style={styles.td}>{m.quantity}</td>
                           <td style={styles.td}>{issuedToSiteByMaterial[m.name] || 0}</td>
                           <td style={styles.td}>{consumedByMaterial[m.name] || 0}</td>
                           <td style={styles.td}>{m.minimumStock}</td>
+                          <td style={styles.td}>{m.reorderLevel}</td>
+                          <td style={styles.td}>{m.maximumStock}</td>
                           <td style={styles.td}>LKR {(m.quantity * (m.unitPrice || 0)).toLocaleString()}</td>
                           <td style={styles.td}>
                             <span style={{ background: status.bg, color: status.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{status.label}</span>
@@ -1019,17 +962,33 @@ function SiteStoreDashboard({ user, onLogout }) {
         {view === 'request-materials' && (
           <div style={styles.container}>
             <h1 style={styles.pageTitle}>Request Materials</h1>
+            <p style={{ color: '#64748b', fontSize: '13px', marginTop: '-12px', marginBottom: '20px' }}>
+              Request additional stock from Main Store for {currentProjectName ? `${currentProjectName} Site Store` : 'your Site Store'} when your own stock isn't enough.
+            </p>
             <div style={styles.formCard}>
               <form onSubmit={handleRequestMaterialsSubmit}>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px', maxWidth: '760px' }}>
                   <div>
-                    <label style={styles.fieldLabel}>Project / Site</label>
-                    <input
-                      type="text"
-                      value={currentProjectName}
-                      style={{ ...styles.formInput, background: '#f1f5f9' }}
-                      disabled
-                    />
+                    <label style={styles.fieldLabel}>Request No.</label>
+                    <div style={{ ...styles.formInput, background: '#f1f5f9', color: '#0d1b4b', fontWeight: 600, display: 'flex', alignItems: 'center' }}>
+                      {nextRequestNumber()}
+                    </div>
+                  </div>
+                  <div>
+                    <label style={styles.fieldLabel}>Project / Site Store *</label>
+                    <select
+                      value={issueForm.projectName}
+                      onChange={e => handleProjectChange(e.target.value)}
+                      style={styles.formSelect}
+                      required
+                    >
+                      <option value="">-- Select Project --</option>
+                      {projects.map(p => (
+                        <option key={p._id} value={p.projectName || p.name}>
+                          {p.projectName || p.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label style={styles.fieldLabel}>Required Date *</label>
@@ -1232,25 +1191,97 @@ function SiteStoreDashboard({ user, onLogout }) {
                   />
                 </div>
 
-                <button type="submit" style={styles.orangeBtn}>Submit Material Transfer Request</button>
+                <button type="submit" disabled={requestSubmitting} style={styles.orangeBtn}>
+                  {requestSubmitting ? 'Submitting...' : 'Submit Material Request'}
+                </button>
               </form>
+            </div>
+
+            <div style={styles.tableContainer}>
+              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>My Material Requests</h3>
+              <table style={styles.table}>
+                <thead>
+                  <tr style={styles.tableHeaderRow}>
+                    <th style={styles.th}>Request No.</th>
+                    <th style={styles.th}>Site / Project</th>
+                    <th style={styles.th}>Required Date</th>
+                    <th style={styles.th}>Status</th>
+                    <th style={styles.th}>MTN No.</th>
+                    <th style={styles.th}>Notes</th>
+                    <th style={styles.th}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {myRequests.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" style={styles.emptyState}>No material requests submitted yet.</td>
+                    </tr>
+                  ) : (
+                    myRequests.map(r => {
+                      const statusStyle = {
+                        Pending: { bg: '#fff3e0', color: '#b7791f' },
+                        Processing: { bg: '#e3f2fd', color: '#1565c0' },
+                        Transferred: { bg: '#e8f5e9', color: '#2e7d32' },
+                        'Partially Transferred': { bg: '#e0f2f1', color: '#00695c' },
+                        Rejected: { bg: '#ffebee', color: '#c62828' },
+                        Cancelled: { bg: '#f1f5f9', color: '#64748b' }
+                      }[r.status] || { bg: '#f1f5f9', color: '#64748b' };
+                      return (
+                        <tr key={r._id} style={{ borderBottom: '1px solid #eee' }}>
+                          <td style={{ ...styles.tdBold, color: '#1a365d' }}>{r.requestNo}</td>
+                          <td style={styles.td}>{r.siteStoreName}</td>
+                          <td style={styles.td}>{r.requiredDate ? formatDate(r.requiredDate) : '-'}</td>
+                          <td style={styles.td}>
+                            <span style={{ background: statusStyle.bg, color: statusStyle.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                              {r.status}
+                            </span>
+                            {r.status === 'Rejected' && r.rejectionReason && (
+                              <div style={{ fontSize: '11px', color: '#c62828', marginTop: '4px' }}>{r.rejectionReason}</div>
+                            )}
+                          </td>
+                          <td style={styles.td}>{r.mtnNumber || '-'}</td>
+                          <td style={styles.td}>{r.notes || '-'}</td>
+                          <td style={styles.td}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                              <button
+                                onClick={() => setViewRequest(r)}
+                                style={{ background: '#1a73e8', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                              >
+                                View
+                              </button>
+                              {r.status === 'Pending' && (
+                                <button
+                                  onClick={() => handleCancelRequest(r._id)}
+                                  style={{ background: '#ef4444', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                                >
+                                  Cancel
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
 
-        {view === 'create-min' && (
+        {view === 'issue-usage' && (
           <div style={styles.container}>
-            <h1 style={styles.pageTitle}>Create Material Issuance Note</h1>
+            <h1 style={styles.pageTitle}>Material Issue & Usage</h1>
             <div style={styles.formCard}>
-              <form onSubmit={handleMINSubmit}>
+              <h3 style={{ color: '#0d1b4b', marginBottom: '16px' }}>Issue Material to Project</h3>
+              <form onSubmit={handleIssueSubmit}>
                 <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginBottom: '16px' }}>
                   <div>
                     <label style={styles.fieldLabel}>Project Name *</label>
                     <select
-                      value={minForm.projectName}
+                      value={issueForm.projectName}
                       onChange={e => handleProjectChange(e.target.value)}
                       style={styles.formSelect}
-                      disabled={!!(user?.projectId || user?.project_id)}
                       required
                     >
                       <option value="">-- Select Project --</option>
@@ -1262,246 +1293,162 @@ function SiteStoreDashboard({ user, onLogout }) {
                     </select>
                   </div>
                   <div>
-                    <label style={styles.fieldLabel}>Date Requested</label>
+                    <label style={styles.fieldLabel}>Date *</label>
+                    <DateInput
+                      value={issueForm.date}
+                      onChange={iso => setIssueForm({ ...issueForm, date: iso })}
+                      style={styles.formInput}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                  <div>
+                    <label style={styles.fieldLabel}>Material *</label>
+                    <select
+                      value={issueForm.materialId}
+                      onChange={e => setIssueForm({ ...issueForm, materialId: e.target.value, quantity: '' })}
+                      style={styles.formSelect}
+                      disabled={!selectedProjId}
+                      required
+                    >
+                      <option value="">-- Select Material --</option>
+                      {materials.map(m => (
+                        <option key={m._id} value={m._id}>{m.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={styles.fieldLabel}>Available at Site</label>
                     <input
                       type="text"
-                      value={formatDate(new Date())}
+                      value={(() => {
+                        const m = materials.find(mat => mat._id === issueForm.materialId);
+                        return m ? `${m.quantity} ${m.unit}` : '-';
+                      })()}
                       style={{ ...styles.formInput, background: '#f1f5f9' }}
                       disabled
                     />
                   </div>
                 </div>
 
-                {noApprovedBomError && (
-                  <div style={{ padding: '12px', background: '#ffebee', border: '1px solid #ef5350', color: '#c62828', borderRadius: '6px', marginBottom: '16px', fontWeight: '500', textAlign: 'left' }}>
-                    ⚠️ No approved BOM is available for this project. Requisition creation is disabled.
-                  </div>
-                )}
-
-                <h4 style={{ color: '#0d1b4b', marginBottom: '12px' }}>Requested Materials</h4>
-                {minForm.items.map((item, idx) => (
-                  <div key={idx} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 2fr auto', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-                    <div>
-                      <select
-                        value={item.materialName}
-                        onChange={e => {
-                          const updated = [...minForm.items];
-                          updated[idx].materialName = e.target.value;
-                          const bomMat = bomMaterialsList.find(bm => bm.name === e.target.value);
-                          if (bomMat) {
-                            updated[idx].unit = bomMat.unit;
-                            updated[idx].bomApprovedQty = bomMat.plannedQty;
-                          } else {
-                            updated[idx].bomApprovedQty = undefined;
-                          }
-                          setMinForm({ ...minForm, items: updated });
-                        }}
-                        style={styles.formSelect}
-                        disabled={noApprovedBomError || bomMaterialsList.length === 0}
-                        required
-                      >
-                        <option value="">-- Select Material --</option>
-                        {bomMaterialsList.map(bm => (
-                          <option key={bm._id || bm.name} value={bm.name}>
-                            {bm.name}
-                          </option>
-                        ))}
-                      </select>
-                      {item.bomApprovedQty !== undefined && (
-                        <div style={{ fontSize: '11px', color: '#2563eb', marginTop: '2px', fontWeight: '600', textAlign: 'left' }}>
-                          BOM Approved: {item.bomApprovedQty} {item.unit}
-                        </div>
-                      )}
-                    </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                  <div>
+                    <label style={styles.fieldLabel}>Quantity *</label>
                     <input
                       type="number"
-                      placeholder="Quantity"
-                      value={item.quantity}
-                      onChange={e => {
-                        const updated = [...minForm.items];
-                        updated[idx].quantity = e.target.value;
-                        setMinForm({ ...minForm, items: updated });
-                      }}
+                      value={issueForm.quantity}
+                      onChange={e => setIssueForm({ ...issueForm, quantity: e.target.value })}
                       style={styles.formInput}
                       min="1"
-                      max={item.bomApprovedQty}
+                      max={(() => {
+                        const m = materials.find(mat => mat._id === issueForm.materialId);
+                        return m ? m.quantity : undefined;
+                      })()}
+                      disabled={!issueForm.materialId}
                       required
                     />
-                    <select
-                      value={item.unit}
-                      onChange={e => {
-                        const updated = [...minForm.items];
-                        updated[idx].unit = e.target.value;
-                        setMinForm({ ...minForm, items: updated });
-                      }}
-                      style={styles.formSelect}
-                      disabled
-                    >
-                      {['kg', 'ton', 'bag', 'piece', 'litre', 'm3'].map(u => (
-                        <option key={u} value={u}>{u}</option>
-                      ))}
-                    </select>
-                    <input
-                      placeholder="Reason for requisition"
-                      value={item.reason}
-                      onChange={e => {
-                        const updated = [...minForm.items];
-                        updated[idx].reason = e.target.value;
-                        setMinForm({ ...minForm, items: updated });
-                      }}
-                      style={styles.formInput}
-                    />
-                    {minForm.items.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => setMinForm({ ...minForm, items: minForm.items.filter((_, i) => i !== idx) })}
-                        style={{ background: '#ffebee', color: '#c62828', border: 'none', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer' }}
-                      >
-                        ✕
-                      </button>
-                    )}
                   </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => setMinForm({ ...minForm, items: [...minForm.items, { materialName: '', quantity: '', unit: 'bag', reason: '' }] })}
-                  disabled={noApprovedBomError || bomMaterialsList.length === 0}
-                  style={{ background: '#e3f2fd', color: '#1565c0', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', marginBottom: '16px', fontSize: '13px' }}
-                >
-                  + Add Item
-                </button>
+                  <div>
+                    <label style={styles.fieldLabel}>Unit</label>
+                    <input
+                      type="text"
+                      value={(() => {
+                        const m = materials.find(mat => mat._id === issueForm.materialId);
+                        return m ? m.unit : '';
+                      })()}
+                      style={{ ...styles.formInput, background: '#f1f5f9' }}
+                      disabled
+                    />
+                  </div>
+                </div>
 
                 <div style={{ marginBottom: '16px' }}>
-                  <label style={styles.fieldLabel}>Requisition Notes</label>
+                  <label style={styles.fieldLabel}>Activity / Purpose *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Brick wall laying, slab plastering, formwork..."
+                    value={issueForm.activity}
+                    onChange={e => setIssueForm({ ...issueForm, activity: e.target.value })}
+                    style={styles.formInput}
+                    required
+                  />
+                </div>
+
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={styles.fieldLabel}>Notes</label>
                   <textarea
                     placeholder="Enter extra instructions or remarks..."
-                    value={minForm.notes}
-                    onChange={e => setMinForm({ ...minForm, notes: e.target.value })}
+                    value={issueForm.notes}
+                    onChange={e => setIssueForm({ ...issueForm, notes: e.target.value })}
                     style={{ ...styles.formInput, height: '80px' }}
                   />
                 </div>
 
-                <button type="submit" style={styles.orangeBtn} disabled={noApprovedBomError || minForm.projectName === ''}>Submit Material Issuance Note</button>
+                <button type="submit" style={styles.orangeBtn} disabled={issueSubmitting || !selectedProjId}>
+                  {issueSubmitting ? 'Recording...' : 'Record Material Issue'}
+                </button>
               </form>
-            </div>
-          </div>
-        )}
-
-        {view === 'usage' && (
-          <div style={styles.container}>
-            <h1 style={styles.pageTitle}>Log Local Material Usage</h1>
-            <div style={styles.formCard}>
-              <h3 style={{ color: '#0d1b4b', marginBottom: '16px' }}>Log Daily Usage</h3>
-              <form onSubmit={handleUsageSubmit}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                  <div>
-                    <label style={styles.fieldLabel}>Select Material *</label>
-                    <select
-                      value={usageForm.materialId}
-                      onChange={e => setUsageForm({ ...usageForm, materialId: e.target.value })}
-                      style={styles.formSelect}
-                      required
-                    >
-                      <option value="">-- Select Site Material --</option>
-                      {materials.map(m => (
-                        <option key={m._id} value={m._id}>{m.name} (Avail: {m.quantity} {m.unit})</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Quantity Used *</label>
-                    <input
-                      type="number"
-                      value={usageForm.quantityUsed}
-                      onChange={e => setUsageForm({ ...usageForm, quantityUsed: e.target.value })}
-                      style={styles.formInput}
-                      min="1"
-                      required
-                    />
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '16px', marginBottom: '16px' }}>
-                  <div>
-                    <label style={styles.fieldLabel}>Usage Date</label>
-                    <DateInput
-                      value={usageForm.date}
-                      onChange={iso => setUsageForm({ ...usageForm, date: iso })}
-                      style={styles.formInput}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Activity / Purpose</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Brick wall laying, slab plastering..."
-                      value={usageForm.purpose}
-                      onChange={e => setUsageForm({ ...usageForm, purpose: e.target.value })}
-                      style={styles.formInput}
-                      required
-                    />
-                  </div>
-                </div>
-                <button type="submit" style={styles.orangeBtn}>Record Usage</button>
-              </form>
-
-              {showMainStoreStock && mainStoreStock && (
-                <div style={{ marginTop: '20px', padding: '16px', background: '#f8fafc', border: '1px dashed #2563eb', borderRadius: '8px', textAlign: 'left' }}>
-                  <h4 style={{ margin: '0 0 12px', color: '#0d1b4b', fontWeight: '700', fontSize: '14px' }}>Main Store Stock (Read-Only)</h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', fontSize: '13px', color: '#475569', marginBottom: '16px' }}>
-                    <div><strong>Material Name:</strong> {mainStoreStock.name}</div>
-                    <div><strong>Available Qty:</strong> {mainStoreStock.quantity}</div>
-                    <div><strong>Last Updated:</strong> {formatDateTime(mainStoreStock.updatedAt)}</div>
-                  </div>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      const selectedMaterial = materials.find(m => m._id === usageForm.materialId);
-                      const neededQty = Number(usageForm.quantityUsed) - (selectedMaterial ? selectedMaterial.quantity : 0);
-                      setMinForm({
-                        projectName: '',
-                        notes: `Shortage requisition for ${selectedMaterial ? selectedMaterial.name : ''}.`,
-                        items: [{
-                          materialName: selectedMaterial ? selectedMaterial.name : '',
-                          quantity: neededQty > 0 ? neededQty : Number(usageForm.quantityUsed),
-                          unit: selectedMaterial ? selectedMaterial.unit : 'bag',
-                          reason: `Shortage at site store. Needed: ${usageForm.quantityUsed}, Available at site: ${selectedMaterial ? selectedMaterial.quantity : 0}`
-                        }]
-                      });
-                      setView('create-min');
-                    }}
-                    style={{ ...styles.orangeBtn, padding: '8px 16px', fontSize: '12px', background: '#0d1b4b' }}
-                  >
-                    Request Materials (MIN)
-                  </button>
-                </div>
-              )}
             </div>
 
             <div style={styles.tableContainer}>
-              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>Usage Logs Ledger</h3>
+              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>Material Issue & Usage History</h3>
               <table style={styles.table}>
                 <thead>
                   <tr style={styles.tableHeaderRow}>
+                    <th style={styles.th}>MIN No.</th>
                     <th style={styles.th}>Date</th>
-                    <th style={styles.th}>Material Name</th>
-                    <th style={styles.th}>Quantity Used</th>
-                    <th style={styles.th}>Purpose</th>
+                    <th style={styles.th}>Project</th>
+                    <th style={styles.th}>Material</th>
+                    <th style={styles.th}>Quantity</th>
+                    <th style={styles.th}>Unit</th>
+                    <th style={styles.th}>Activity / Purpose</th>
+                    <th style={styles.th}>Issued By</th>
+                    <th style={styles.th}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {usageHistory.length === 0 ? (
+                  {issueHistory.length === 0 ? (
                     <tr>
-                      <td colSpan="4" style={{ padding: '24px', textAlign: 'center', color: '#999' }}>No material usage logged.</td>
+                      <td colSpan="9" style={{ padding: '24px', textAlign: 'center', color: '#999' }}>No material issue & usage records found.</td>
                     </tr>
                   ) : (
-                    usageHistory.map((item, i) => (
-                      <tr key={item.id || i} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={styles.td}>{item.date}</td>
-                        <td style={styles.tdBold}>{item.materialName}</td>
-                        <td style={styles.td}>{item.quantity} {item.unit}</td>
-                        <td style={styles.td}>{item.purpose}</td>
-                      </tr>
+                    issueHistory.map((item, i) => (
+                      <React.Fragment key={item._id || i}>
+                        <tr style={{ borderBottom: '1px solid #eee' }}>
+                          <td style={styles.tdBold}>{item.minNumber || '-'}</td>
+                          <td style={styles.td}>{formatDate(item.usageDate)}</td>
+                          <td style={styles.td}>{item.projectName}</td>
+                          <td style={styles.tdBold}>{item.materialName}</td>
+                          <td style={styles.td}>{item.actualQty}</td>
+                          <td style={styles.td}>{item.unit}</td>
+                          <td style={styles.td}>{item.activity || '-'}</td>
+                          <td style={styles.td}>{item.recordedBy}</td>
+                          <td style={styles.td}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedHistoryId(expandedHistoryId === (item._id || i) ? null : (item._id || i))}
+                              style={{ background: '#e3f2fd', color: '#1565c0', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                            >
+                              {expandedHistoryId === (item._id || i) ? 'Hide' : 'View'}
+                            </button>
+                          </td>
+                        </tr>
+                        {expandedHistoryId === (item._id || i) && (
+                          <tr>
+                            <td colSpan="9" style={{ padding: '12px 20px', background: '#f8fafc', textAlign: 'left', fontSize: '13px', color: '#475569' }}>
+                              <strong>Notes:</strong> {item.notes || 'None'}<br />
+                              {item.plannedQty > 0 && (
+                                <>
+                                  <strong>BOM Planned Qty:</strong> {item.plannedQty} {item.unit} &nbsp;|&nbsp;
+                                  <strong>Variance:</strong> {item.variance > 0 ? '+' : ''}{item.variance} {item.unit}
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))
                   )}
                 </tbody>
@@ -1515,6 +1462,68 @@ function SiteStoreDashboard({ user, onLogout }) {
           ELS Construction Material Management System &copy;2026
         </div>
       </main>
+
+      {/* Requested Materials popup - opened via "View" on a My Material Requests row */}
+      {viewRequest && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }} onClick={() => setViewRequest(null)}>
+          <div style={{ background: 'white', padding: '28px', borderRadius: '12px', width: '560px', maxWidth: '90%', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 10px 25px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#0d1b4b', fontSize: '18px' }}>Requested Materials</h3>
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>{viewRequest.requestNo} — {viewRequest.siteStoreName}</div>
+              </div>
+              <button
+                onClick={() => setViewRequest(null)}
+                style={{ background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#64748b', lineHeight: 1 }}
+              >
+                &times;
+              </button>
+            </div>
+            <table style={styles.table}>
+              <thead>
+                <tr style={styles.tableHeaderRow}>
+                  <th style={styles.th}>Material</th>
+                  <th style={styles.th}>Requested</th>
+                  <th style={styles.th}>Received</th>
+                  <th style={styles.th}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {viewRequest.materials.map((m, i) => {
+                  const outstanding = m.quantity - (m.fulfilledQty || 0);
+                  return (
+                    <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={styles.td}>{m.materialName}</td>
+                      <td style={styles.td}>{m.quantity} {m.unit}</td>
+                      <td style={styles.td}>{m.fulfilledQty || 0} {m.unit}</td>
+                      <td style={styles.td}>
+                        {outstanding <= 0 && m.fulfilledQty > 0 ? (
+                          <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Fully received</span>
+                        ) : m.fulfilledQty > 0 ? (
+                          <span style={{ background: '#fff3e0', color: '#b7791f', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{outstanding} short</span>
+                        ) : (
+                          <span style={{ background: '#f1f5f9', color: '#64748b', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Awaiting</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {viewRequest.notes && (
+              <div style={{ marginTop: '16px', fontSize: '13px', color: '#475569' }}>
+                <strong>Notes:</strong> {viewRequest.notes}
+              </div>
+            )}
+            <button
+              onClick={() => setViewRequest(null)}
+              style={{ marginTop: '20px', width: '100%', padding: '10px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Low Stock Popup Alerts (Mandatory overlay) */}
       {(() => {
@@ -1549,13 +1558,13 @@ function SiteStoreDashboard({ user, onLogout }) {
                         color: isCritical ? '#991b1b' : '#c2410c',
                         padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' 
                       }}>
-                        {isCritical ? 'Critical' : 'Low Stock'}
+                        {isCritical ? 'Critical' : 'Pre-Order'}
                       </span>
                     </div>
                   );
                 })}
               </div>
-              <button 
+              <button
                 onClick={() => {
                   const updated = { ...acknowledgedAlerts };
                   alertsToTrigger.forEach(m => {

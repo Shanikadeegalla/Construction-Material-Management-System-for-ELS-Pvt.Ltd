@@ -21,7 +21,7 @@ const stockMovementSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['GRN Receipt', 'MIN Issue', 'MIN Receipt', 'Usage', 'Adjustment'],
+    enum: ['GRN Receipt', 'MIN Issue', 'MIN Receipt', 'Usage', 'Adjustment', 'MTN Transfer Out', 'MTN Transfer In'],
     required: true
   },
   quantityChange: {

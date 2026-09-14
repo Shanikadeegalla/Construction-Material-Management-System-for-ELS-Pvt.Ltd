@@ -5,11 +5,18 @@ const SECRET_KEY = process.env.ENCRYPTION_KEY || 'mysecretkeymustbe32byteslong12
 const KEY_BUFFER = Buffer.from(SECRET_KEY.substring(0, 32), 'utf8');
 const FIXED_IV = Buffer.from('1234567890123456'); // 16 bytes fixed IV for database fields
 
+// Transit key is a SHA-256 hash of SECRET_KEY (always exactly 32 bytes,
+// regardless of that string's own length) rather than Buffer.alloc(32, ...)
+// truncation, so it derives identically to the frontend's CryptoJS.SHA256()
+// - Buffer.alloc silently drops/repeats bytes for non-32-byte strings, which
+// does not match how crypto-js parses the same string on the other side.
+const TRANSIT_KEY = crypto.createHash('sha256').update(SECRET_KEY).digest();
+
 // For Transit: random IV
 export function encryptTransit(text) {
   if (text === null || text === undefined) return text;
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ALGORITHM, KEY_BUFFER, iv);
+  const cipher = crypto.createCipheriv(ALGORITHM, TRANSIT_KEY, iv);
   let encrypted = cipher.update(String(text), 'utf8', 'hex');
   encrypted += cipher.final('hex');
   return iv.toString('hex') + ':' + encrypted;
@@ -21,7 +28,7 @@ export function decryptTransit(text) {
     const parts = text.split(':');
     const iv = Buffer.from(parts[0], 'hex');
     const encryptedText = Buffer.from(parts[1], 'hex');
-    const decipher = crypto.createDecipheriv(ALGORITHM, KEY_BUFFER, iv);
+    const decipher = crypto.createDecipheriv(ALGORITHM, TRANSIT_KEY, iv);
     let decrypted = decipher.update(encryptedText);
     decrypted = Buffer.concat([decrypted, decipher.final()]);
     return decrypted.toString('utf8');

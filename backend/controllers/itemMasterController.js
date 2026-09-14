@@ -1,12 +1,13 @@
 import ItemMaster from '../models/ItemMaster.js';
 import Material from '../models/Material.js';
+import { syncThresholdsToMaterials } from '../utils/materialSync.js';
 
-// Generate the next unique sequential Material Code (e.g. MAT-0001)
+// Generate the next unique sequential Material Code (e.g. MAT0001)
 const generateNextMaterialCode = async () => {
   let next = (await ItemMaster.countDocuments()) + 1;
   let candidate;
   do {
-    candidate = `MAT-${String(next).padStart(4, '0')}`;
+    candidate = `MAT${String(next).padStart(4, '0')}`;
     next++;
   } while (await ItemMaster.findOne({ materialCode: candidate }));
   return candidate;
@@ -139,16 +140,13 @@ export const updateItemMaster = async (req, res) => {
 
     await item.save();
 
-    // Propagate stock thresholds to existing Material records of the same name
-    await Material.updateMany(
-      { name: item.materialName },
-      {
-        materialCode: item.materialCode,
-        minimumStock: item.minimumStock,
-        maximumStock: item.maximumStock,
-        reorderLevel: item.reorderLevel
-      }
-    );
+    // Propagate updated stock thresholds and unit cost to existing Material
+    // stock records (MainStore and SiteStore) with the same name.
+    try {
+      await syncThresholdsToMaterials(item);
+    } catch (propagationError) {
+      console.error('Failed to propagate Item Master update to Material stock records:', propagationError);
+    }
 
     res.status(200).json({ success: true, data: item });
   } catch (error) {

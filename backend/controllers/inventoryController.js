@@ -165,6 +165,9 @@ export const createGRN = async (req, res) => {
       if (!po) {
         return res.status(400).json({ message: `Purchase Order '${poReference}' not found.` });
       }
+      if (po.status === 'Delivered') {
+        return res.status(400).json({ message: `Purchase Order '${poReference}' has already been fully received. A duplicate GRN cannot be created against it.` });
+      }
       poId = po._id;
       if (po.supplier) {
         supplierId = po.supplier;

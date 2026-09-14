@@ -131,3 +131,39 @@ body.dark-mode .dashboard-content .settings-no-invert img {
   border-color: #fecaca;
 }
 
+/* Shared brand palette (matches the login page) */
+:root {
+  --color-primary: #2563eb;
+  --color-primary-dark: #0d1b4b;
+  --color-primary-light: #4f9bff;
+  --color-primary-hover: #1d4ed8;
+}
+
+/* Reusable loading spinner, shared across dashboards */
+.app-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(37, 99, 235, 0.25);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  display: inline-block;
+  animation: app-spin 0.7s linear infinite;
+}
+.app-spinner.app-spinner-light {
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+}
+@keyframes app-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Default focus glow for plain inputs/selects/textareas across the dashboards
+   (skipped when an element already manages its own focus state via a class
+   like .po-field, or opts out with .no-focus-glow). */
+.dashboard-content input:not(.po-field):not(.no-focus-glow):focus,
+.dashboard-content select:not(.po-field):not(.no-focus-glow):focus,
+.dashboard-content textarea:not(.po-field):not(.no-focus-glow):focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+

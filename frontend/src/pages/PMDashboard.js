@@ -12,8 +12,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [modal, setModal] = useState(null);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [transfers, setTransfers] = useState([]);
-  const [siteInventory, setSiteInventory] = useState([]);
-  const [siteInventorySearch, setSiteInventorySearch] = useState('');
 
   // New BOM Form State (Phase 4)
   const [bomProjectId, setBomProjectId] = useState('');
@@ -246,31 +244,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
-  const fetchSiteInventory = async () => {
-    try {
-      const res = await fetch('http://localhost:5000/api/admin/projects-overview', {
-        headers: getHeaders()
-      });
-      const data = await res.json();
-      let siteList = data.success && Array.isArray(data.data) ? data.data : [];
-      if (!siteList || siteList.length === 0) {
-        siteList = [
-          { _id: '1', name: 'Portland Cement', quantity: 150, unit: 'bags', project_id: { projectName: 'Colombo Port Expansion' }, updatedAt: new Date().toISOString() },
-          { _id: '2', name: 'TMT Steel 12mm', quantity: 15, unit: 'ton', project_id: { projectName: 'Marina Heights' }, updatedAt: new Date(Date.now() - 3600000).toISOString() },
-          { _id: '3', name: 'River Sand', quantity: 45, unit: 'cube', projectId: { projectName: 'Colombo Port Expansion' }, updatedAt: new Date(Date.now() - 7200000).toISOString() }
-        ];
-      }
-      setSiteInventory(siteList);
-    } catch (err) {
-      console.error('Error fetching site inventory:', err);
-      setSiteInventory([
-        { _id: '1', name: 'Portland Cement', quantity: 150, unit: 'bags', project_id: { projectName: 'Colombo Port Expansion' }, updatedAt: new Date().toISOString() },
-        { _id: '2', name: 'TMT Steel 12mm', quantity: 15, unit: 'ton', project_id: { projectName: 'Marina Heights' }, updatedAt: new Date(Date.now() - 3600000).toISOString() },
-        { _id: '3', name: 'River Sand', quantity: 45, unit: 'cube', projectId: { projectName: 'Colombo Port Expansion' }, updatedAt: new Date(Date.now() - 7200000).toISOString() }
-      ]);
-    }
-  };
-
   const hasSession = () => {
     try {
       return !!JSON.parse(localStorage.getItem('user'))?.token;
@@ -282,7 +255,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchAllData = async () => {
     if (!hasSession()) return;
     setLoading(true);
-    await Promise.all([fetchRequests(), fetchBoms(), fetchNotifications(), fetchBomNotifications(), fetchProjects(), fetchTransfers(), fetchSiteInventory(), fetchMaterialMaster()]);
+    await Promise.all([fetchRequests(), fetchBoms(), fetchNotifications(), fetchBomNotifications(), fetchProjects(), fetchTransfers(), fetchMaterialMaster()]);
     setLoading(false);
   };
 
@@ -829,7 +802,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const stats = [
     { label: 'Active Projects', value: activeProjectsCount, color: '#0d1b4b', type: 'active-projects' },
     { label: 'BOM Submitted', value: bomsSubmittedCount, color: '#2563eb', type: 'boms-submitted' },
-    { label: 'Pending Requests', value: pendingRequestsCount, color: '#1e3a8a', type: 'pending-requests' },
+    { label: 'Pending Requests', value: pendingRequestsCount, color: '#0d1b4b', type: 'pending-requests' },
     { label: 'Issued This Month', value: issuedThisMonthCount, color: '#2e7d32', type: 'issued-this-month' },
   ];
 
@@ -1099,7 +1072,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <td style={{ padding: '12px' }}>
                       <span style={{
                         background: p.status === 'Active' ? '#e8f5e9' : p.status === 'Completed' ? '#e3f2fd' : p.status === 'On Hold' || p.status === 'OnHold' ? '#ffebee' : '#dbeafe',
-                        color: p.status === 'Active' ? '#2e7d32' : p.status === 'Completed' ? '#1565c0' : p.status === 'On Hold' || p.status === 'OnHold' ? '#c62828' : '#1e3a8a',
+                        color: p.status === 'Active' ? '#2e7d32' : p.status === 'Completed' ? '#1565c0' : p.status === 'On Hold' || p.status === 'OnHold' ? '#c62828' : '#0d1b4b',
                         padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '700'
                       }}>{p.status}</span>
                     </td>
@@ -1212,7 +1185,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           <td style={{ padding: '12px 16px', fontSize: '13px' }}>
             <span style={{
               background: b.status === 'Approved' ? '#e8f5e9' : b.status === 'Rejected' ? '#ffebee' : '#dbeafe',
-              color: b.status === 'Approved' ? '#2e7d32' : b.status === 'Rejected' ? '#c62828' : '#1e3a8a',
+              color: b.status === 'Approved' ? '#2e7d32' : b.status === 'Rejected' ? '#c62828' : '#0d1b4b',
               padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '700'
             }}>{b.status}</span>
           </td>
@@ -1243,11 +1216,11 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
             ))}
           </td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>
-            <div style={{ fontWeight: 'bold', color: r.urgency === 'Critical' ? '#c62828' : r.urgency === 'Urgent' ? '#1e3a8a' : '#1565c0' }}>{r.urgency || 'Normal'}</div>
+            <div style={{ fontWeight: 'bold', color: r.urgency === 'Critical' ? '#c62828' : r.urgency === 'Urgent' ? '#0d1b4b' : '#1565c0' }}>{r.urgency || 'Normal'}</div>
             <div>{formatDate(r.createdAt)}</div>
           </td>
           <td style={{ padding: '12px 16px', fontSize: '13px' }}>
-            <span style={{ background: '#dbeafe', color: '#1e3a8a', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Pending</span>
+            <span style={{ background: '#dbeafe', color: '#0d1b4b', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Pending</span>
           </td>
         </tr>
       ));
@@ -1347,74 +1320,12 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     );
   };
 
-  const renderSiteStoreInventory = () => {
-    const query = siteInventorySearch.toLowerCase();
-    const filtered = siteInventory.filter(item => {
-      const siteName = item.project_id?.projectName || item.projectId?.projectName || item.project_id?.name || item.projectId?.name || 'Main Site Store';
-      const matName = item.name || '';
-      return siteName.toLowerCase().includes(query) || matName.toLowerCase().includes(query);
-    });
-
-    return (
-      <div style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #0d1b4b', paddingBottom: '12px', marginBottom: '20px' }}>
-          <h3 style={{ margin: 0, color: '#0d1b4b', fontWeight: '700', fontSize: '16px' }}>🏪 Real-Time Site Stores Inventory</h3>
-        </div>
-
-        <div style={{ marginBottom: '20px' }}>
-          <input 
-            type="text" 
-            placeholder="Search by Site Store Name or Material Name..."
-            value={siteInventorySearch}
-            onChange={e => setSiteInventorySearch(e.target.value)}
-            style={{ width: '100%', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '14px', outline: 'none' }}
-          />
-        </div>
-
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-            <thead>
-              <tr style={{ background: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
-                <th style={{ padding: '12px 16px', fontSize: '12px', color: '#475569', fontWeight: '700', textTransform: 'uppercase' }}>Site Store Name</th>
-                <th style={{ padding: '12px 16px', fontSize: '12px', color: '#475569', fontWeight: '700', textTransform: 'uppercase' }}>Material Name</th>
-                <th style={{ padding: '12px 16px', fontSize: '12px', color: '#475569', fontWeight: '700', textTransform: 'uppercase' }}>Current Stock Balance</th>
-                <th style={{ padding: '12px 16px', fontSize: '12px', color: '#475569', fontWeight: '700', textTransform: 'uppercase' }}>Unit</th>
-                <th style={{ padding: '12px 16px', fontSize: '12px', color: '#475569', fontWeight: '700', textTransform: 'uppercase' }}>Last Updated Date/Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((item, idx) => {
-                const siteName = item.project_id?.projectName || item.projectId?.projectName || item.project_id?.name || item.projectId?.name || 'Main Site Store';
-                return (
-                  <tr key={item._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{siteName}</td>
-                    <td style={{ padding: '12px 16px', fontSize: '13px' }}>{item.name}</td>
-                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: item.quantity <= 10 ? '#ef4444' : '#0f172a' }}>{item.quantity}</td>
-                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#64748b' }}>{item.unit}</td>
-                    <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>
-                      {item.updatedAt ? formatDateTime(item.updatedAt) : formatDateTime(new Date())}
-                    </td>
-                  </tr>
-                );
-              })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan="5" style={{ padding: '24px', textAlign: 'center', color: '#94a3b8' }}>No site store stock balance records found.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div style={{ display: 'flex', minHeight: '100vh', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
       {/* Sidebar */}
       <div style={{ width: '240px', background: '#0d1b4b', color: 'white', display: 'flex', flexDirection: 'column', position: 'fixed', height: '100vh', zIndex: 100 }}>
         <div style={{ padding: '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
+          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }} />
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
             <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>PM Workspace</div>
@@ -1433,7 +1344,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           {[
             { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
             { id: 'projects', label: 'Projects', icon: '📁' },
-            { id: 'site-inventory', label: 'Site Inventory', icon: '🏪' },
             { id: 'bom', label: 'BOM Management', icon: '🏗️' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
@@ -1454,7 +1364,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           <h2 style={{ margin: 0, fontSize: '20px', color: '#0d1b4b', fontWeight: '700' }}>
             {activePage === 'dashboard' && 'PM Executive Overview'}
             {activePage === 'projects' && 'Project Workspace Management'}
-            {activePage === 'site-inventory' && 'Real-Time Site Stores Inventory'}
             {activePage === 'bom' && 'Bill of Materials (BOM) Management'}
             {activePage === 'settings' && 'User Settings & Preferences'}
           </h2>
@@ -1509,7 +1418,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                       const isApproved = (notif.type || '').toLowerCase() === 'bom_approved';
                       const isRejected = (notif.type || '').toLowerCase() === 'bom_rejected';
                       const label = isApproved ? 'Approved' : isRejected ? 'Rejected' : 'Submitted';
-                      const color = isApproved ? '#2e7d32' : isRejected ? '#c62828' : '#1e3a8a';
+                      const color = isApproved ? '#2e7d32' : isRejected ? '#c62828' : '#0d1b4b';
                       const bg = isApproved ? '#e8f5e9' : isRejected ? '#ffebee' : '#dbeafe';
                       return (
                         <div
@@ -1719,7 +1628,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                       <span style={{
                         display: 'inline-block',
                         background: currentBomMeta?.status === 'Approved' ? '#e8f5e9' : currentBomMeta?.status === 'Rejected' ? '#ffebee' : '#dbeafe',
-                        color: currentBomMeta?.status === 'Approved' ? '#2e7d32' : currentBomMeta?.status === 'Rejected' ? '#c62828' : '#1e3a8a',
+                        color: currentBomMeta?.status === 'Approved' ? '#2e7d32' : currentBomMeta?.status === 'Rejected' ? '#c62828' : '#0d1b4b',
                         padding: '3px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '700'
                       }}>{currentBomMeta?.status || 'Draft'}</span>
                     </div>
@@ -1813,21 +1722,21 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                 {/* Step 5: Duplicate Detection Alert */}
                 {duplicateWarning && (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#dbeafe', border: '1px solid #ffe0b2', padding: '12px 16px', borderRadius: '6px', marginBottom: '20px' }}>
-                    <span style={{ fontSize: '13px', color: '#1e3a8a', fontWeight: '600' }}>
+                    <span style={{ fontSize: '13px', color: '#0d1b4b', fontWeight: '600' }}>
                       ⚠️ Material "{duplicateWarning.materialName}" already exists in this BOM. Increase quantity instead?
                     </span>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button
                         type="button"
                         onClick={handleMergeDuplicate}
-                        style={{ background: '#1e3a8a', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                        style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
                       >
                         Merge (Add Quantities)
                       </button>
                       <button
                         type="button"
                         onClick={handleKeepSeparate}
-                        style={{ background: 'white', color: '#1e3a8a', border: '1px solid #1e3a8a', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                        style={{ background: 'white', color: '#0d1b4b', border: '1px solid #0d1b4b', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
                       >
                         Keep Separate
                       </button>
@@ -2122,7 +2031,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                           <td style={{ padding: '12px' }}>
                             <span style={{
                               background: b.status === 'Approved' ? '#e8f5e9' : b.status === 'Rejected' ? '#ffebee' : '#dbeafe',
-                              color: b.status === 'Approved' ? '#2e7d32' : b.status === 'Rejected' ? '#c62828' : '#1e3a8a',
+                              color: b.status === 'Approved' ? '#2e7d32' : b.status === 'Rejected' ? '#c62828' : '#0d1b4b',
                               padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '700'
                             }}>{b.status}</span>
                           </td>
@@ -2147,7 +2056,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'projects' && renderProjects()}
-          {activePage === 'site-inventory' && renderSiteStoreInventory()}
           {activePage === 'settings' && <SettingsPage user={user} onLogout={onLogout} onUserUpdate={onUserUpdate} />}
 
           {/* Footer */}
@@ -2324,7 +2232,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           return (
             <span style={{
               background: isAct ? '#e8f5e9' : isComp ? '#e3f2fd' : isHold ? '#ffebee' : '#dbeafe',
-              color: isAct ? '#2e7d32' : isComp ? '#1565c0' : isHold ? '#c62828' : '#1e3a8a',
+              color: isAct ? '#2e7d32' : isComp ? '#1565c0' : isHold ? '#c62828' : '#0d1b4b',
               padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '700', textTransform: 'capitalize', display: 'inline-block'
             }}>
               {s}

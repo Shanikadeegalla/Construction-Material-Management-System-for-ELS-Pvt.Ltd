@@ -999,7 +999,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       {/* Sidebar */}
       <div style={{ width: '240px', background: '#0d1b4b', color: 'white', display: 'flex', flexDirection: 'column', position: 'fixed', height: '100vh', zIndex: 100 }}>
         <div style={{ padding: '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'contain' }} />
+          <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }} />
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
             <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Executive Director</div>
@@ -1170,7 +1170,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                         <td style={{ padding: '10px 12px' }}>
                           <span style={{
                             background: bom.status === 'Approved' ? '#e8f5e9' : bom.status === 'Rejected' ? '#ffebee' : '#dbeafe',
-                            color: bom.status === 'Approved' ? '#2e7d32' : bom.status === 'Rejected' ? '#c62828' : '#1e3a8a',
+                            color: bom.status === 'Approved' ? '#2e7d32' : bom.status === 'Rejected' ? '#c62828' : '#0d1b4b',
                             padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: '600'
                           }}>{bom.status}</span>
                         </td>
@@ -1242,7 +1242,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                             <td style={{ padding: '8px 12px', textAlign: 'center' }}>
                               <span style={{
                                 background: po.status === 'Approved' ? '#e8f5e9' : po.status === 'Rejected' ? '#ffebee' : '#dbeafe',
-                                color: po.status === 'Approved' ? '#2e7d32' : po.status === 'Rejected' ? '#c62828' : '#1e3a8a',
+                                color: po.status === 'Approved' ? '#2e7d32' : po.status === 'Rejected' ? '#c62828' : '#0d1b4b',
                                 padding: '2px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: '600'
                               }}>
                                 {po.status}
@@ -1312,7 +1312,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                         <td style={{ padding: '12px 16px' }}>
                           <span style={{
                             background: bom.status === 'Approved' ? '#e8f5e9' : bom.status === 'Rejected' ? '#ffebee' : '#dbeafe',
-                            color: bom.status === 'Approved' ? '#2e7d32' : bom.status === 'Rejected' ? '#c62828' : '#1e3a8a',
+                            color: bom.status === 'Approved' ? '#2e7d32' : bom.status === 'Rejected' ? '#c62828' : '#0d1b4b',
                             padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '700'
                           }}>{bom.status}</span>
                         </td>
@@ -1383,7 +1383,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                             <span style={{
                               display: 'inline-block',
                               background: po.status === 'Approved' ? '#e8f5e9' : po.status === 'Rejected' ? '#ffebee' : '#dbeafe',
-                              color: po.status === 'Approved' ? '#2e7d32' : po.status === 'Rejected' ? '#c62828' : '#1e3a8a',
+                              color: po.status === 'Approved' ? '#2e7d32' : po.status === 'Rejected' ? '#c62828' : '#0d1b4b',
                               padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '700', minWidth: '72px', textAlign: 'center'
                             }}>{po.status}</span>
                           </td>
@@ -1453,7 +1453,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                             <span style={{
                               display: 'inline-block',
                               background: inv.status === 'Approved' ? '#e8f5e9' : inv.status === 'Paid' ? '#e0f2f1' : inv.status === 'Rejected' ? '#ffebee' : '#dbeafe',
-                              color: inv.status === 'Approved' ? '#2e7d32' : inv.status === 'Paid' ? '#00695c' : inv.status === 'Rejected' ? '#c62828' : '#1e3a8a',
+                              color: inv.status === 'Approved' ? '#2e7d32' : inv.status === 'Paid' ? '#00695c' : inv.status === 'Rejected' ? '#c62828' : '#0d1b4b',
                               padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '700', minWidth: '72px', textAlign: 'center'
                             }}>{inv.status}</span>
                           </td>
@@ -1586,7 +1586,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
               <div><strong style={{ color: '#0d1b4b' }}>Project Location:</strong> {viewingBom.projectId?.location || '-'}</div>
               <div><strong style={{ color: '#0d1b4b' }}>Submitted By (PM):</strong> {viewingBom.createdBy?.name || viewingBom.createdBy || 'Project Manager'}</div>
               <div><strong style={{ color: '#0d1b4b' }}>Date Created:</strong> {formatDate(viewingBom.createdAt)}</div>
-              <div><strong style={{ color: '#0d1b4b' }}>Current Status:</strong> <span style={{ fontWeight: '700', color: viewingBom.status === 'Approved' ? '#2e7d32' : viewingBom.status === 'Rejected' ? '#c62828' : '#1e3a8a' }}>{viewingBom.status}</span></div>
+              <div><strong style={{ color: '#0d1b4b' }}>Current Status:</strong> <span style={{ fontWeight: '700', color: viewingBom.status === 'Approved' ? '#2e7d32' : viewingBom.status === 'Rejected' ? '#c62828' : '#0d1b4b' }}>{viewingBom.status}</span></div>
               {viewingBom.rejectionReason && (
                 <div style={{ gridColumn: 'span 2', color: '#c62828', background: '#fdf2f2', padding: '8px', borderRadius: '4px', border: '1px solid #fecaca' }}>
                   <strong>Director Feedback / Note:</strong> {viewingBom.rejectionReason}
