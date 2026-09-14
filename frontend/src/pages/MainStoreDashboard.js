@@ -1598,6 +1598,73 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </div>
                 )}
               </div>
+
+              {/* Low Stock Alert Notification Card */}
+              {(() => {
+                const alertsToTrigger = materials.filter(m => {
+                  const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+                  return m.quantity < reorder && m.location === 'MainStore';
+                });
+                const unacknowledged = alertsToTrigger.filter(m => !acknowledgedAlerts[m._id]);
+
+                return (
+                  <div style={{ ...styles.tableContainer, padding: '20px', borderTop: '4px solid #ef4444' }}>
+                    <h3 style={{ color: '#ef4444', margin: '0 0 12px', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      🚨 Low Stock Alert Notification (Main Store)
+                    </h3>
+                    <p style={{ color: '#475569', fontSize: '13px', marginBottom: '14px' }}>
+                      The following materials have fallen below their reorder levels. Please review and restock:
+                    </p>
+                    {alertsToTrigger.length === 0 ? (
+                      <div style={{ color: '#64748b', fontSize: '13px', padding: '10px 0' }}>
+                        All materials in Main Store have sufficient stock levels.
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ maxHeight: '220px', overflowY: 'auto', marginBottom: '16px' }}>
+                          {alertsToTrigger.map(m => {
+                            const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+                            const isCritical = m.quantity <= (m.minimumStock || 10);
+                            const isAck = !!acknowledgedAlerts[m._id];
+                            return (
+                              <div key={m._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f1f5f9', fontSize: '13px', opacity: isAck ? 0.6 : 1 }}>
+                                <div>
+                                  <strong style={{ color: '#0f172a' }}>{m.name}</strong>
+                                  <div style={{ fontSize: '11px', color: '#64748b' }}>Stock: {m.quantity} {m.unit} / Reorder: {reorder} {m.unit}</div>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ 
+                                    background: isCritical ? '#fee2e2' : '#ffedd5', 
+                                    color: isCritical ? '#991b1b' : '#c2410c',
+                                    padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' 
+                                  }}>
+                                    {isCritical ? 'Critical' : 'Low Stock'}
+                                  </span>
+                                  {isAck && <span style={{ fontSize: '11px', color: '#16a34a', fontWeight: '600' }}>✓ Ack</span>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {unacknowledged.length > 0 && (
+                          <button 
+                            onClick={() => {
+                              const updated = { ...acknowledgedAlerts };
+                              alertsToTrigger.forEach(m => {
+                                updated[m._id] = true;
+                              });
+                              setAcknowledgedAlerts(updated);
+                            }}
+                            style={{ width: '100%', padding: '10px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+                          >
+                            Acknowledge & Dismiss Alerts
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -3180,61 +3247,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         </div>
       </main>
 
-      {/* Low Stock Popup Alerts (Mandatory overlay) */}
-      {(() => {
-        const alertsToTrigger = materials.filter(m => {
-          const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
-          return m.quantity < reorder && m.location === 'MainStore';
-        });
-        const unacknowledged = alertsToTrigger.filter(m => !acknowledgedAlerts[m._id]);
-        if (unacknowledged.length === 0) return null;
-        
-        return (
-          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-            <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '500px', boxShadow: '0 10px 25px rgba(0,0,0,0.3)', borderTop: '6px solid #ef4444', textAlign: 'left' }}>
-              <h3 style={{ color: '#ef4444', margin: '0 0 16px', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                🚨 Low Stock Alert Notification (Main Store)
-              </h3>
-              <p style={{ color: '#475569', fontSize: '14px', marginBottom: '20px' }}>
-                The following materials have fallen below their reorder levels. Please review and restock:
-              </p>
-              <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '24px' }}>
-                {unacknowledged.map(m => {
-                  const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
-                  const isCritical = m.quantity <= (m.minimumStock || 10);
-                  return (
-                    <div key={m._id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}>
-                      <div>
-                        <strong style={{ color: '#0f172a' }}>{m.name}</strong>
-                        <div style={{ fontSize: '11px', color: '#64748b' }}>Stock: {m.quantity} {m.unit} / Reorder: {reorder} {m.unit}</div>
-                      </div>
-                      <span style={{ 
-                        background: isCritical ? '#fee2e2' : '#ffedd5', 
-                        color: isCritical ? '#991b1b' : '#c2410c',
-                        padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' 
-                      }}>
-                        {isCritical ? 'Critical' : 'Low Stock'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-              <button 
-                onClick={() => {
-                  const updated = { ...acknowledgedAlerts };
-                  alertsToTrigger.forEach(m => {
-                    updated[m._id] = true;
-                  });
-                  setAcknowledgedAlerts(updated);
-                }}
-                style={{ width: '100%', padding: '12px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-              >
-                Acknowledge & Dismiss Alerts
-              </button>
-            </div>
-          </div>
-        );
-      })()}
+
       {renderStoreStatsModal()}
     </div>
   );

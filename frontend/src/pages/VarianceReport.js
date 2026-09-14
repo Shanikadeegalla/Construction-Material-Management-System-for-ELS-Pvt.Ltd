@@ -18,6 +18,7 @@ import { formatDateTime, formatDayMonth } from '../utils/dateUtils';
 const VarianceReport = () => {
   const [reportData, setReportData] = useState([]);
   const [timelineData, setTimelineData] = useState([]);
+  const [totalWastageCost, setTotalWastageCost] = useState(0);
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState('All');
   const [loading, setLoading] = useState(false);
@@ -42,6 +43,7 @@ const VarianceReport = () => {
       if (data.success) {
         setReportData(data.report || []);
         setTimelineData(data.timeline || []);
+        setTotalWastageCost(data.totalWastageCost || 0);
         
         // Extract unique projects
         const uniqueProjects = Array.from(new Set((data.report || []).map(item => item.projectName)));
@@ -53,13 +55,14 @@ const VarianceReport = () => {
       setError(err.message || 'Failed to connect to backend.');
       // Mock data for demo purposes if backend fails
       const mockReport = [
-        { projectName: 'Colombo Port Expansion', materialName: 'Portland Cement', unit: 'bags', plannedQty: 300, actualQty: 315, varianceQty: 15, variancePct: 5.0 },
-        { projectName: 'Colombo Port Expansion', materialName: 'TMT Steel 12mm', unit: 'ton', plannedQty: 10, actualQty: 12, varianceQty: 2, variancePct: 20.0 },
-        { projectName: 'Colombo Port Expansion', materialName: 'River Sand', unit: 'm3', plannedQty: 50, actualQty: 48, varianceQty: -2, variancePct: -4.0 },
-        { projectName: 'Marina Heights', materialName: 'Portland Cement', unit: 'bags', plannedQty: 500, actualQty: 560, varianceQty: 60, variancePct: 12.0 },
-        { projectName: 'Marina Heights', materialName: 'TMT Steel 12mm', unit: 'ton', plannedQty: 15, actualQty: 15.5, varianceQty: 0.5, variancePct: 3.33 },
+        { projectName: 'Colombo Port Expansion', materialName: 'Portland Cement', unit: 'bags', plannedQty: 300, actualQty: 315, varianceQty: 15, variancePct: 5.0, wastageQty: 15, wastageCost: 22500, severity: 'Moderate' },
+        { projectName: 'Colombo Port Expansion', materialName: 'TMT Steel 12mm', unit: 'ton', plannedQty: 10, actualQty: 12, varianceQty: 2, variancePct: 20.0, wastageQty: 2, wastageCost: 500000, severity: 'Significant' },
+        { projectName: 'Colombo Port Expansion', materialName: 'River Sand', unit: 'm3', plannedQty: 50, actualQty: 48, varianceQty: -2, variancePct: -4.0, wastageQty: 0, wastageCost: 0, severity: 'None' },
+        { projectName: 'Marina Heights', materialName: 'Portland Cement', unit: 'bags', plannedQty: 500, actualQty: 560, varianceQty: 60, variancePct: 12.0, wastageQty: 60, wastageCost: 90000, severity: 'Significant' },
+        { projectName: 'Marina Heights', materialName: 'TMT Steel 12mm', unit: 'ton', plannedQty: 15, actualQty: 15.5, varianceQty: 0.5, variancePct: 3.33, wastageQty: 0.5, wastageCost: 125000, severity: 'Moderate' },
       ];
       setReportData(mockReport);
+      setTotalWastageCost(737500);
       setProjects(['Colombo Port Expansion', 'Marina Heights']);
       
       const mockTimeline = [
@@ -83,6 +86,31 @@ const VarianceReport = () => {
   const filteredReport = selectedProject === 'All'
     ? reportData
     : reportData.filter(item => item.projectName === selectedProject);
+
+  // Wastage Insights rows and total calculation
+  const wastageRows = filteredReport
+    .filter(item => item.severity === 'Moderate' || item.severity === 'Significant')
+    .sort((a, b) => (b.wastageCost || 0) - (a.wastageCost || 0));
+
+  const currentTotalWastageCost = filteredReport.reduce((sum, item) => sum + (item.wastageCost || 0), 0);
+
+  const getSeverityBadgeStyle = (severity) => {
+    if (severity === 'Significant') {
+      return {
+        backgroundColor: '#ef444415',
+        color: '#dc2626',
+        border: '1px solid #ef444430'
+      };
+    }
+    if (severity === 'Moderate') {
+      return {
+        backgroundColor: '#f59e0b15',
+        color: '#d97706',
+        border: '1px solid #f59e0b30'
+      };
+    }
+    return {};
+  };
 
   // Grouped material data for Bar Chart (Plan vs Actual per material)
   const barChartData = filteredReport.reduce((acc, curr) => {
@@ -370,6 +398,62 @@ const VarianceReport = () => {
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Wastage Insights Section */}
+          <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', marginBottom: '24px', overflow: 'hidden' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+              <h3 style={{ margin: 0, color: 'white', fontSize: '15px', fontWeight: '700' }}>Wastage Insights</h3>
+              <div style={{ color: 'white', fontSize: '14px', fontWeight: '600' }}>
+                Total Wastage Cost: <span style={{ fontSize: '18px', fontWeight: '700', color: '#f59e0b', marginLeft: '6px' }}>LKR {(currentTotalWastageCost || 0).toLocaleString()}</span>
+              </div>
+            </div>
+            {wastageRows.length === 0 ? (
+              <div style={{ padding: '30px', textAlign: 'center', color: '#16a34a', fontWeight: '600', background: '#f0fdf4' }}>
+                No significant over-consumption detected.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '700px' }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '1px solid #cbd5e1' }}>
+                      <th style={styles.th}>Material Name</th>
+                      <th style={styles.th}>Project Name</th>
+                      <th style={styles.th}>Wastage Qty</th>
+                      <th style={styles.th}>Unit</th>
+                      <th style={styles.th}>Wastage Cost</th>
+                      <th style={styles.th}>Severity</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {wastageRows.map((item, index) => {
+                      const badgeStyle = getSeverityBadgeStyle(item.severity);
+                      return (
+                        <tr key={index} style={{ borderBottom: '1px solid #f1f5f9', background: index % 2 === 0 ? 'white' : '#f8fafc', transition: 'background 0.2s' }}>
+                          <td style={{ ...styles.td, fontWeight: '600', color: '#0d1b4b' }}>{item.materialName}</td>
+                          <td style={styles.td}>{item.projectName}</td>
+                          <td style={{ ...styles.td, color: '#dc2626', fontWeight: '600' }}>{(item.wastageQty || 0).toLocaleString()}</td>
+                          <td style={styles.td}>{item.unit}</td>
+                          <td style={{ ...styles.td, fontWeight: '700', color: '#dc2626' }}>LKR {(item.wastageCost || 0).toLocaleString()}</td>
+                          <td style={styles.td}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '4px 10px',
+                              borderRadius: '12px',
+                              fontSize: '11px',
+                              fontWeight: '700',
+                              ...badgeStyle
+                            }}>
+                              {item.severity}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Variance Comparison Table */}

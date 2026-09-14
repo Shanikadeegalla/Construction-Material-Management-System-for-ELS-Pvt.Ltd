@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import Invoice from '../models/Invoice.js';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '');
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 const CURRENCY = (process.env.STRIPE_CURRENCY || 'lkr').toLowerCase();
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
@@ -36,6 +36,21 @@ export const createCheckoutSession = async (req, res) => {
     }
     if (invoice.status !== 'Approved') {
       return res.status(400).json({ success: false, message: 'Only Director-approved invoices can be paid.' });
+    }
+
+    const isTestMode = !process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY === 'sk_test_placeholder';
+
+    if (isTestMode) {
+      invoice.status = 'Paid';
+      invoice.paidAt = new Date();
+      await invoice.save();
+
+      return res.status(200).json({
+        success: true,
+        simulated: true,
+        message: `Payment completed for Invoice ${invoice.invoiceNumber} (Test Simulation Mode).`,
+        data: invoice
+      });
     }
 
     const session = await stripe.checkout.sessions.create({

@@ -125,6 +125,7 @@ export const getVarianceReport = async (req, res) => {
           unit: mat.unit,
           plannedQty: Number(mat.plannedQty) || 0,
           actualQty: 0,
+          unitCost: Number(mat.estimatedUnitCost) || 0,
         };
       });
     });
@@ -145,6 +146,7 @@ export const getVarianceReport = async (req, res) => {
           unit: use.unit || 'bag',
           plannedQty: 0,
           actualQty: 0,
+          unitCost: 0,
         };
       }
       projectMaterials[proj][key].actualQty += Number(use.actualQty) || 0;
@@ -163,6 +165,17 @@ export const getVarianceReport = async (req, res) => {
         } else if (item.actualQty > 0) {
           variancePct = 100; // If no planned quantity but usage occurs
         }
+        const numericVariancePct = Number(variancePct.toFixed(2));
+        const wastageQty = Math.max(diff, 0);
+        const wastageCost = wastageQty * (item.unitCost || 0);
+
+        let severity = 'None';
+        if (numericVariancePct > 10) {
+          severity = 'Significant';
+        } else if (numericVariancePct > 0) {
+          severity = 'Moderate';
+        }
+
         reportData.push({
           projectName: item.projectName,
           materialName: item.materialName,
@@ -170,7 +183,10 @@ export const getVarianceReport = async (req, res) => {
           plannedQty: item.plannedQty,
           actualQty: item.actualQty,
           varianceQty: diff,
-          variancePct: Number(variancePct.toFixed(2))
+          variancePct: numericVariancePct,
+          wastageQty,
+          wastageCost,
+          severity
         });
       });
     });
@@ -184,10 +200,13 @@ export const getVarianceReport = async (req, res) => {
       recordedBy: u.recordedBy
     })).sort((a,b) => new Date(a.usageDate) - new Date(b.usageDate));
 
+    const totalWastageCost = reportData.reduce((sum, item) => sum + (item.wastageCost || 0), 0);
+
     res.status(200).json({
       success: true,
       report: reportData,
-      timeline: usageTimeline
+      timeline: usageTimeline,
+      totalWastageCost
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

@@ -292,8 +292,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         body: JSON.stringify({ invoiceId })
       });
       const data = await res.json();
-      if (data.success && data.url) {
-        window.location.href = data.url;
+      if (data.success) {
+        if (data.url) {
+          window.location.href = data.url;
+        } else {
+          setMessage(`✅ ${data.message || 'Payment successfully processed!'}`);
+          setPayingInvoiceId(null);
+          fetchData();
+        }
       } else {
         setError(data.message || 'Failed to start Stripe checkout.');
         setPayingInvoiceId(null);

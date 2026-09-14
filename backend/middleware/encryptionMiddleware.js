@@ -15,10 +15,15 @@ export const handleEncryption = (req, res, next) => {
     }
   }
 
-  // Only Site Store additionally expects its responses encrypted the same way.
+  // Only Site Store additionally expects its responses encrypted the same way,
+  // but only for successful (status < 400) responses. Error responses (4xx/5xx)
+  // remain unencrypted so HTTP error handlers can read the error message directly.
   if (req.headers['x-site-store'] === 'true') {
     const originalJson = res.json;
     res.json = function (body) {
+      if (res.statusCode >= 400) {
+        return originalJson.call(this, body);
+      }
       try {
         const encryptedBody = encryptTransit(JSON.stringify(body));
         return originalJson.call(this, { ciphertext: encryptedBody });

@@ -1,11 +1,12 @@
 import CryptoJS from 'crypto-js';
 
 const SECRET_KEY = 'mysecretkeymustbe32byteslong12345'; // must match backend
+const KEY_STRING = SECRET_KEY.substring(0, 32);
 
 // Encryption with random IV (transit)
 export function encryptTransit(text) {
   if (text === null || text === undefined) return text;
-  const key = CryptoJS.enc.Utf8.parse(SECRET_KEY);
+  const key = CryptoJS.enc.Utf8.parse(KEY_STRING);
   const iv = CryptoJS.lib.WordArray.random(16);
   const encrypted = CryptoJS.AES.encrypt(CryptoJS.enc.Utf8.parse(String(text)), key, {
     iv: iv,
@@ -24,7 +25,7 @@ export function decryptTransit(ciphertextWithIv) {
     const parts = ciphertextWithIv.split(':');
     const iv = CryptoJS.enc.Hex.parse(parts[0]);
     const ciphertext = CryptoJS.enc.Hex.parse(parts[1]);
-    const key = CryptoJS.enc.Utf8.parse(SECRET_KEY);
+    const key = CryptoJS.enc.Utf8.parse(KEY_STRING);
     
     const cipherParams = CryptoJS.lib.CipherParams.create({
       ciphertext: ciphertext

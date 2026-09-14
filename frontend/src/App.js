@@ -220,7 +220,7 @@ function App() {
     if (user.role === 'MainStoreOfficer') {
       return <MainStoreDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'SiteStoreOfficer') {
+    if (user.role === 'SiteStoreOfficer' || user.role === 'StoreOfficer') {
       return <SiteStoreDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
 

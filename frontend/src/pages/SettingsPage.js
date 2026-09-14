@@ -1,17 +1,43 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
 
 const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
   // Tabs: 'system' or 'profile'
   const [activeTab, setActiveTab] = useState('system');
 
+  const fileInputRef = useRef(null);
+  const [imgError, setImgError] = useState(false);
+
   // Load User state or fallback to defaults
   const [firstName, setFirstName] = useState(user?.firstName || '');
   const [lastName, setLastName] = useState(user?.lastName || '');
   const [phone, setPhone] = useState(user?.phone || '');
-  const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl || '/uploads/default-avatar.png');
+  const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl || '');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(user?.settings?.profile?.sidebarCollapsed || false);
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(user?.settings?.profile?.twoFactorEnabled || false);
+
+  // Helper to convert relative server upload path to absolute URL
+  const getAvatarSrc = (url) => {
+    if (!url) return null;
+    if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+    return `http://localhost:5000${cleanPath}`;
+  };
+
+  // Sync state when user prop updates
+  useEffect(() => {
+    if (user) {
+      if (user.firstName) setFirstName(user.firstName);
+      if (user.lastName) setLastName(user.lastName);
+      if (user.phone) setPhone(user.phone);
+      if (user.avatarUrl !== undefined) {
+        setAvatarUrl(user.avatarUrl);
+        setImgError(false);
+      }
+    }
+  }, [user]);
 
   // System Settings State
   const [darkMode, setDarkMode] = useState(user?.settings?.system?.darkMode || false);
@@ -101,6 +127,11 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
     const file = e.target.files[0];
     if (!file) return;
 
+    // Instant local preview
+    const localPreview = URL.createObjectURL(file);
+    setAvatarUrl(localPreview);
+    setImgError(false);
+
     const formData = new FormData();
     formData.append('avatar', file);
 
@@ -116,7 +147,10 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setAvatarUrl(data.avatarUrl);
+        const uploadedPath = data.avatarUrl; // e.g., /uploads/avatar-xxx.jpg
+        setAvatarUrl(uploadedPath);
+        setImgError(false);
+
         // Save avatar url to user document
         const updateRes = await fetch(`http://localhost:5000/api/auth/users/${user._id}`, {
           method: 'PUT',
@@ -124,20 +158,54 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`
           },
-          body: JSON.stringify({ avatarUrl: data.avatarUrl })
+          body: JSON.stringify({ avatarUrl: uploadedPath })
         });
         const updateData = await updateRes.json();
         if (updateRes.ok && updateData.success) {
           setMessage('✅ Profile picture uploaded & saved successfully!');
-          if (onUserUpdate) onUserUpdate(updateData.data);
+          if (onUserUpdate) onUserUpdate({ ...updateData.data, avatarUrl: uploadedPath });
+        } else {
+          setMessage('✅ Profile picture uploaded successfully!');
+          if (onUserUpdate) onUserUpdate({ ...user, avatarUrl: uploadedPath });
         }
       } else {
         setError(data.message || 'Avatar upload failed.');
       }
     } catch (err) {
-      setError('Connection error occurred while uploading.');
+      console.error(err);
+      setError('Connection error occurred while uploading picture.');
     } finally {
       setLoading(false);
+      // Reset input element value so user can re-upload or select another file anytime
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  // Remove avatar handler
+  const handleRemoveAvatar = async () => {
+    setAvatarUrl('');
+    setImgError(false);
+    setMessage('');
+    setError('');
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const updateRes = await fetch(`http://localhost:5000/api/auth/users/${user._id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ avatarUrl: '' })
+      });
+      const updateData = await updateRes.json();
+      if (updateRes.ok && updateData.success) {
+        setMessage('✅ Profile picture removed.');
+        if (onUserUpdate) onUserUpdate({ ...updateData.data, avatarUrl: '' });
+      }
+    } catch (err) {
+      console.error('Error removing avatar:', err);
     }
   };
 
@@ -556,15 +624,89 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
             <div style={styles.title}>👤 Account Information</div>
             
             <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '24px' }}>
-              <img 
-                src={avatarUrl} 
-                alt="Avatar" 
-                style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #2563eb', background: '#cbd5e1' }} 
-              />
-              <div>
-                <label style={{ ...styles.label, marginBottom: '6px' }}>Update Profile Picture</label>
-                <input type="file" accept="image/*" onChange={handleAvatarUpload} style={{ fontSize: '12px', color: darkMode ? '#cbd5e1' : '#475569' }} />
-                <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>Accepts JPG, JPEG, or PNG formats. Max 2MB.</div>
+              <div style={{ position: 'relative', width: '84px', height: '84px', flexShrink: 0 }}>
+                {avatarUrl && !imgError ? (
+                  <img 
+                    src={getAvatarSrc(avatarUrl)} 
+                    alt="Avatar" 
+                    onError={() => setImgError(true)}
+                    style={{ width: '84px', height: '84px', borderRadius: '50%', objectFit: 'cover', border: '3px solid #2563eb', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} 
+                  />
+                ) : (
+                  <div style={{
+                    width: '84px',
+                    height: '84px',
+                    borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #2563eb 0%, #0d1b4b 100%)',
+                    color: 'white',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '26px',
+                    fontWeight: '700',
+                    border: '3px solid #2563eb',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                  }}>
+                    {(user?.name || `${firstName} ${lastName}` || user?.username || 'User')
+                      .split(' ')
+                      .filter(Boolean)
+                      .map(n => n[0])
+                      .join('')
+                      .substring(0, 2)
+                      .toUpperCase() || 'U'}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ ...styles.label, marginBottom: '2px' }}>Update Profile Picture</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <input 
+                    ref={fileInputRef}
+                    type="file" 
+                    accept="image/jpeg,image/png,image/jpg,image/webp" 
+                    onChange={handleAvatarUpload} 
+                    id="avatar-file-input"
+                    style={{ display: 'none' }} 
+                  />
+                  <label 
+                    htmlFor="avatar-file-input"
+                    style={{
+                      padding: '8px 16px',
+                      background: '#2563eb',
+                      color: 'white',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: '600',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      boxShadow: '0 2px 4px rgba(37,99,235,0.2)'
+                    }}
+                  >
+                    📷 {avatarUrl ? 'Change Picture' : 'Choose Picture'}
+                  </label>
+                  {avatarUrl && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveAvatar}
+                      style={{
+                        padding: '8px 14px',
+                        background: 'transparent',
+                        color: '#ef4444',
+                        border: '1px solid #ef4444',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: '11px', color: '#94a3b8' }}>Accepts JPG, JPEG, PNG or WEBP formats. Max 2MB.</div>
               </div>
             </div>
 

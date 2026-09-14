@@ -16,11 +16,19 @@ export const checkPermission = (action) => async (req, res, next) => {
       return next();
     }
     const permission = await Permission.findOne({ role: req.user.role, module: action });
-    if (!permission || permission.permissionLevel === 'None') {
-      res.status(403);
-      throw new Error(`Your role does not have permission to perform "${action}".`);
+    if (permission) {
+      if (permission.permissionLevel === 'None') {
+        res.status(403);
+        throw new Error(`Your role does not have permission to perform "${action}".`);
+      }
+      return next();
     }
-    next();
+    // Fallback: If no explicit permission document exists in DB, grant default access to standard operational roles
+    if (['StoreOfficer', 'ProjectManager', 'PurchaseOfficer', 'Director'].includes(req.user.role)) {
+      return next();
+    }
+    res.status(403);
+    throw new Error(`Your role does not have permission to perform "${action}".`);
   } catch (error) {
     next(error);
   }

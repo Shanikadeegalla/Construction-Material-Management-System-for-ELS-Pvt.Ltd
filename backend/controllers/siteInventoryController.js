@@ -13,16 +13,15 @@ const decryptIfNeeded = (val) => {
 // @access  Private
 export const getSiteInventory = async (req, res) => {
   try {
-    const userProjectId = req.query.projectId || req.user.project_id || req.user.projectId;
-    if (!userProjectId) {
-      return res.status(400).json({ success: false, message: 'User is not assigned to a project.' });
+    const userProjectId = req.query.projectId || (req.user ? (req.user.project_id || req.user.projectId) : null);
+    
+    const filter = { location: 'SiteStore' };
+    if (userProjectId) {
+      filter.$or = [{ project_id: userProjectId }, { projectId: userProjectId }];
     }
 
-    // Find materials in SiteStore location matching project
-    const materials = await Material.find({
-      location: 'SiteStore',
-      $or: [{ project_id: userProjectId }, { projectId: userProjectId }]
-    });
+    // Find materials in SiteStore location
+    const materials = await Material.find(filter);
 
     const decrypted = materials.map(m => {
       const doc = m.toObject();
@@ -31,7 +30,8 @@ export const getSiteInventory = async (req, res) => {
       return doc;
     });
 
-    res.status(200).json({ success: true, data: decrypted });
+    // Return array directly to match SiteStoreDashboard.js expectations
+    res.status(200).json(decrypted);
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -63,13 +63,9 @@ export const getProjectsOverview = async (req, res) => {
   }
 };
 
-// @desc    Log material usage for a project
-// @route   POST /api/site/material-usage
-// @access  Private (SiteStoreOfficer)
 export const logMaterialUsage = async (req, res) => {
   try {
     const { materialId, quantity_used, date, purpose } = req.body;
-    const userProjectId = req.user.project_id || req.user.projectId;
 
     if (!materialId || !quantity_used || Number(quantity_used) <= 0) {
       return res.status(400).json({ success: false, message: 'Valid material and quantity are required.' });
@@ -79,6 +75,8 @@ export const logMaterialUsage = async (req, res) => {
     if (!siteMaterial) {
       return res.status(404).json({ success: false, message: 'Material not found.' });
     }
+
+    const userProjectId = (req.user ? (req.user.project_id || req.user.projectId) : null) || siteMaterial.project_id || siteMaterial.projectId;
 
     let localQty = siteMaterial.quantity;
     let decryptedName = siteMaterial.name;
@@ -121,7 +119,7 @@ export const logMaterialUsage = async (req, res) => {
     await siteMaterial.save();
 
     // Save consumption log
-    const projectDoc = await Project.findById(userProjectId);
+    const projectDoc = userProjectId ? await Project.findById(userProjectId) : null;
     const projName = projectDoc ? (projectDoc.projectName || projectDoc.name) : 'N/A';
 
     const usage = new MaterialUsage({

@@ -84,19 +84,27 @@ function SiteStoreDashboard({ user, onLogout }) {
       const data = await res.json();
       let finalData = data;
       if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
+        try {
+          const decrypted = decryptTransit(data.ciphertext);
+          finalData = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
+        } catch (e) {
+          finalData = data;
+        }
       }
       if (Array.isArray(finalData)) {
         setMaterials(finalData);
+      } else if (finalData && finalData.success && Array.isArray(finalData.data)) {
+        setMaterials(finalData.data);
       } else {
-        setError('Failed to fetch site inventory.');
+        if (!res.ok && finalData && finalData.message) {
+          setError(finalData.message);
+        } else {
+          setError('Failed to fetch site inventory.');
+        }
       }
     } catch (err) {
-      setError('Could not connect to the backend server. Loading demo data.');
-      setMaterials([
-        { _id: 'site1', name: 'Portland Cement OPC', category: 'Cement', unit: 'bag', quantity: 8, minimumStock: 10, reorderLevel: 25, maximumStock: 50, unitPrice: 1850, location: 'SiteStore' },
-        { _id: 'site2', name: 'Deformed Steel Bars 12mm', category: 'Steel', unit: 'ton', quantity: 2, minimumStock: 2, reorderLevel: 5, maximumStock: 10, unitPrice: 185000, location: 'SiteStore' }
-      ]);
+      console.error('Error fetching site materials:', err);
+      setError('Could not connect to the backend server.');
     } finally {
       setLoading(false);
     }
@@ -111,9 +119,14 @@ function SiteStoreDashboard({ user, onLogout }) {
       const data = await res.json();
       let finalData = data;
       if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
+        try {
+          const decrypted = decryptTransit(data.ciphertext);
+          finalData = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
+        } catch (e) {
+          finalData = data;
+        }
       }
-      if (finalData.success && Array.isArray(finalData.data)) {
+      if (finalData && finalData.success && Array.isArray(finalData.data)) {
         const filtered = selectedProjId
           ? finalData.data.filter(m => String(m.projectId) === String(selectedProjId))
           : finalData.data;
