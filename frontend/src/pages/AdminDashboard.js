@@ -6,7 +6,7 @@ import {
   Clock, 
   Settings, 
   Bell, 
-  Mail, 
+  Calendar,
   Pencil, 
   UserMinus,
   UserPlus,
@@ -25,7 +25,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
-import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort } from '../utils/dateUtils';
+import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 
 // Taxonomy of gate-able actions in the app, grouped by module. This mirrors the
@@ -1728,7 +1728,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f8fafc', color: '#0f172a', fontFamily: "'Inter', sans-serif" }}>
+    <div className="admin-dashboard-root" style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f8fafc', color: '#0f172a', fontFamily: "'Inter', sans-serif" }}>
       
       {/* Sidebar */}
       <div style={{ width: '240px', background: '#0d1b4b', color: 'white', display: 'flex', flexDirection: 'column', position: 'fixed', height: '100vh', zIndex: 10, boxShadow: '4px 0 10px rgba(0,0,0,0.05)' }}>
@@ -1806,64 +1806,53 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
             {activePage === 'settings' && 'Settings & Controls'}
           </h2>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             
-            {/* Header Utility Icons */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {/* Notifications dropdown bell */}
+            <div style={{ position: 'relative', cursor: 'pointer', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowNotifications(!showNotifications)}>
+              <Bell size={18} style={{ color: '#475569' }} />
+               {unreadCount > 0 && (
+                <span style={{ position: 'absolute', top: '2px', right: '2px', background: '#ef4444', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff' }}>
+                  {unreadCount}
+                </span>
+              )}
               
-              <div style={{ position: 'relative', cursor: 'pointer', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Mail size={18} style={{ color: '#475569' }} />
-              </div>
-
-              {/* Notifications dropdown bell */}
-              <div style={{ position: 'relative', cursor: 'pointer', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowNotifications(!showNotifications)}>
-                <Bell size={18} style={{ color: '#475569' }} />
-                 {unreadCount > 0 && (
-                  <span style={{ position: 'absolute', top: '2px', right: '2px', background: '#ef4444', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff' }}>
-                    {unreadCount}
-                  </span>
-                )}
-                
-                {showNotifications && (
-                  <div style={{ position: 'absolute', top: '48px', right: '0', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)', width: '320px', maxHeight: '400px', overflowY: 'auto', zIndex: 100, cursor: 'default', padding: '8px' }} onClick={e => e.stopPropagation()}>
-                    <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>System Inventory Alerts</span>
-                      <span style={{ fontSize: '11px', background: '#fee2e2', color: '#ef4444', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>Stock alerts</span>
-                    </div>
-                    {notifications.length === 0 ? (
-                      <div style={{ padding: '24px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
-                        All stock thresholds normal.
-                      </div>
-                    ) : (
-                      notifications.map((notif, idx) => (
-                        <div key={idx} style={{ padding: '12px', borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9', fontSize: '13px', borderRadius: '8px', transition: 'background 0.2s', ':hover': { background: '#f8fafc' } }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
-                            <span style={{ color: '#0f172a' }}>{notif.materialName}</span>
-                            <span style={{ color: notif.alertLevel === 'Critical' ? '#ef4444' : '#f59e0b', background: notif.alertLevel === 'Critical' ? '#fef2f2' : '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>
-                              {notif.alertLevel}
-                            </span>
-                          </div>
-                          <div style={{ color: '#475569', fontSize: '12px' }}>
-                            Current: <strong>{notif.currentQty}</strong> | Threshold: {notif.minimumStock}
-                          </div>
-                          <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span>📍</span> {notif.location}
-                          </div>
-                        </div>
-                      ))
-                    )}
+              {showNotifications && (
+                <div style={{ position: 'absolute', top: '48px', right: '0', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)', width: '320px', maxHeight: '400px', overflowY: 'auto', zIndex: 100, cursor: 'default', padding: '8px' }} onClick={e => e.stopPropagation()}>
+                  <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>System Inventory Alerts</span>
+                    <span style={{ fontSize: '11px', background: '#fee2e2', color: '#ef4444', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>Stock alerts</span>
                   </div>
-                )}
-              </div>
-
+                  {notifications.length === 0 ? (
+                    <div style={{ padding: '24px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
+                      All stock thresholds normal.
+                    </div>
+                  ) : (
+                    notifications.map((notif, idx) => (
+                      <div key={idx} style={{ padding: '12px', borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9', fontSize: '13px', borderRadius: '8px', transition: 'background 0.2s', ':hover': { background: '#f8fafc' } }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
+                          <span style={{ color: '#0f172a' }}>{notif.materialName}</span>
+                          <span style={{ color: notif.alertLevel === 'Critical' ? '#ef4444' : '#f59e0b', background: notif.alertLevel === 'Critical' ? '#fef2f2' : '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>
+                            {notif.alertLevel}
+                          </span>
+                        </div>
+                        <div style={{ color: '#475569', fontSize: '12px' }}>
+                          Current: <strong>{notif.currentQty}</strong> | Threshold: {notif.minimumStock}
+                        </div>
+                        <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <span>📍</span> {notif.location}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
 
-            <div style={{ width: '1px', height: '24px', backgroundColor: '#e2e8f0' }} />
-
-            {/* Time display */}
-            <div style={{ fontSize: '13px', color: '#64748b', fontWeight: '500', textAlign: 'right' }}>
-              <div style={{ fontWeight: '600', color: '#0d1b4b' }}>{currentTime.toLocaleTimeString()}</div>
-              <div style={{ fontSize: '11px' }}>{formatDateWeekdayShort(currentTime)}</div>
+            {/* Date display next to notification icon */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#475569', fontWeight: '600', background: '#f8fafc', padding: '6px 14px', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
+              <Calendar size={15} style={{ color: '#2563eb' }} />
+              <span>{formatFullDate(currentTime)}</span>
             </div>
 
           </div>
@@ -2025,9 +2014,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                       return ts >= day && ts < nextDay;
                     }).length;
                     return {
-                      date: activityRange === 7
-                        ? day.toLocaleDateString('en-US', { weekday: 'short' })
-                        : day.toLocaleDateString('en-US', { day: 'numeric', month: 'short' }),
+                      date: formatShortDate(day),
                       count
                     };
                   });
@@ -3328,9 +3315,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
           {/* SETTINGS PAGE */}
           {activePage === 'settings' && (
-            <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '32px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
-              <SettingsPage user={user} onLogout={onLogout} onUserUpdate={onUserUpdate} />
-            </div>
+            <SettingsPage user={user} onLogout={onLogout} onUserUpdate={onUserUpdate} />
           )}
 
           {/* Footer */}

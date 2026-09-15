@@ -1,13 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import SettingsPage from './SettingsPage';
+import { Calendar } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
-import { formatDate, formatDateTime, formatDateLong } from '../utils/dateUtils';
+import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import * as XLSX from 'xlsx';
 
 function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [view, setView] = useState('dashboard'); // 'dashboard', 'inventory', 'grn', 'purchase-request', 'min', 'approved-boms', 'stock-adjustments', 'stock-ledger', 'reports', 'notifications', 'settings'
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   const [materials, setMaterials] = useState([]);
   const [projects, setProjects] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -1363,21 +1370,21 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           <h2 style={{ margin: 0, fontSize: '18px', color: '#0d1b4b' }}>
             Main Store Operations Centre
           </h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             {/* Notification Bell */}
-            <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setShowNotifications(!showNotifications)}>
-              <span style={{ fontSize: '20px' }}>🔔</span>
+            <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
+              <span style={{ fontSize: '18px' }}>🔔</span>
               {unreadCount > 0 && (
                 <span style={{
                   position: 'absolute',
-                  top: '-5px',
-                  right: '-5px',
+                  top: '2px',
+                  right: '2px',
                   background: '#ef4444',
                   color: 'white',
                   borderRadius: '50%',
-                  width: '18px',
-                  height: '18px',
-                  fontSize: '11px',
+                  width: '16px',
+                  height: '16px',
+                  fontSize: '10px',
                   fontWeight: 'bold',
                   display: 'flex',
                   alignItems: 'center',
@@ -1441,8 +1448,10 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               )}
             </div>
 
-            <div style={{ fontSize: '13px', color: '#666', fontWeight: '500' }}>
-              🕐 {formatDateLong(new Date())}
+            {/* Date display next to notification icon */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#475569', fontWeight: '600', background: '#f8fafc', padding: '6px 14px', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
+              <Calendar size={15} style={{ color: '#2563eb' }} />
+              <span>{formatFullDate(currentTime)}</span>
             </div>
           </div>
         </div>
@@ -1453,6 +1462,73 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         {view === 'dashboard' && (
           <div style={styles.container}>
             <h1 style={styles.pageTitle}>Main Store Dashboard Overview</h1>
+
+            {/* Low Stock Alert Notification Card */}
+            {(() => {
+              const alertsToTrigger = materials.filter(m => {
+                const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+                return m.quantity < reorder && m.location === 'MainStore';
+              });
+              const unacknowledged = alertsToTrigger.filter(m => !acknowledgedAlerts[m._id]);
+
+              return (
+                <div style={{ ...styles.tableContainer, padding: '20px', borderTop: '4px solid #ef4444', marginBottom: '24px' }}>
+                  <h3 style={{ color: '#ef4444', margin: '0 0 12px', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    🚨 Low Stock Alert Notification (Main Store)
+                  </h3>
+                  <p style={{ color: '#475569', fontSize: '13px', marginBottom: '14px' }}>
+                    The following materials have fallen below their reorder levels. Please review and restock:
+                  </p>
+                  {alertsToTrigger.length === 0 ? (
+                    <div style={{ color: '#64748b', fontSize: '13px', padding: '10px 0' }}>
+                      All materials in Main Store have sufficient stock levels.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ maxHeight: '220px', overflowY: 'auto', marginBottom: '16px' }}>
+                        {alertsToTrigger.map(m => {
+                          const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+                          const isCritical = m.quantity <= (m.minimumStock || 10);
+                          const isAck = !!acknowledgedAlerts[m._id];
+                          return (
+                            <div key={m._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f1f5f9', fontSize: '13px', opacity: isAck ? 0.6 : 1 }}>
+                              <div>
+                                <strong style={{ color: '#0f172a' }}>{m.name}</strong>
+                                <div style={{ fontSize: '11px', color: '#64748b' }}>Stock: {m.quantity} {m.unit} / Reorder: {reorder} {m.unit}</div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ 
+                                  background: isCritical ? '#fee2e2' : '#ffedd5', 
+                                  color: isCritical ? '#991b1b' : '#c2410c',
+                                  padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' 
+                                }}>
+                                  {isCritical ? 'Critical' : 'Low Stock'}
+                                </span>
+                                {isAck && <span style={{ fontSize: '11px', color: '#16a34a', fontWeight: '600' }}>✓ Ack</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {unacknowledged.length > 0 && (
+                        <button 
+                          onClick={() => {
+                            const updated = { ...acknowledgedAlerts };
+                            alertsToTrigger.forEach(m => {
+                              updated[m._id] = true;
+                            });
+                            setAcknowledgedAlerts(updated);
+                          }}
+                          style={{ width: '100%', padding: '10px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+                        >
+                          Acknowledge & Dismiss Alerts
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Stats row */}
             <div style={styles.statsGrid}>
@@ -1533,73 +1609,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </div>
                 )}
               </div>
-
-              {/* Low Stock Alert Notification Card */}
-              {(() => {
-                const alertsToTrigger = materials.filter(m => {
-                  const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
-                  return m.quantity < reorder && m.location === 'MainStore';
-                });
-                const unacknowledged = alertsToTrigger.filter(m => !acknowledgedAlerts[m._id]);
-
-                return (
-                  <div style={{ ...styles.tableContainer, padding: '20px', borderTop: '4px solid #ef4444' }}>
-                    <h3 style={{ color: '#ef4444', margin: '0 0 12px', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      🚨 Low Stock Alert Notification (Main Store)
-                    </h3>
-                    <p style={{ color: '#475569', fontSize: '13px', marginBottom: '14px' }}>
-                      The following materials have fallen below their reorder levels. Please review and restock:
-                    </p>
-                    {alertsToTrigger.length === 0 ? (
-                      <div style={{ color: '#64748b', fontSize: '13px', padding: '10px 0' }}>
-                        All materials in Main Store have sufficient stock levels.
-                      </div>
-                    ) : (
-                      <>
-                        <div style={{ maxHeight: '220px', overflowY: 'auto', marginBottom: '16px' }}>
-                          {alertsToTrigger.map(m => {
-                            const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
-                            const isCritical = m.quantity <= (m.minimumStock || 10);
-                            const isAck = !!acknowledgedAlerts[m._id];
-                            return (
-                              <div key={m._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f1f5f9', fontSize: '13px', opacity: isAck ? 0.6 : 1 }}>
-                                <div>
-                                  <strong style={{ color: '#0f172a' }}>{m.name}</strong>
-                                  <div style={{ fontSize: '11px', color: '#64748b' }}>Stock: {m.quantity} {m.unit} / Reorder: {reorder} {m.unit}</div>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <span style={{ 
-                                    background: isCritical ? '#fee2e2' : '#ffedd5', 
-                                    color: isCritical ? '#991b1b' : '#c2410c',
-                                    padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' 
-                                  }}>
-                                    {isCritical ? 'Critical' : 'Low Stock'}
-                                  </span>
-                                  {isAck && <span style={{ fontSize: '11px', color: '#16a34a', fontWeight: '600' }}>✓ Ack</span>}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        {unacknowledged.length > 0 && (
-                          <button 
-                            onClick={() => {
-                              const updated = { ...acknowledgedAlerts };
-                              alertsToTrigger.forEach(m => {
-                                updated[m._id] = true;
-                              });
-                              setAcknowledgedAlerts(updated);
-                            }}
-                            style={{ width: '100%', padding: '10px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
-                          >
-                            Acknowledge & Dismiss Alerts
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </div>
-                );
-              })()}
             </div>
           </div>
         )}
@@ -1776,7 +1785,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           <div>
                             <div style={styles.fieldLabel}>PO Date</div>
                             <div style={{ fontWeight: 600, color: '#0d1b4b' }}>
-                              {po.sentAt ? new Date(po.sentAt).toLocaleDateString() : (po.createdAt ? new Date(po.createdAt).toLocaleDateString() : 'N/A')}
+                              {po.sentAt ? formatShortDate(po.sentAt) : (po.createdAt ? formatShortDate(po.createdAt) : 'N/A')}
                             </div>
                           </div>
                           <div>

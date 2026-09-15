@@ -24,7 +24,7 @@ import materialTransferNoteRoutes from './routes/materialTransferNoteRoutes.js';
 import quotationRoutes from './routes/quotations.js';
 import invoiceRoutes from './routes/invoices.js';
 import paymentRoutes from './routes/paymentRoutes.js';
-import { stripeWebhookHandler } from './controllers/paymentController.js';
+import { handleWebhook } from './controllers/paymentController.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 import { handleEncryption } from './middleware/encryptionMiddleware.js';
 
@@ -38,7 +38,7 @@ app.use(cors());
 
 // Stripe requires the raw request body to verify webhook signatures, so this
 // route must be registered before express.json() parses the body.
-app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), stripeWebhookHandler);
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), handleWebhook);
 
 app.use(express.json()); // Body parser
 app.use(handleEncryption);

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import VarianceReport from './VarianceReport';
 import SettingsPage from './SettingsPage';
-import { formatDate, formatDateLong, formatDayMonth } from '../utils/dateUtils';
+import { Calendar } from 'lucide-react';
+import { formatDate, formatDateLong, formatDayMonth, formatFullDate, formatShortDate, formatTime, formatDateTime } from '../utils/dateUtils';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -19,6 +20,13 @@ import {
 } from 'recharts';
 
 const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const [activePage, setActivePage] = useState('dashboard');
   const [boms, setBoms] = useState([]);
   const [pos, setPos] = useState([]);
@@ -1048,12 +1056,12 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             {activePage === 'analytics' && 'Operational Analytics'}
             {activePage === 'settings' && 'Settings & Preferences'}
           </h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             {/* Bell Icon & Dropdown */}
-            <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center' }} onClick={() => setShowNotifications(!showNotifications)}>
-              <span style={{ fontSize: '20px' }}>🔔</span>
+            <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
+              <span style={{ fontSize: '18px' }}>🔔</span>
               {unreadCount > 0 && (
-                <span style={{ position: 'absolute', top: '-6px', right: '-6px', background: '#ef4444', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff' }}>
+                <span style={{ position: 'absolute', top: '2px', right: '2px', background: '#ef4444', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff' }}>
                   {unreadCount}
                 </span>
               )}
@@ -1107,8 +1115,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
               )}
             </div>
 
-            <div style={{ fontSize: '13px', color: '#666', fontWeight: '500' }}>
-              🕐 {formatDateLong(new Date())}
+            {/* Date display next to notification icon */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#475569', fontWeight: '600', background: '#f8fafc', padding: '6px 14px', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
+              <Calendar size={15} style={{ color: '#2563eb' }} />
+              <span>{formatFullDate(currentTime)}</span>
             </div>
           </div>
         </div>

@@ -67,8 +67,10 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
     setDarkMode(isDark);
     if (isDark) {
       document.body.classList.add('dark-mode');
+      document.documentElement.classList.add('dark-mode');
     } else {
       document.body.classList.remove('dark-mode');
+      document.documentElement.classList.remove('dark-mode');
     }
 
     // Check API Status
@@ -85,8 +87,10 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
     localStorage.setItem('cmms_dark_mode', checked);
     if (checked) {
       document.body.classList.add('dark-mode');
+      document.documentElement.classList.add('dark-mode');
     } else {
       document.body.classList.remove('dark-mode');
+      document.documentElement.classList.remove('dark-mode');
     }
     // Update preferences in DB
     saveSettingsChange({
