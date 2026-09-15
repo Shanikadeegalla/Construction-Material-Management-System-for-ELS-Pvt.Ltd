@@ -56,6 +56,13 @@ const invoiceSchema = new mongoose.Schema({
   paidAt: {
     type: Date
   },
+  paymentMethod: {
+    type: String,
+    default: 'Stripe'
+  },
+  stripeSessionId: {
+    type: String
+  },
   notes: {
     type: String,
     trim: true

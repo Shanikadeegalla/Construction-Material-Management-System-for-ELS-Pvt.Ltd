@@ -1,21 +1,41 @@
-// Centralized date/time display formatting - always day/month/year, regardless of browser locale.
+// Centralized date & time display formatting helper for ELS Construction CMMS
 
 const pad = (n) => String(n).padStart(2, '0');
 
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const WEEKDAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const WEEKDAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS_LONG = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+const MONTHS_SHORT = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+];
 
-// 13/07/2026
 export const formatDate = (date) => {
+  if (!date) return '';
   const d = new Date(date);
-  if (isNaN(d)) return '';
+  if (isNaN(d.getTime())) return '';
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 };
 
-// 13/07/2026, 02:30 PM
-export const formatDateTime = (date) => {
+export const formatTime = (date) => {
+  if (!date) return '';
   const d = new Date(date);
-  if (isNaN(d)) return '';
+  if (isNaN(d.getTime())) return '';
+  let hours = d.getHours();
+  const minutes = pad(d.getMinutes());
+  const seconds = pad(d.getSeconds());
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${pad(hours)}:${minutes}:${seconds} ${ampm}`;
+};
+
+export const formatDateTime = (date) => {
+  if (!date) return '';
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '';
   let hours = d.getHours();
   const minutes = pad(d.getMinutes());
   const ampm = hours >= 12 ? 'PM' : 'AM';
@@ -23,30 +43,23 @@ export const formatDateTime = (date) => {
   return `${formatDate(d)}, ${pad(hours)}:${minutes} ${ampm}`;
 };
 
-// Monday, 13 July 2026
-export const formatDateLong = (date) => {
+export const formatFullDate = (date) => {
+  if (!date) return '';
   const d = new Date(date);
-  if (isNaN(d)) return '';
-  return `${WEEKDAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  if (isNaN(d.getTime())) return '';
+  return `${WEEKDAYS_LONG[d.getDay()]}, ${d.getDate()} ${MONTHS_LONG[d.getMonth()]} ${d.getFullYear()}`;
 };
 
-// Mon, 13 Jul
-export const formatDateWeekdayShort = (date) => {
+export const formatShortDate = (date) => {
+  if (!date) return '';
   const d = new Date(date);
-  if (isNaN(d)) return '';
-  return `${WEEKDAYS[d.getDay()].slice(0, 3)}, ${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}`;
+  if (isNaN(d.getTime())) return '';
+  return `${WEEKDAYS_SHORT[d.getDay()]}, ${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`;
 };
 
-// 13 Jul 2026
-export const formatDateMedium = (date) => {
-  const d = new Date(date);
-  if (isNaN(d)) return '';
-  return `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)} ${d.getFullYear()}`;
-};
+// Aliases & Backward Compatibility
+export const formatDateLong = (date) => formatFullDate(date);
+export const formatDateWeekdayShort = (date) => formatShortDate(date);
+export const formatDateMedium = (date) => formatFullDate(date);
+export const formatDayMonth = (date) => formatShortDate(date);
 
-// 13 Jul
-export const formatDayMonth = (date) => {
-  const d = new Date(date);
-  if (isNaN(d)) return '';
-  return `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}`;
-};

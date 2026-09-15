@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatShortDate } from '../utils/dateUtils';
 
 function GRNPage({ user }) {
   const [grns, setGrns] = useState([]);
@@ -277,7 +278,7 @@ function GRNPage({ user }) {
                   <td style={styles.tdBold}>{g.grnNumber}</td>
                   <td style={styles.td}>{g.poReference}</td>
                   <td style={styles.td}>{g.supplier}</td>
-                  <td style={styles.td}>{new Date(g.receivedDate).toLocaleDateString()}</td>
+                  <td style={styles.td}>{formatShortDate(g.receivedDate)}</td>
                   <td style={styles.td}>{g.receivedBy}</td>
                   <td style={styles.td}>
                     <ul style={styles.itemList}>

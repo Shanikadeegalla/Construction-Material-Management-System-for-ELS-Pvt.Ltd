@@ -1,9 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import SettingsPage from './SettingsPage';
-import { formatDate, formatDateTime, formatDateLong } from '../utils/dateUtils';
+import { Calendar } from 'lucide-react';
+import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 
 const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'bom', 'settings'
   const [requests, setRequests] = useState([]);
   const [boms, setBoms] = useState([]);
@@ -1367,21 +1375,21 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
             {activePage === 'bom' && 'Bill of Materials (BOM) Management'}
             {activePage === 'settings' && 'User Settings & Preferences'}
           </h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             {/* Notification Bell */}
-            <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setShowNotifications(!showNotifications)}>
-              <span style={{ fontSize: '20px' }}>🔔</span>
+            <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
+              <span style={{ fontSize: '18px' }}>🔔</span>
               {(unreadCount + bomUnreadCount) > 0 && (
                 <span style={{
                   position: 'absolute',
-                  top: '-5px',
-                  right: '-5px',
+                  top: '2px',
+                  right: '2px',
                   background: '#ef4444',
                   color: 'white',
                   borderRadius: '50%',
-                  width: '18px',
-                  height: '18px',
-                  fontSize: '11px',
+                  width: '16px',
+                  height: '16px',
+                  fontSize: '10px',
                   fontWeight: 'bold',
                   display: 'flex',
                   alignItems: 'center',
@@ -1484,8 +1492,10 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               )}
             </div>
 
-            <div style={{ fontSize: '13px', color: '#666', fontWeight: '500' }}>
-              {formatDateLong(new Date())}
+            {/* Date display next to notification icon */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#475569', fontWeight: '600', background: '#f8fafc', padding: '6px 14px', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
+              <Calendar size={15} style={{ color: '#2563eb' }} />
+              <span>{formatFullDate(currentTime)}</span>
             </div>
           </div>
         </div>

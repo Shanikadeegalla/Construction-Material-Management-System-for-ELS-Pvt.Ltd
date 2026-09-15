@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatDateTime } from '../utils/dateUtils';
 
 function PurchaseRequestPage({ user }) {
   const [requests, setRequests] = useState([]);
@@ -271,13 +272,7 @@ function PurchaseRequestPage({ user }) {
                     ))}
                   </td>
                   <td style={styles.td}>
-                    {new Date(req.createdAt).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
+                    {formatDateTime(req.createdAt)}
                   </td>
                   <td style={styles.td}>{req.notes || '—'}</td>
                   <td style={styles.td}>

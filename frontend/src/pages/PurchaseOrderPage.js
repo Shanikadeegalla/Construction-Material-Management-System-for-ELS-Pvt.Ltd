@@ -1,12 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import SettingsPage from './SettingsPage';
+import { Calendar } from 'lucide-react';
 import SupplierProfile from '../components/SupplierProfile';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
-import { formatDate } from '../utils/dateUtils';
+import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
+import { createCheckoutSession, downloadPaymentReport } from '../services/paymentService';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   const [orders, setOrders] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -25,6 +33,21 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [poSearchTerm, setPoSearchTerm] = useState('');
   const [payingInvoiceId, setPayingInvoiceId] = useState(null);
+  const [payingPoId, setPayingPoId] = useState(null);
+  const [downloadingReport, setDownloadingReport] = useState(false);
+
+  const handleDownloadReport = async () => {
+    try {
+      setDownloadingReport(true);
+      setError('');
+      await downloadPaymentReport();
+      setMessage('✅ Payment report downloaded successfully!');
+    } catch (err) {
+      setError(err.message || 'Failed to download payment report.');
+    } finally {
+      setDownloadingReport(false);
+    }
+  };
 
   // PO Form State
   const [form, setForm] = useState({
@@ -516,11 +539,18 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     { label: 'Inactive Suppliers', value: suppliers.filter(s => s.status === 'Inactive').length, color: '#c62828' },
   ];
 
+  const now = new Date();
+  const totalInvoiceSum = invoices.reduce((acc, i) => acc + (Number(i.amount) || 0), 0);
+  const paidInvoiceSum = invoices.filter(i => i.status === 'Paid').reduce((acc, i) => acc + (Number(i.amount) || 0), 0);
+  const outstandingInvoiceSum = invoices.filter(i => i.status !== 'Paid').reduce((acc, i) => acc + (Number(i.amount) || 0), 0);
+  const overdueCount = invoices.filter(i => i.status !== 'Paid' && i.dueDate && new Date(i.dueDate) < now).length;
+
   const paymentStats = [
     { label: 'Total Invoices', value: invoices.length, color: '#1565c0' },
-    { label: 'Pending Approval', value: invoices.filter(i => i.status === 'Pending Approval').length, color: '#0d1b4b' },
-    { label: 'Approved', value: invoices.filter(i => i.status === 'Approved').length, color: '#2563eb' },
-    { label: 'Paid', value: invoices.filter(i => i.status === 'Paid').length, color: '#2e7d32' },
+    { label: 'Total Amount', value: `LKR ${totalInvoiceSum.toLocaleString()}`, color: '#0d1b4b' },
+    { label: 'Total Paid Amount', value: `LKR ${paidInvoiceSum.toLocaleString()}`, color: '#2e7d32' },
+    { label: 'Outstanding Amount', value: `LKR ${outstandingInvoiceSum.toLocaleString()}`, color: '#d97706' },
+    { label: 'Overdue Invoices', value: overdueCount, color: overdueCount > 0 ? '#ef4444' : '#64748b' }
   ];
 
   const filteredSuppliers = suppliers.filter(s =>
@@ -798,21 +828,21 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             {activePage === 'payment' && 'Payment Portal'}
             {activePage === 'settings' && 'User Settings & Preferences'}
           </h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             {/* Notification Bell */}
-            <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setShowNotifications(!showNotifications)}>
-              <span style={{ fontSize: '20px' }}>🔔</span>
+            <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
+              <span style={{ fontSize: '18px' }}>🔔</span>
               {(unreadCount + prUnreadCount) > 0 && (
                 <span style={{
                   position: 'absolute',
-                  top: '-5px',
-                  right: '-5px',
+                  top: '2px',
+                  right: '2px',
                   background: '#ef4444',
                   color: 'white',
                   borderRadius: '50%',
-                  width: '18px',
-                  height: '18px',
-                  fontSize: '11px',
+                  width: '16px',
+                  height: '16px',
+                  fontSize: '10px',
                   fontWeight: 'bold',
                   display: 'flex',
                   alignItems: 'center',
@@ -916,11 +946,38 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
               )}
             </div>
 
+            {/* Date display next to notification icon */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#475569', fontWeight: '600', background: '#f8fafc', padding: '6px 14px', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
+              <Calendar size={15} style={{ color: '#2563eb' }} />
+              <span>{formatFullDate(currentTime)}</span>
+            </div>
+
             <div style={{ display: 'flex', gap: '10px' }}>
               {activePage === 'suppliers' && user?.role === 'Admin' && (
                 <button onClick={() => setShowSupplierForm(!showSupplierForm)}
                   style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
                   {showSupplierForm ? 'Hide Form' : '+ Add Supplier'}
+                </button>
+              )}
+              {activePage === 'payment' && (
+                <button
+                  onClick={handleDownloadReport}
+                  disabled={downloadingReport}
+                  style={{
+                    background: '#0d1b4b',
+                    color: 'white',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    cursor: downloadingReport ? 'not-allowed' : 'pointer',
+                    fontWeight: '600',
+                    fontSize: '13px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  {downloadingReport ? '⏳ Generating PDF...' : '📥 Download Report'}
                 </button>
               )}
             </div>
@@ -942,10 +999,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
               ))}
             </div>
           ) : activePage === 'payment' ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '24px' }}>
               {paymentStats.map((s, i) => (
                 <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
-                  <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: typeof s.value === 'string' && s.value.length > 10 ? '16px' : '24px', fontWeight: '700', color: s.color }}>{s.value}</div>
                   <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
                 </div>
               ))}
@@ -1286,7 +1343,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['PO No.', 'Supplier', 'Order Items Description', 'Total (LKR)', 'Expected Delivery', 'Payment Terms', 'Created Date', 'Status', 'Actions'].map(h => (
+                      {['PO No.', 'Supplier', 'Order Items Description', 'Total (LKR)', 'Expected Delivery', 'Payment Terms', 'Created Date', 'Status', 'Payment', 'Actions'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
@@ -1303,7 +1360,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       if (filteredOrders.length === 0) {
                         return (
                           <tr>
-                            <td colSpan="9" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No purchase orders match your search criteria.</td>
+                            <td colSpan="10" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No purchase orders match your search criteria.</td>
                           </tr>
                         );
                       }
@@ -1376,6 +1433,15 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           }}>{po.status}</span>
                         </td>
                         <td style={{ padding: '12px 16px' }}>
+                          <span style={{
+                            background: po.paymentStatus === 'paid' ? '#dcfce7' : po.paymentStatus === 'failed' ? '#fee2e2' : '#fef3c7',
+                            color: po.paymentStatus === 'paid' ? '#15803d' : po.paymentStatus === 'failed' ? '#991b1b' : '#b45309',
+                            padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'
+                          }}>
+                            {po.paymentStatus === 'paid' ? '✓ Paid' : po.paymentStatus === 'failed' ? 'Failed' : 'Pending'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
                           <div style={{ display: 'flex', gap: '6px', flexDirection: 'column', width: '130px' }}>
                             {po.status === 'Pending' && (
                               <div style={{ display: 'flex', gap: '4px' }}>
@@ -1393,6 +1459,34 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               <button onClick={() => handleSendToSupplier(po._id, po.poNumber, po.supplier)}
                                 style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
                                 Send to Supplier
+                              </button>
+                            )}
+                            {['Approved', 'Sent', 'Delivered'].includes(po.status) && po.paymentStatus !== 'paid' && (
+                              <button
+                                disabled={payingPoId === po._id}
+                                onClick={async () => {
+                                  try {
+                                    setPayingPoId(po._id);
+                                    setError('');
+                                    await createCheckoutSession(po._id);
+                                  } catch (err) {
+                                    setError(err.message || 'Failed to initiate payment checkout.');
+                                    setPayingPoId(null);
+                                  }
+                                }}
+                                style={{
+                                  background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                  color: 'white',
+                                  border: 'none',
+                                  padding: '6px 10px',
+                                  borderRadius: '4px',
+                                  cursor: 'pointer',
+                                  fontSize: '11px',
+                                  fontWeight: 'bold',
+                                  marginTop: '2px'
+                                }}
+                              >
+                                {payingPoId === po._id ? 'Redirecting...' : '💳 Pay Now'}
                               </button>
                             )}
                             <select
@@ -1572,7 +1666,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status', 'Action'].map(h => (
+                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
@@ -1580,20 +1674,35 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   <tbody>
                     {invoices.map((inv, i) => {
                       const status = inv.status;
+                      const isOverdue = status !== 'Paid' && inv.dueDate && new Date(inv.dueDate) < now;
+
                       let statusBg = '#f5f5f5';
                       let statusColor = '#666';
-                      if (status === 'Paid') {
-                        statusBg = '#e0f2f1';
-                        statusColor = '#00695c';
+                      let displayStatus = status;
+
+                      if (isOverdue) {
+                        statusBg = '#fee2e2';
+                        statusColor = '#991b1b';
+                        displayStatus = 'Overdue';
+                      } else if (status === 'Paid') {
+                        statusBg = '#dcfce7';
+                        statusColor = '#15803d';
                       } else if (status === 'Approved') {
-                        statusBg = '#e8f5e9';
-                        statusColor = '#2e7d32';
+                        statusBg = '#fef3c7';
+                        statusColor = '#b45309';
                       } else if (status === 'Pending Approval') {
                         statusBg = '#dbeafe';
-                        statusColor = '#0d1b4b';
+                        statusColor = '#1d4ed8';
                       } else if (status === 'Rejected') {
                         statusBg = '#ffebee';
                         statusColor = '#c62828';
+                      }
+
+                      let payMethodDisplay = '-';
+                      if (inv.paymentMethod) {
+                        payMethodDisplay = inv.paymentMethod + (inv.stripeSessionId ? ` (..${inv.stripeSessionId.slice(-6)})` : '');
+                      } else if (status === 'Paid') {
+                        payMethodDisplay = 'Stripe (Direct)';
                       }
 
                       return (
@@ -1604,7 +1713,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           <td style={{ padding: '14px 16px', fontSize: '13px' }}>{inv.supplier?.name || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600' }}>{Number(inv.amount).toLocaleString()}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{formatDate(inv.invoiceDate)}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{inv.dueDate ? formatDate(inv.dueDate) : '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '12px', color: isOverdue ? '#991b1b' : '#666', fontWeight: isOverdue ? '600' : 'normal' }}>
+                            {inv.dueDate ? formatDate(inv.dueDate) : '-'}
+                          </td>
                           <td style={{ padding: '14px 16px' }}>
                             <span style={{
                               background: statusBg,
@@ -1613,7 +1724,13 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               borderRadius: '12px',
                               fontSize: '12px',
                               fontWeight: '600'
-                            }}>{status}</span>
+                            }}>{displayStatus}</span>
+                          </td>
+                          <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>
+                            {inv.paidAt ? formatDate(inv.paidAt) : '-'}
+                          </td>
+                          <td style={{ padding: '14px 16px', fontSize: '12px', color: '#475569', fontWeight: '500' }}>
+                            {payMethodDisplay}
                           </td>
                           <td style={{ padding: '14px 16px' }}>
                             {status === 'Approved' ? (
@@ -1642,7 +1759,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     })}
                     {invoices.length === 0 && (
                       <tr>
-                        <td colSpan={9} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
+                        <td colSpan={11} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
                           No invoices recorded yet. Invoices are submitted by Main Store when goods are received against a PO.
                         </td>
                       </tr>

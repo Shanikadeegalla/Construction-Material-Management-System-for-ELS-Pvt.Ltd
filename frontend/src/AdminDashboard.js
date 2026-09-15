@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatShortDate } from './utils/dateUtils';
 
 const AdminDashboard = ({ user, onLogout }) => {
   const [activePage, setActivePage] = useState('dashboard');
@@ -137,9 +138,6 @@ const AdminDashboard = ({ user, onLogout }) => {
             {activePage === 'audit' && 'System Audit Logs'}
             {activePage === 'settings' && 'System Settings'}
           </h2>
-          <div style={{ fontSize: '13px', color: '#444', fontWeight: '500' }}>
-            🕐 {currentTime.toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          </div>
         </div>
 
         <div style={{ padding: '24px' }}>
@@ -245,7 +243,7 @@ const AdminDashboard = ({ user, onLogout }) => {
                           </span>
                         </td>
                         <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>
-                          {new Date(u.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                          {formatShortDate(u.createdAt)}
                         </td>
                         <td style={{ padding: '14px 16px' }}>
                           <button style={{ background: '#1565c0', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px' }}>Edit</button>

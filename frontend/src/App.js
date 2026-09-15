@@ -6,6 +6,8 @@ import PurchaseOrderPage from './pages/PurchaseOrderPage';
 import MainStoreDashboard from './pages/MainStoreDashboard';
 import DirectorDashboard from './pages/DirectorDashboard';
 import SiteStoreDashboard from './pages/SiteStoreDashboard';
+import PaymentSuccess from './pages/PaymentSuccess';
+import PaymentCancel from './pages/PaymentCancel';
 
 function App() {
   const [view, setView] = useState('login');
@@ -28,6 +30,14 @@ function App() {
     const isDarkMode = localStorage.getItem('cmms_dark_mode') === 'true';
     if (isDarkMode) {
       document.body.classList.add('dark-mode');
+      document.documentElement.classList.add('dark-mode');
+    }
+
+    const path = window.location.pathname;
+    if (path.startsWith('/payments/success')) {
+      setView('payment-success');
+    } else if (path.startsWith('/payments/cancel')) {
+      setView('payment-cancel');
     }
 
     const storedUser = localStorage.getItem('user');
@@ -35,7 +45,9 @@ function App() {
       try {
         const parsed = JSON.parse(storedUser);
         setUser(parsed);
-        setView('dashboard');
+        if (!path.startsWith('/payments/')) {
+          setView('dashboard');
+        }
       } catch (err) {
         localStorage.removeItem('user');
       }
@@ -64,8 +76,10 @@ function App() {
         localStorage.setItem('cmms_dark_mode', isDark);
         if (isDark) {
           document.body.classList.add('dark-mode');
+          document.documentElement.classList.add('dark-mode');
         } else {
           document.body.classList.remove('dark-mode');
+          document.documentElement.classList.remove('dark-mode');
         }
         
         setUser(userData);
@@ -261,12 +275,24 @@ function App() {
   return (
     <div style={getPageContainerStyle()}>
       <style>{globalStyles}</style>
-      <main style={!user ? styles.main : {}}>
+      <main style={!user && !view.startsWith('payment-') ? styles.main : {}}>
         {view === 'login' && renderLogin()}
         {view === 'register' && renderRegister()}
+        {view === 'payment-success' && (
+          <PaymentSuccess onReturnToPOs={() => {
+            window.history.pushState({}, '', '/');
+            setView(user ? 'dashboard' : 'login');
+          }} />
+        )}
+        {view === 'payment-cancel' && (
+          <PaymentCancel onReturnToPOs={() => {
+            window.history.pushState({}, '', '/');
+            setView(user ? 'dashboard' : 'login');
+          }} />
+        )}
         {user && renderDashboard()}
       </main>
-      {!user && (
+      {!user && !view.startsWith('payment-') && (
         <footer style={styles.footer}>
           <p>Construction Material Management System • ELS Construction (Pvt) Ltd</p>
         </footer>

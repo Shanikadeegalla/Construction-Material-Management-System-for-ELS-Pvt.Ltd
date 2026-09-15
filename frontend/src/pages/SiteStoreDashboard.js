@@ -1,10 +1,19 @@
 import React, { useState, useEffect } from 'react';
+import { Calendar } from 'lucide-react';
 import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
-import { formatDate } from '../utils/dateUtils';
+import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 
 function SiteStoreDashboard({ user, onLogout }) {
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const [view, setView] = useState('dashboard'); // 'dashboard', 'site-inventory', 'request-materials', 'issue-usage'
+  const [showNotifications, setShowNotifications] = useState(false);
   const [materials, setMaterials] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -625,13 +634,88 @@ function SiteStoreDashboard({ user, onLogout }) {
 
         {view === 'dashboard' && (
           <div style={styles.container}>
-            <h1 style={styles.pageTitle}>
-              Site Store Operations Center {(() => {
-                const userProjId = user.projectId || user.project_id;
-                const userProj = projects.find(p => p._id === userProjId);
-                return userProj ? `— ${userProj.projectName || userProj.name}` : '';
-              })()}
-            </h1>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h1 style={{ ...styles.pageTitle, marginBottom: 0 }}>
+                Site Store Operations Center {(() => {
+                  const userProjId = user.projectId || user.project_id;
+                  const userProj = projects.find(p => p._id === userProjId);
+                  return userProj ? `— ${userProj.projectName || userProj.name}` : '';
+                })()}
+              </h1>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                {/* Notification Bell */}
+                <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
+                  <span style={{ fontSize: '18px' }}>🔔</span>
+                  {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length > 0 && (
+                    <span style={{
+                      position: 'absolute',
+                      top: '2px',
+                      right: '2px',
+                      background: '#ef4444',
+                      color: 'white',
+                      borderRadius: '50%',
+                      width: '16px',
+                      height: '16px',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length}
+                    </span>
+                  )}
+                  {showNotifications && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '48px',
+                      right: '0',
+                      background: 'white',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '12px',
+                      boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
+                      width: '320px',
+                      maxHeight: '400px',
+                      overflowY: 'auto',
+                      zIndex: 1000,
+                      cursor: 'default',
+                      padding: '8px',
+                      textAlign: 'left'
+                    }} onClick={e => e.stopPropagation()}>
+                      <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Site Store Stock Alerts</span>
+                        <span style={{ fontSize: '11px', background: '#fee2e2', color: '#ef4444', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>Alerts</span>
+                      </div>
+                      {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length === 0 ? (
+                        <div style={{ padding: '24px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
+                          All site stock levels normal.
+                        </div>
+                      ) : (
+                        materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).map((notif, idx) => (
+                          <div key={idx} style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
+                              <span style={{ color: '#0f172a' }}>{notif.materialName || notif.name}</span>
+                              <span style={{ color: '#ef4444', background: '#fef2f2', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>
+                                Low Stock
+                              </span>
+                            </div>
+                            <div style={{ color: '#475569', fontSize: '12px' }}>
+                              Current Qty: <strong>{notif.quantity} {notif.unit}</strong> (Reorder: {notif.reorderLevel ?? 50})
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Date display next to notification icon */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#475569', fontWeight: '600', background: '#f8fafc', padding: '6px 14px', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
+                  <Calendar size={15} style={{ color: '#2563eb' }} />
+                  <span>{formatFullDate(currentTime)}</span>
+                </div>
+              </div>
+            </div>
 
             {/* Low Stock Alert Section */}
             {materials.some(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)) && (
