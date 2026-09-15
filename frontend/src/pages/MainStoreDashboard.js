@@ -88,13 +88,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     items: []
   });
 
-  // Post-GRN "Attach Invoice" step state
-  const [lastCreatedGrn, setLastCreatedGrn] = useState(null);
-  const [supplierPOs, setSupplierPOs] = useState([]);
-  const [invoiceForm, setInvoiceForm] = useState({ po: '', amount: '', invoiceDate: new Date().toISOString().substring(0, 10) });
+  // Optional "attach supplier invoice" fields, submitted together with the GRN
+  const [invoiceForm, setInvoiceForm] = useState({ amount: '', invoiceDate: new Date().toISOString().substring(0, 10) });
   const [invoiceFile, setInvoiceFile] = useState(null);
-  const [invoiceMessage, setInvoiceMessage] = useState('');
-  const [invoiceError, setInvoiceError] = useState('');
   const [grnInvoices, setGrnInvoices] = useState([]);
 
   // Purchase Orders (used to prefill GRN creation from a Sent/Delivered PO)
@@ -248,9 +244,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
-  const fetchData = async () => {
+  const fetchData = async (isBackgroundRefresh = false) => {
     if (!hasSession()) return;
-    setLoading(true);
+    if (!isBackgroundRefresh) setLoading(true);
     setError('');
     try {
       const headers = getHeaders();
@@ -341,16 +337,17 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         { _id: '1', bomNumber: 'BOM-DEMO-001', version: 'v1.0', status: 'Approved', projectName: 'Colombo Port Expansion', approvedBy: 'Director', materials: [{ name: 'Portland Cement OPC', unit: 'bag', plannedQty: 300, category: 'Cement' }] }
       ]);
     } finally {
-      setLoading(false);
+      if (!isBackgroundRefresh) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchData();
     // Polls fairly frequently so stock a Site Store officer moves/consumes
-    // shows up here without a manual refresh.
+    // shows up here without a manual refresh. Runs silently (no loading
+    // spinner) so it doesn't blank out whatever screen is currently open.
     const interval = setInterval(() => {
-      fetchData();
+      fetchData(true);
     }, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -376,6 +373,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       return;
     }
 
+    const invalidExceedsOrdered = grnForm.items.some(item => Number(item.receivedQty) > Number(item.expectedQty));
+    if (invalidExceedsOrdered) {
+      setError('Received quantity cannot exceed the ordered quantity.');
+      return;
+    }
+
     const invalidDamaged = grnForm.items.some(item =>
       item.condition === 'Damaged' &&
       (item.damagedQty === '' || item.damagedQty === null || Number(item.damagedQty) < 0 || Number(item.damagedQty) > Number(item.receivedQty))
@@ -385,7 +388,17 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       return;
     }
 
+    // Invoice fields are attached to the same form and are optional - only
+    // validate/send them if the officer actually entered an amount.
+    if (invoiceForm.amount && Number(invoiceForm.amount) <= 0) {
+      setError('Invoice amount must be greater than zero.');
+      return;
+    }
+
     try {
+      const poIdForInvoice = selectedGrnPO;
+      const supplierIdForInvoice = grnForm.supplierId;
+
       const payload = {
         ...grnForm,
         receivedBy: user ? user.name : 'Store Officer'
@@ -396,83 +409,55 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         body: JSON.stringify(payload)
       });
       const data = await res.json();
-      if (res.ok) {
-        setSuccess(data.message || '✅ GRN processed successfully!');
-        setGrnForm({
-          supplier: '',
-          supplierId: '',
-          poReference: '',
-          receivedDate: new Date().toISOString().substring(0, 10),
-          notes: '',
-          items: []
-        });
-        setSelectedGrnPO('');
-        setLastCreatedGrn(data.grn);
-        fetchData();
-      } else {
+      if (!res.ok) {
         setError(data.message || 'Failed to submit GRN.');
+        return;
       }
+
+      let successMsg = data.message || '✅ GRN processed successfully!';
+
+      if (invoiceForm.amount) {
+        try {
+          const fd = new FormData();
+          fd.append('supplier', supplierIdForInvoice || '');
+          fd.append('po', poIdForInvoice);
+          fd.append('grn', data.grn._id);
+          fd.append('amount', invoiceForm.amount);
+          fd.append('invoiceDate', invoiceForm.invoiceDate);
+          if (invoiceFile) fd.append('file', invoiceFile);
+
+          const token = JSON.parse(localStorage.getItem('user'))?.token;
+          const invRes = await fetch('http://localhost:5000/api/invoices', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: fd
+          });
+          const invData = await invRes.json();
+          if (invRes.ok) {
+            successMsg += ' Invoice recorded and sent for Director approval!';
+          } else {
+            successMsg += ` (Invoice could not be attached: ${invData.message || 'unknown error'})`;
+          }
+        } catch (invErr) {
+          successMsg += ' (Invoice could not be attached: connection error.)';
+        }
+      }
+
+      setSuccess(successMsg);
+      setGrnForm({
+        supplier: '',
+        supplierId: '',
+        poReference: '',
+        receivedDate: new Date().toISOString().substring(0, 10),
+        notes: '',
+        items: []
+      });
+      setSelectedGrnPO('');
+      setInvoiceForm({ amount: '', invoiceDate: new Date().toISOString().substring(0, 10) });
+      setInvoiceFile(null);
+      fetchData();
     } catch (err) {
       setError('Connection error occurred.');
-    }
-  };
-
-  // Once a GRN is recorded, load that supplier's Sent/Delivered POs so the
-  // officer can optionally attach the paper invoice the supplier handed over.
-  useEffect(() => {
-    if (!lastCreatedGrn) {
-      setSupplierPOs([]);
-      return;
-    }
-    (async () => {
-      try {
-        const res = await fetch('http://localhost:5000/api/purchase-orders', { headers: getHeaders() });
-        const data = await res.json();
-        const allPOs = data.success ? data.data : [];
-        setSupplierPOs(allPOs.filter(po => po.supplier === lastCreatedGrn.supplier && ['Sent', 'Delivered'].includes(po.status)));
-      } catch (err) {
-        setSupplierPOs([]);
-      }
-    })();
-  }, [lastCreatedGrn]);
-
-  const handleInvoiceSubmit = async (e) => {
-    e.preventDefault();
-    setInvoiceError(''); setInvoiceMessage('');
-    if (!invoiceForm.po || !invoiceForm.amount) {
-      setInvoiceError('Please select the related PO and enter the invoice amount.');
-      return;
-    }
-    try {
-      const fd = new FormData();
-      fd.append('supplier', lastCreatedGrn.supplierId || '');
-      fd.append('po', invoiceForm.po);
-      fd.append('grn', lastCreatedGrn._id);
-      fd.append('amount', invoiceForm.amount);
-      fd.append('invoiceDate', invoiceForm.invoiceDate);
-      if (invoiceFile) fd.append('file', invoiceFile);
-
-      const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/invoices', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setInvoiceMessage('✅ Invoice recorded and sent for Director approval!');
-        setInvoiceForm({ po: '', amount: '', invoiceDate: new Date().toISOString().substring(0, 10) });
-        setInvoiceFile(null);
-        setTimeout(() => {
-          setLastCreatedGrn(null);
-          setInvoiceMessage('');
-          setView('dashboard');
-        }, 1500);
-      } else {
-        setInvoiceError(data.message || 'Failed to record invoice.');
-      }
-    } catch (err) {
-      setInvoiceError('Connection error occurred.');
     }
   };
 
@@ -1822,13 +1807,19 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                                 <input
                                   type="number"
                                   min="0"
+                                  max={ordered}
                                   value={item.receivedQty}
                                   onChange={e => {
                                     const updated = [...grnForm.items];
                                     updated[idx].receivedQty = e.target.value;
                                     setGrnForm({ ...grnForm, items: updated });
                                   }}
-                                  style={{ ...styles.formInput, width: '90px', textAlign: 'right' }}
+                                  style={{
+                                    ...styles.formInput,
+                                    width: '90px',
+                                    textAlign: 'right',
+                                    ...(received !== null && received > ordered ? { borderColor: '#c62828' } : {})
+                                  }}
                                   required
                                 />
                               </td>
@@ -1864,13 +1855,18 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                                 )}
                               </td>
                               <td style={styles.td}>
+                                {received !== null && received > ordered && (
+                                  <div style={{ color: '#c62828', fontSize: '12px', fontWeight: 600 }}>
+                                    ⚠️ Exceeds ordered qty by {received - ordered} units
+                                  </div>
+                                )}
                                 {shortage > 0 && (
-                                  <div style={{ color: '#b45309', fontSize: '12px', fontWeight: 600 }}>
+                                  <div style={{ color: '#b45309', fontSize: '12px', fontWeight: 600, marginTop: (received !== null && received > ordered) ? '4px' : 0 }}>
                                     ⚠️ Shortage: {shortage} units
                                   </div>
                                 )}
                                 {item.condition === 'Damaged' && damagedQty > 0 && (
-                                  <div style={{ color: '#b91c1c', fontSize: '12px', fontWeight: 600, marginTop: shortage > 0 ? '4px' : 0 }}>
+                                  <div style={{ color: '#b91c1c', fontSize: '12px', fontWeight: 600, marginTop: (shortage > 0 || (received !== null && received > ordered)) ? '4px' : 0 }}>
                                     ⚠️ Damaged quantity: {damagedQty}
                                   </div>
                                 )}
@@ -1893,6 +1889,68 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   />
                 </div>
 
+                <div style={{
+                  marginBottom: '16px',
+                  padding: '16px',
+                  background: '#f4f6fb',
+                  border: '1px solid #d7deed',
+                  borderRadius: '8px'
+                }}>
+                  <h4 style={{ color: '#0d1b4b', marginTop: 0, marginBottom: '4px' }}>Attach Supplier Invoice</h4>
+                  <p style={{ color: '#666', fontSize: '13px', marginTop: 0, marginBottom: '16px' }}>
+                    If the supplier handed over an invoice with this delivery, record it now — it's sent for Director payment approval as soon as the GRN is saved.
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: '16px' }}>
+                    <div>
+                      <label style={styles.fieldLabel}>Invoice Amount (LKR)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={invoiceForm.amount}
+                        onChange={e => setInvoiceForm({ ...invoiceForm, amount: e.target.value })}
+                        style={styles.formInput}
+                      />
+                    </div>
+                    <div>
+                      <label style={styles.fieldLabel}>Invoice Date</label>
+                      <DateInput
+                        value={invoiceForm.invoiceDate}
+                        onChange={iso => setInvoiceForm({ ...invoiceForm, invoiceDate: iso })}
+                        style={styles.formInput}
+                      />
+                    </div>
+                    <div>
+                      <label style={styles.fieldLabel}>Attach Invoice PDF/JPG</label>
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: '12px',
+                        border: '1px solid #ddd', borderRadius: '6px', padding: '8px 10px',
+                        backgroundColor: 'white'
+                      }}>
+                        <label style={{
+                          padding: '8px 16px', borderRadius: '6px', fontSize: '13px', fontWeight: '600',
+                          whiteSpace: 'nowrap', flexShrink: 0,
+                          backgroundColor: '#0d1b4b', color: 'white',
+                          cursor: 'pointer'
+                        }}>
+                          Choose File
+                          <input
+                            type="file"
+                            accept=".pdf,.jpg,.jpeg"
+                            onChange={e => setInvoiceFile(e.target.files[0] || null)}
+                            style={{ display: 'none' }}
+                          />
+                        </label>
+                        <span style={{
+                          color: '#334155', fontSize: '13px', overflow: 'hidden',
+                          textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                        }}>
+                          {invoiceFile ? invoiceFile.name : 'No file chosen'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <button
                   type="submit"
                   style={{ ...styles.orangeBtn, opacity: (!selectedGrnPO || grnForm.items.length === 0) ? 0.5 : 1, cursor: (!selectedGrnPO || grnForm.items.length === 0) ? 'not-allowed' : 'pointer' }}
@@ -1900,111 +1958,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                 >
                   Record GRN & Update Inventory
                 </button>
-              </form>
-            </div>
-
-            {/* Attach Invoice */}
-            <div style={styles.formCard}>
-              <h3 style={{ color: '#0d1b4b', marginBottom: '4px' }}>Attach Supplier Invoice</h3>
-              <p style={{ color: '#666', fontSize: '13px', marginTop: 0, marginBottom: '16px' }}>
-                {lastCreatedGrn
-                  ? `GRN ${lastCreatedGrn.grnNumber} recorded. If the supplier handed over an invoice with this delivery, record it here for Director payment approval.`
-                  : 'Select the GRN the supplier invoice belongs to, then record it here for Director payment approval.'}
-              </p>
-              {invoiceMessage && <div style={{ ...styles.errorAlert, backgroundColor: '#e8f5e9', border: '1px solid #66bb6a', color: '#2e7d32' }}>{invoiceMessage}</div>}
-              {invoiceError && <div style={styles.errorAlert}>{invoiceError}</div>}
-              <form onSubmit={handleInvoiceSubmit}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                  <div>
-                    <label style={styles.fieldLabel}>Related GRN *</label>
-                    <select
-                      value={lastCreatedGrn?._id || ''}
-                      onChange={e => {
-                        const selected = grns.find(g => g._id === e.target.value) || null;
-                        setLastCreatedGrn(selected);
-                        setInvoiceForm({ po: '', amount: '', invoiceDate: new Date().toISOString().substring(0, 10) });
-                      }}
-                      style={styles.formSelect}
-                      required
-                    >
-                      <option value="">-- Select GRN --</option>
-                      {grns.map(g => (
-                        <option key={g._id} value={g._id}>{g.grnNumber} — {g.supplier}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Related PO *</label>
-                    <select
-                      value={invoiceForm.po}
-                      onChange={e => setInvoiceForm({ ...invoiceForm, po: e.target.value })}
-                      style={styles.formSelect}
-                      required
-                      disabled={!lastCreatedGrn}
-                    >
-                      <option value="">-- Select Purchase Order --</option>
-                      {supplierPOs.map(po => (
-                        <option key={po._id} value={po._id}>{po.poNumber}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Invoice Amount (LKR) *</label>
-                    <input
-                      type="number"
-                      value={invoiceForm.amount}
-                      onChange={e => setInvoiceForm({ ...invoiceForm, amount: e.target.value })}
-                      style={styles.formInput}
-                      required
-                      disabled={!lastCreatedGrn}
-                    />
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Invoice Date</label>
-                    <DateInput
-                      value={invoiceForm.invoiceDate}
-                      onChange={iso => setInvoiceForm({ ...invoiceForm, invoiceDate: iso })}
-                      style={styles.formInput}
-                    />
-                  </div>
-                  <div style={{ gridColumn: 'span 4' }}>
-                    <label style={styles.fieldLabel}>Attach Invoice PDF/JPG</label>
-                    <div style={{
-                      display: 'flex', alignItems: 'center', gap: '12px',
-                      border: '1px solid #ddd', borderRadius: '6px', padding: '8px 10px',
-                      backgroundColor: lastCreatedGrn ? 'white' : '#f5f5f5'
-                    }}>
-                      <label style={{
-                        padding: '8px 16px', borderRadius: '6px', fontSize: '13px', fontWeight: '600',
-                        whiteSpace: 'nowrap', flexShrink: 0,
-                        backgroundColor: lastCreatedGrn ? '#0d1b4b' : '#ccc', color: 'white',
-                        cursor: lastCreatedGrn ? 'pointer' : 'not-allowed'
-                      }}>
-                        Choose File
-                        <input
-                          type="file"
-                          accept=".pdf,.jpg,.jpeg"
-                          onChange={e => setInvoiceFile(e.target.files[0] || null)}
-                          disabled={!lastCreatedGrn}
-                          style={{ display: 'none' }}
-                        />
-                      </label>
-                      <span style={{
-                        color: '#334155', fontSize: '13px', overflow: 'hidden',
-                        textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-                      }}>
-                        {invoiceFile ? invoiceFile.name : 'No file chosen'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button type="submit" style={{ ...styles.orangeBtn, opacity: lastCreatedGrn ? 1 : 0.5, cursor: lastCreatedGrn ? 'pointer' : 'not-allowed' }} disabled={!lastCreatedGrn}>Record Invoice</button>
-                  <button type="button" onClick={() => { setLastCreatedGrn(null); setInvoiceForm({ po: '', amount: '', invoiceDate: new Date().toISOString().substring(0, 10) }); setInvoiceFile(null); setInvoiceMessage(''); setInvoiceError(''); }}
-                    style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
-                    Clear
-                  </button>
-                </div>
               </form>
             </div>
 
