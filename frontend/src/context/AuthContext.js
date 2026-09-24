@@ -21,13 +21,18 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (formData) => {
     const res = await loginAPI(formData);
-    localStorage.setItem('token', res.data.token);
-    setUser(res.data.user);
-    return res.data.user;
+    const userData = res.data?.data || res.data?.user || res.data;
+    if (userData && userData.token) {
+      localStorage.setItem('token', userData.token);
+      setUser(userData);
+      return userData;
+    }
+    return res.data;
   };
 
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('user');
     setUser(null);
   };
 

@@ -1071,13 +1071,13 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>Notifications</span>
                     <span onClick={async () => {
-                      for (const n of notifications) {
-                        if (!n.isRead) {
-                          await fetch(`http://localhost:5000/api/notifications/${n._id}/read`, {
-                            method: 'PUT',
-                            headers: getHeaders()
-                          });
-                        }
+                      try {
+                        await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+                          method: 'PUT',
+                          headers: getHeaders()
+                        });
+                      } catch (err) {
+                        console.error('Error marking all notifications read:', err);
                       }
                       fetchNotifications();
                     }} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
@@ -1144,12 +1144,19 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                 ].map((stat, i) => (
                   <div
                     key={i}
+                    onClick={() => {
+                      setModal(stat.type);
+                      setModalSearchTerm('');
+                    }}
+                    title="Click to view detailed information"
                     style={{
                       background: 'white',
                       borderRadius: '8px',
                       padding: '20px',
                       boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                      borderTop: `4px solid ${stat.color}`
+                      borderTop: `4px solid ${stat.color}`,
+                      cursor: 'pointer',
+                      transition: 'transform 0.15s ease, box-shadow 0.15s ease'
                     }}
                   >
                     <div style={{ fontSize: '24px', fontWeight: '700', color: stat.color }}>{stat.value}</div>

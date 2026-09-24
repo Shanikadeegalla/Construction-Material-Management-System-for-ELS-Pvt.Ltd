@@ -54,6 +54,26 @@ function App() {
     }
   }, []);
 
+  const handleVerifySuccess = (userData) => {
+    localStorage.setItem('user', JSON.stringify(userData));
+    localStorage.setItem('cmms_last_login', new Date().toISOString());
+
+    // Sync dark mode preference from user settings database
+    const isDark = userData.settings?.system?.darkMode === true;
+    localStorage.setItem('cmms_dark_mode', isDark);
+    if (isDark) {
+      document.body.classList.add('dark-mode');
+      document.documentElement.classList.add('dark-mode');
+    } else {
+      document.body.classList.remove('dark-mode');
+      document.documentElement.classList.remove('dark-mode');
+    }
+
+    setUser(userData);
+    setView('dashboard');
+    setLoginEmail(''); setLoginPassword('');
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -67,24 +87,7 @@ function App() {
       });
       const data = await res.json();
       if (data.success) {
-        const userData = data.data;
-        localStorage.setItem('user', JSON.stringify(userData));
-        localStorage.setItem('cmms_last_login', new Date().toISOString());
-        
-        // Sync dark mode preference from user settings database
-        const isDark = userData.settings?.system?.darkMode === true;
-        localStorage.setItem('cmms_dark_mode', isDark);
-        if (isDark) {
-          document.body.classList.add('dark-mode');
-          document.documentElement.classList.add('dark-mode');
-        } else {
-          document.body.classList.remove('dark-mode');
-          document.documentElement.classList.remove('dark-mode');
-        }
-        
-        setUser(userData);
-        setView('dashboard');
-        setLoginEmail(''); setLoginPassword('');
+        handleVerifySuccess(data.data);
       } else {
         setError(data.message || 'Invalid email or password.');
       }
@@ -226,22 +229,23 @@ function App() {
 
   const renderDashboard = () => {
     if (!user) return null;
-    if (user.role === 'Admin') {
+    const r = (user.role || '').toLowerCase();
+    if (r === 'admin') {
       return <AdminDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'Director') {
+    if (r === 'director') {
       return <DirectorDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'ProjectManager') {
+    if (r === 'projectmanager' || r === 'pm') {
       return <PMDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'PurchaseManager') {
+    if (r === 'purchasemanager' || r === 'purchase') {
       return <PurchaseOrderPage user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'MainStoreOfficer') {
+    if (r === 'mainstoreofficer' || r === 'store' || r === 'mainstore') {
       return <MainStoreDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'SiteStoreOfficer' || user.role === 'StoreOfficer') {
+    if (r === 'sitestoreofficer' || r === 'sitestore' || r === 'storeofficer') {
       return <SiteStoreDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
 

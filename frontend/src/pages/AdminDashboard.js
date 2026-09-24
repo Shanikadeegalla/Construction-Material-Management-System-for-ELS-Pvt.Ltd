@@ -854,27 +854,45 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchNotifications = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/inventory/notifications', {
+      if (!token) return;
+      const res = await fetch('http://localhost:5000/api/notifications', {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
       if (data.success) {
-        setNotifications(data.data);
-      }
-
-      const countRes = await fetch('http://localhost:5000/api/notifications/count', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const countData = await countRes.json();
-      if (countData.success) {
-        setUnreadCount(countData.count);
+        setNotifications(data.data || []);
+        setUnreadCount((data.data || []).filter(n => !n.isRead).length);
       }
     } catch (err) {
-      setNotifications([
-        { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
-        { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
-      ]);
-      setUnreadCount(2);
+      console.error('Error fetching notifications:', err);
+    }
+  };
+
+  const handleMarkNotificationRead = async (notif) => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error('Error marking notification read:', err);
+    }
+    setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
+    setUnreadCount(prev => Math.max(0, prev - (notif.isRead ? 0 : 1)));
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setUnreadCount(0);
+    } catch (err) {
+      console.error('Error marking all notifications read:', err);
     }
   };
 
@@ -1820,27 +1838,33 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
               {showNotifications && (
                 <div style={{ position: 'absolute', top: '48px', right: '0', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)', width: '320px', maxHeight: '400px', overflowY: 'auto', zIndex: 100, cursor: 'default', padding: '8px' }} onClick={e => e.stopPropagation()}>
                   <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>System Inventory Alerts</span>
-                    <span style={{ fontSize: '11px', background: '#fee2e2', color: '#ef4444', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>Stock alerts</span>
+                    <span>Admin Notifications</span>
+                    <span onClick={handleMarkAllNotificationsRead} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
                   </div>
                   {notifications.length === 0 ? (
                     <div style={{ padding: '24px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
-                      All stock thresholds normal.
+                      No new notifications.
                     </div>
                   ) : (
                     notifications.map((notif, idx) => (
-                      <div key={idx} style={{ padding: '12px', borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9', fontSize: '13px', borderRadius: '8px', transition: 'background 0.2s', ':hover': { background: '#f8fafc' } }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
-                          <span style={{ color: '#0f172a' }}>{notif.materialName}</span>
-                          <span style={{ color: notif.alertLevel === 'Critical' ? '#ef4444' : '#f59e0b', background: notif.alertLevel === 'Critical' ? '#fef2f2' : '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>
-                            {notif.alertLevel}
-                          </span>
+                      <div
+                        key={idx}
+                        onClick={() => handleMarkNotificationRead(notif)}
+                        style={{
+                          padding: '12px',
+                          borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9',
+                          fontSize: '13px',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          background: notif.isRead ? 'white' : '#f8fafc',
+                          transition: 'background 0.2s'
+                        }}
+                      >
+                        <div style={{ color: notif.isRead ? '#475569' : '#0f172a', fontWeight: notif.isRead ? '400' : '600' }}>
+                          {notif.message || notif.materialName}
                         </div>
-                        <div style={{ color: '#475569', fontSize: '12px' }}>
-                          Current: <strong>{notif.currentQty}</strong> | Threshold: {notif.minimumStock}
-                        </div>
-                        <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <span>📍</span> {notif.location}
+                        <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px' }}>
+                          {formatFullDate(notif.createdAt)}
                         </div>
                       </div>
                     ))
