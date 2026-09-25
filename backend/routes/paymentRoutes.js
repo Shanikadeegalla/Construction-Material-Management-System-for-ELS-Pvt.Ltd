@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   createCheckoutSession,
+  confirmPaymentSession,
   getPaymentByPO,
   generatePaymentReport,
   getPaymentReceipt,
@@ -17,6 +18,14 @@ router.post(
   protect,
   authorizeRoles('PurchaseManager', 'Admin'),
   createCheckoutSession
+);
+
+// Protected confirmation of a completed Stripe Checkout session (triggers supplier email + PDF receipt)
+router.post(
+  '/confirm-session',
+  protect,
+  authorizeRoles('PurchaseManager', 'Admin'),
+  confirmPaymentSession
 );
 
 // Protected PDF payment report generation (Purchase Manager & Admin only)

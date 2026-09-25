@@ -23,9 +23,8 @@ import {
 import SettingsPage from './SettingsPage';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Tooltip, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
-import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
+import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort, formatFullDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 
 // Taxonomy of gate-able actions in the app, grouped by module. This mirrors the
@@ -837,9 +836,6 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const [message, setMessage] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date());
-
-  // Dashboard: User Activity Chart range toggle (7 or 30 days)
-  const [activityRange, setActivityRange] = useState(7);
 
   // Notifications state
   const [notifications, setNotifications] = useState([]);
@@ -1971,85 +1967,6 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
               </div>
 
-              {/* User Activity Chart */}
-              <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', marginTop: '24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                  <h3 style={{ margin: 0, color: '#0d1b4b', fontSize: '16px', fontWeight: '700' }}>User Activity</h3>
-                  <div style={{ display: 'flex', gap: '4px', background: '#f1f5f9', borderRadius: '10px', padding: '4px' }}>
-                    {[7, 30].map(range => (
-                      <button
-                        key={range}
-                        onClick={() => setActivityRange(range)}
-                        style={{
-                          padding: '6px 16px',
-                          borderRadius: '8px',
-                          border: 'none',
-                          background: activityRange === range ? '#2563eb' : 'transparent',
-                          color: activityRange === range ? 'white' : '#64748b',
-                          fontSize: '12px',
-                          fontWeight: '700',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s'
-                        }}
-                      >
-                        {range} Days
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {(() => {
-                  const days = [];
-                  const now = new Date();
-                  for (let i = activityRange - 1; i >= 0; i--) {
-                    const d = new Date(now);
-                    d.setDate(d.getDate() - i);
-                    d.setHours(0, 0, 0, 0);
-                    days.push(d);
-                  }
-                  const chartData = days.map(day => {
-                    const nextDay = new Date(day);
-                    nextDay.setDate(nextDay.getDate() + 1);
-                    const count = auditLogs.filter(log => {
-                      const ts = new Date(log.timestamp || log.time);
-                      return ts >= day && ts < nextDay;
-                    }).length;
-                    return {
-                      date: formatShortDate(day),
-                      count
-                    };
-                  });
-                  const totalActivity = chartData.reduce((sum, d) => sum + d.count, 0);
-                  if (totalActivity === 0) {
-                    return <div style={{ color: '#94a3b8', fontSize: '14px', textAlign: 'center', padding: '40px' }}>No activity recorded in the last {activityRange} days.</div>;
-                  }
-                  return (
-                    <ResponsiveContainer width="100%" height={280}>
-                      <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="activityGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.3} />
-                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis
-                          dataKey="date"
-                          tick={{ fontSize: 12, fill: '#64748b' }}
-                          axisLine={{ stroke: '#e2e8f0' }}
-                          tickLine={false}
-                          interval={activityRange === 30 ? 3 : 0}
-                        />
-                        <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} width={30} />
-                        <Tooltip
-                          formatter={(value) => [`${value} activit${value === 1 ? 'y' : 'ies'}`, 'Activity']}
-                          contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px' }}
-                        />
-                        <Area type="monotone" dataKey="count" stroke="#2563eb" strokeWidth={2} fill="url(#activityGradient)" activeDot={{ r: 5 }} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  );
-                })()}
-              </div>
             </div>
           )}
 

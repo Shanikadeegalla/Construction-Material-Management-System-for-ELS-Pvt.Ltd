@@ -36,10 +36,10 @@ const getTransporter = () => {
   return transporter;
 };
 
-export const sendMail = async ({ to, subject, html, text }) => {
+export const sendMail = async ({ to, subject, html, text, attachments }) => {
   const t = getTransporter();
   const from = process.env.SMTP_FROM || process.env.SMTP_USER;
-  await t.sendMail({ from, to, subject, html, text });
+  await t.sendMail({ from, to, subject, html, text, attachments });
 };
 
 export const escapeHtml = (value) =>

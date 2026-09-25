@@ -10,6 +10,123 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder'
 const CURRENCY = (process.env.STRIPE_CURRENCY || 'lkr').toLowerCase();
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
+// Draws the payment receipt content onto a given PDFKit document instance.
+// Shared by the downloadable receipt endpoint and the buffer used for email attachments.
+const drawReceiptContent = (doc, fields) => {
+  const {
+    invoiceNumber, poNumber, grnNumber, supplierName, supplierEmail,
+    amountPaid, currency, paidAt, stripeRef, paidByName
+  } = fields;
+
+  doc.fillColor('#0d1b4b').fontSize(22).font('Helvetica-Bold').text('ELS Construction', 40, 40);
+  doc.fillColor('#64748b').fontSize(11).font('Helvetica').text('Official Payment Receipt', 40, 68);
+
+  doc.moveTo(40, 90).lineTo(555, 90).strokeColor('#cbd5e1').stroke();
+
+  doc.rect(390, 42, 165, 34).fill('#dcfce7');
+  doc.fillColor('#15803d').fontSize(11).font('Helvetica-Bold').text('✓ PAYMENT CONFIRMED', 402, 54);
+
+  let y = 110;
+  doc.rect(40, y, 515, 270).fillAndStroke('#f8fafc', '#cbd5e1');
+
+  const addField = (label, value, yPos, isBold = false) => {
+    doc.fillColor('#475569').fontSize(10).font('Helvetica-Bold').text(label, 60, yPos);
+    doc.fillColor('#0f172a').fontSize(10).font(isBold ? 'Helvetica-Bold' : 'Helvetica').text(String(value), 220, yPos);
+  };
+
+  addField('Invoice Number:', invoiceNumber, y + 16);
+  addField('Purchase Order No:', poNumber, y + 42);
+  addField('Goods Received Note (GRN):', grnNumber, y + 68);
+  addField('Supplier Name:', supplierName, y + 94);
+  addField('Supplier Contact:', supplierEmail, y + 120);
+  addField('Amount Paid:', `${currency} ${Number(amountPaid).toLocaleString()}`, y + 146, true);
+  addField('Payment Date & Time:', new Date(paidAt).toLocaleString(), y + 172);
+  addField('Payment Status:', 'PAID (Verified via Stripe Gateway)', y + 198, true);
+  addField('Stripe Reference ID:', stripeRef, y + 224);
+  addField('Paid By (Authorized Manager):', paidByName, y + 250);
+
+  doc.fillColor('#0d1b4b').fontSize(11).font('Helvetica-Bold').text('Transaction Summary & Acknowledgement', 40, y + 300);
+  doc.fillColor('#475569').fontSize(9.5).font('Helvetica').text(
+    `This receipt confirms that payment of ${currency} ${Number(amountPaid).toLocaleString()} for Purchase Order ${poNumber} has been successfully settled with ${supplierName}.`,
+    40, y + 320, { width: 515, align: 'left', lineGap: 4 }
+  );
+
+  doc.moveTo(40, 780).lineTo(555, 780).strokeColor('#e2e8f0').stroke();
+  doc.fillColor('#94a3b8').fontSize(8.5).font('Helvetica').text(
+    'This is a system-generated receipt from ELS Construction Material Management System. No signature required.',
+    40, 792, { align: 'center', width: 515 }
+  );
+};
+
+// Renders the same receipt content into an in-memory PDF buffer (used for email attachments).
+const buildReceiptPdfBuffer = (fields) => new Promise((resolve, reject) => {
+  const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'portrait' });
+  const chunks = [];
+  doc.on('data', (chunk) => chunks.push(chunk));
+  doc.on('end', () => resolve(Buffer.concat(chunks)));
+  doc.on('error', reject);
+  drawReceiptContent(doc, fields);
+  doc.end();
+});
+
+// Sends the "payment received" email (with PDF receipt attached) to the supplier for a paid PO.
+// Idempotent: skips silently if this payment has already triggered a notification.
+const sendPaymentConfirmation = async ({ payment, po, supplierDoc, invoice }) => {
+  if (payment.emailSentAt) return false;
+  if (!supplierDoc || !supplierDoc.email) {
+    console.warn(`Skipping payment confirmation email: no supplier email on file for payment ${payment._id}`);
+    return false;
+  }
+
+  const poNumber = po?.poNumber || 'N/A';
+  const invoiceNumber = invoice?.invoiceNumber || `INV-${poNumber.replace('PO-', '')}`;
+  const grnNumber = invoice?.grn?.grnNumber || 'N/A';
+  const currency = (payment.currency || CURRENCY).toUpperCase();
+
+  const pdfBuffer = await buildReceiptPdfBuffer({
+    invoiceNumber,
+    poNumber,
+    grnNumber,
+    supplierName: supplierDoc.name,
+    supplierEmail: supplierDoc.email,
+    amountPaid: payment.amount,
+    currency,
+    paidAt: payment.paidAt || new Date(),
+    stripeRef: payment.stripeSessionId,
+    paidByName: 'Purchase Manager'
+  });
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;color:#0d1b4b;padding:20px;border:1px solid #e2e8f0;border-radius:8px;">
+      <h2 style="color:#0d1b4b;">Payment Confirmation - PO ${escapeHtml(poNumber)}</h2>
+      <p>Dear ${escapeHtml(supplierDoc.name)},</p>
+      <p>We are pleased to inform you that payment for <strong>Purchase Order ${escapeHtml(poNumber)}</strong> has been processed successfully. Please find the official payment receipt attached to this email.</p>
+      <div style="background:#f8fafc;padding:16px;border-radius:6px;margin:16px 0;">
+        <p style="margin:4px 0;"><strong>PO Number:</strong> ${escapeHtml(poNumber)}</p>
+        <p style="margin:4px 0;"><strong>Amount Paid:</strong> ${escapeHtml(currency)} ${Number(payment.amount).toLocaleString()}</p>
+        <p style="margin:4px 0;"><strong>Payment Date:</strong> ${new Date(payment.paidAt || Date.now()).toLocaleDateString()}</p>
+        <p style="margin:4px 0;"><strong>Status:</strong> <span style="color:#16a34a;font-weight:bold;">PAID</span></p>
+      </div>
+      <p>Thank you for your partnership with ELS Construction.</p>
+      <p>Regards,<br/>ELS Construction Procurement Team</p>
+    </div>`;
+
+  await sendMail({
+    to: supplierDoc.email,
+    subject: `Payment Received - Purchase Order ${poNumber}`,
+    html,
+    attachments: [{
+      filename: `receipt-${invoiceNumber}.pdf`,
+      content: pdfBuffer,
+      contentType: 'application/pdf'
+    }]
+  });
+
+  payment.emailSentAt = new Date();
+  await payment.save();
+  return true;
+};
+
 // @desc    Create a Stripe Checkout Session to pay for an approved Purchase Order
 // @route   POST /api/payments/create-checkout-session
 // @access  Private (PurchaseManager / Admin)
@@ -92,6 +209,65 @@ export const createCheckoutSession = async (req, res) => {
   }
 };
 
+// @desc    Confirm a completed Stripe Checkout session and (idempotently) trigger the
+//          supplier payment notification email + PDF receipt. Called from the frontend
+//          success page as soon as Stripe redirects back — this does not depend on the
+//          Stripe webhook reaching the server, which local/dev environments often can't do
+//          without running `stripe listen`.
+// @route   POST /api/payments/confirm-session
+// @access  Private (PurchaseManager / Admin)
+export const confirmPaymentSession = async (req, res) => {
+  try {
+    const { sessionId, purchaseOrderId } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ success: false, message: 'sessionId is required.' });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== 'paid') {
+      return res.status(400).json({ success: false, message: 'Payment has not completed yet.' });
+    }
+
+    const poId = purchaseOrderId || session.metadata?.purchaseOrderId;
+
+    let payment = await Payment.findOne({ stripeSessionId: sessionId });
+    if (!payment && poId) {
+      payment = await Payment.findOne({ purchaseOrder: poId });
+    }
+    if (!payment) {
+      return res.status(404).json({ success: false, message: 'No payment record found for this session.' });
+    }
+
+    if (payment.status !== 'paid') {
+      payment.status = 'paid';
+      payment.paidAt = payment.paidAt || new Date();
+      await payment.save();
+    }
+
+    const po = await PurchaseOrder.findById(payment.purchaseOrder);
+    if (po && po.paymentStatus !== 'paid') {
+      po.paymentStatus = 'paid';
+      await po.save();
+    }
+
+    let emailSent = !!payment.emailSentAt;
+    if (!emailSent) {
+      const supplierDoc = await Supplier.findById(payment.supplier);
+      const invoice = await Invoice.findOne({ po: payment.purchaseOrder }).populate('grn', 'grnNumber');
+      try {
+        emailSent = await sendPaymentConfirmation({ payment, po, supplierDoc, invoice });
+      } catch (mailErr) {
+        console.error('Error sending payment confirmation email:', mailErr);
+      }
+    }
+
+    res.status(200).json({ success: true, data: { paymentStatus: payment.status, emailSent } });
+  } catch (error) {
+    console.error('Error confirming payment session:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Stripe Webhook handler for checkout.session.completed
 // @route   POST /api/payments/webhook
 // @access  Public (Stripe Signature Verified)
@@ -125,29 +301,13 @@ export const handleWebhook = async (req, res) => {
           po.paymentStatus = 'paid';
           await po.save();
 
-          // Dispatch email notification to supplier
+          // Dispatch email notification (with PDF receipt attached) to the supplier
           const supplierDoc = await Supplier.findById(payment.supplier);
-          if (supplierDoc && supplierDoc.email) {
-            const html = `
-              <div style="font-family:Arial,sans-serif;color:#0d1b4b;padding:20px;border:1px solid #e2e8f0;border-radius:8px;">
-                <h2 style="color:#0d1b4b;">Payment Confirmation - PO ${escapeHtml(po.poNumber)}</h2>
-                <p>Dear ${escapeHtml(supplierDoc.name)},</p>
-                <p>We are pleased to inform you that payment for <strong>Purchase Order ${escapeHtml(po.poNumber)}</strong> has been processed successfully.</p>
-                <div style="background:#f8fafc;padding:16px;border-radius:6px;margin:16px 0;">
-                  <p style="margin:4px 0;"><strong>PO Number:</strong> ${escapeHtml(po.poNumber)}</p>
-                  <p style="margin:4px 0;"><strong>Amount Paid:</strong> ${escapeHtml(payment.currency.toUpperCase())} ${Number(payment.amount).toLocaleString()}</p>
-                  <p style="margin:4px 0;"><strong>Payment Date:</strong> ${new Date(payment.paidAt).toLocaleDateString()}</p>
-                  <p style="margin:4px 0;"><strong>Status:</strong> <span style="color:#16a34a;font-weight:bold;">PAID</span></p>
-                </div>
-                <p>Thank you for your partnership with ELS Construction.</p>
-                <p>Regards,<br/>ELS Construction Procurement Team</p>
-              </div>`;
-
-            await sendMail({
-              to: supplierDoc.email,
-              subject: `Payment Received - Purchase Order ${po.poNumber}`,
-              html
-            });
+          const invoice = await Invoice.findOne({ po: payment.purchaseOrder }).populate('grn', 'grnNumber');
+          try {
+            await sendPaymentConfirmation({ payment, po, supplierDoc, invoice });
+          } catch (mailErr) {
+            console.error('Error sending payment confirmation email from webhook:', mailErr);
           }
         }
       }
@@ -445,49 +605,10 @@ export const downloadPaymentReceipt = async (req, res) => {
 
     doc.pipe(res);
 
-    // Header Branding
-    doc.fillColor('#0d1b4b').fontSize(22).font('Helvetica-Bold').text('ELS Construction', 40, 40);
-    doc.fillColor('#64748b').fontSize(11).font('Helvetica').text('Official Payment Receipt', 40, 68);
-
-    doc.moveTo(40, 90).lineTo(555, 90).strokeColor('#cbd5e1').stroke();
-
-    // Receipt Badge
-    doc.rect(390, 42, 165, 34).fill('#dcfce7');
-    doc.fillColor('#15803d').fontSize(11).font('Helvetica-Bold').text('✓ PAYMENT CONFIRMED', 402, 54);
-
-    // Receipt Information Box
-    let y = 110;
-    doc.rect(40, y, 515, 270).fillAndStroke('#f8fafc', '#cbd5e1');
-
-    const addField = (label, value, yPos, isBold = false) => {
-      doc.fillColor('#475569').fontSize(10).font('Helvetica-Bold').text(label, 60, yPos);
-      doc.fillColor('#0f172a').fontSize(10).font(isBold ? 'Helvetica-Bold' : 'Helvetica').text(String(value), 220, yPos);
-    };
-
-    addField('Invoice Number:', invoiceNumber, y + 16);
-    addField('Purchase Order No:', poNumber, y + 42);
-    addField('Goods Received Note (GRN):', grnNumber, y + 68);
-    addField('Supplier Name:', supplierName, y + 94);
-    addField('Supplier Contact:', supplierEmail, y + 120);
-    addField('Amount Paid:', `${currency} ${Number(amountPaid).toLocaleString()}`, y + 146, true);
-    addField('Payment Date & Time:', new Date(paidAt).toLocaleString(), y + 172);
-    addField('Payment Status:', 'PAID (Verified via Stripe Gateway)', y + 198, true);
-    addField('Stripe Reference ID:', stripeRef, y + 224);
-    addField('Paid By (Authorized Manager):', paidByName, y + 250);
-
-    // Transaction Note
-    doc.fillColor('#0d1b4b').fontSize(11).font('Helvetica-Bold').text('Transaction Summary & Acknowledgement', 40, y + 300);
-    doc.fillColor('#475569').fontSize(9.5).font('Helvetica').text(
-      `This receipt confirms that payment of ${currency} ${Number(amountPaid).toLocaleString()} for Purchase Order ${poNumber} has been successfully settled with ${supplierName}.`,
-      40, y + 320, { width: 515, align: 'left', lineGap: 4 }
-    );
-
-    // System Footer
-    doc.moveTo(40, 780).lineTo(555, 780).strokeColor('#e2e8f0').stroke();
-    doc.fillColor('#94a3b8').fontSize(8.5).font('Helvetica').text(
-      'This is a system-generated receipt from ELS Construction Material Management System. No signature required.',
-      40, 792, { align: 'center', width: 515 }
-    );
+    drawReceiptContent(doc, {
+      invoiceNumber, poNumber, grnNumber, supplierName, supplierEmail,
+      amountPaid, currency, paidAt, stripeRef, paidByName
+    });
 
     doc.end();
   } catch (error) {

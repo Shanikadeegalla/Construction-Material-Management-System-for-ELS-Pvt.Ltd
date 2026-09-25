@@ -88,7 +88,7 @@ const testRBACAndMultiProject = async () => {
     const siteStoreLogin = await fetch('http://localhost:5000/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'sitestore@els.com', password: 'store123' })
+      body: JSON.stringify({ email: 'sitestore@els.com', password: 'site123' })
     });
     const siteStoreLoginData = await siteStoreLogin.json();
     const siteStoreToken = siteStoreLoginData.data.token;

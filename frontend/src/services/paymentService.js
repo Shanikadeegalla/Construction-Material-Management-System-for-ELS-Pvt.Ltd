@@ -37,6 +37,22 @@ export const createCheckoutSession = async (purchaseOrderId) => {
   return data;
 };
 
+// Confirms a completed Stripe Checkout session with the backend, which triggers the
+// supplier payment notification email (with PDF receipt attached) if not already sent.
+export const confirmPaymentSession = async (sessionId, purchaseOrderId) => {
+  const res = await fetch(`${API_URL}/confirm-session`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ sessionId, purchaseOrderId })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.success) {
+    throw new Error(data.message || 'Failed to confirm payment session.');
+  }
+  return data.data;
+};
+
 // Fetches payment status and history for a given purchaseOrderId
 export const getPaymentStatus = async (purchaseOrderId) => {
   const res = await fetch(`${API_URL}/${purchaseOrderId}`, {

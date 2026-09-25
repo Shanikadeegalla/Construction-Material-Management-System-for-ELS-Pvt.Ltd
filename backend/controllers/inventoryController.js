@@ -481,12 +481,38 @@ export const getMaterialUsage = async (req, res) => {
   }
 };
 
+// Builds a Material query filter scoped to the requesting user's role, so
+// stock alerts only surface data relevant to that role. Returns `null` to
+// mean "no materials are in scope" (e.g. a Project Manager with no assigned
+// project yet).
+const buildRoleScopedMaterialFilter = (user) => {
+  if (!user) return {};
+
+  const projectId = user.project_id || user.projectId;
+
+  switch (user.role) {
+    case 'MainStoreOfficer':
+      return { location: 'MainStore' };
+    case 'SiteStoreOfficer':
+      return projectId
+        ? { location: 'SiteStore', $or: [{ project_id: projectId }, { projectId }] }
+        : { location: 'SiteStore' };
+    case 'ProjectManager':
+      return projectId ? { $or: [{ project_id: projectId }, { projectId }] } : null;
+    // Admin, Director and PurchaseManager oversee/procure across all
+    // locations and projects, so they keep full visibility.
+    default:
+      return {};
+  }
+};
+
 // @desc    Get low stock notifications
 // @route   GET /api/inventory/notifications
 // @access  Private
 export const getNotifications = async (req, res) => {
   try {
-    const materials = await Material.find({});
+    const filter = buildRoleScopedMaterialFilter(req.user);
+    const materials = filter === null ? [] : await Material.find(filter);
 
     const lowStock = [];
     for (const m of materials) {
@@ -625,7 +651,8 @@ export const createStockAdjustment = async (req, res) => {
 // @access  Private
 export const getNotificationCount = async (req, res) => {
   try {
-    const materials = await Material.find({});
+    const filter = buildRoleScopedMaterialFilter(req.user);
+    const materials = filter === null ? [] : await Material.find(filter);
 
     let count = 0;
     for (const m of materials) {

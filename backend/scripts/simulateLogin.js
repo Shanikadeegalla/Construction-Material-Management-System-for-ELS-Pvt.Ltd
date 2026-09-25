@@ -3,7 +3,7 @@
 const usersToTest = [
   { email: 'admin@els.com', password: 'admin123' },
   { email: 'pm@els.com', password: 'pm123456' },
-  { email: 'sitestore@els.com', password: 'store123' },
+  { email: 'sitestore@els.com', password: 'site123' },
   { email: 'store@els.com', password: 'store123' },
   { email: 'director@els.com', password: 'director123' } // fallback guess
 ];

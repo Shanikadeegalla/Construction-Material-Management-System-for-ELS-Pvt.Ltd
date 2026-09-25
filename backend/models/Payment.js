@@ -34,6 +34,9 @@ const paymentSchema = new mongoose.Schema({
   paidBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  emailSentAt: {
+    type: Date
   }
 }, { timestamps: true });
 

@@ -16,10 +16,10 @@ const resetSiteStorePassword = async () => {
       return;
     }
 
-    user.password = 'store123';
+    user.password = 'site123';
     user.status = true;
     await user.save();
-    console.log(`Successfully reset password for ${user.email} to 'store123'.`);
+    console.log(`Successfully reset password for ${user.email} to 'site123'.`);
 
   } catch (err) {
     console.error('Error:', err);

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getPaymentReceipt, downloadPaymentReceipt } from '../services/paymentService';
+import { getPaymentReceipt, downloadPaymentReceipt, confirmPaymentSession } from '../services/paymentService';
 import { formatDateTime } from '../utils/dateUtils';
 
 function PaymentSuccess({ onReturnToPOs }) {
@@ -12,12 +12,26 @@ function PaymentSuccess({ onReturnToPOs }) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const poParam = params.get('po');
-    if (poParam) {
-      setPoId(poParam);
-      fetchReceipt(poParam);
-    } else {
-      setLoading(false);
-    }
+    const sessionId = params.get('session_id');
+
+    const run = async () => {
+      if (sessionId) {
+        try {
+          await confirmPaymentSession(sessionId, poParam);
+        } catch (err) {
+          // Non-fatal: the receipt can still be shown even if notifying the supplier failed.
+          console.error('Error confirming payment session:', err);
+        }
+      }
+      if (poParam) {
+        setPoId(poParam);
+        await fetchReceipt(poParam);
+      } else {
+        setLoading(false);
+      }
+    };
+
+    run();
   }, []);
 
   const fetchReceipt = async (id) => {

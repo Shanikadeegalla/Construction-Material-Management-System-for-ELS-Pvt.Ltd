@@ -13,11 +13,11 @@ const testSiteStoreShortage = async () => {
     console.log('Connected to MongoDB.');
 
     // 1. Log in as a SiteStoreOfficer
-    // Let's find a user with role 'SiteStoreOfficer' or use seed user 'sitestore@els.com' / 'store123'
+    // Let's find a user with role 'SiteStoreOfficer' or use seed user 'sitestore@els.com' / 'site123'
     const loginRes = await fetch('http://localhost:5000/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'sitestore@els.com', password: 'store123' })
+      body: JSON.stringify({ email: 'sitestore@els.com', password: 'site123' })
     });
     const loginData = await loginRes.json();
     if (!loginRes.ok || !loginData.success) {
