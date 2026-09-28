@@ -5,7 +5,7 @@ import SupplierProfile from '../components/SupplierProfile';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
 import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
-import { createCheckoutSession, downloadPaymentReport } from '../services/paymentService';
+import { createCheckoutSession } from '../services/paymentService';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
@@ -34,20 +34,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [poSearchTerm, setPoSearchTerm] = useState('');
   const [payingInvoiceId, setPayingInvoiceId] = useState(null);
   const [payingPoId, setPayingPoId] = useState(null);
-  const [downloadingReport, setDownloadingReport] = useState(false);
-
-  const handleDownloadReport = async () => {
-    try {
-      setDownloadingReport(true);
-      setError('');
-      await downloadPaymentReport();
-      setMessage('✅ Payment report downloaded successfully!');
-    } catch (err) {
-      setError(err.message || 'Failed to download payment report.');
-    } finally {
-      setDownloadingReport(false);
-    }
-  };
 
   // PO Form State
   const [form, setForm] = useState({
@@ -236,8 +222,21 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       console.error('Error marking notification as read:', err);
     }
     setPrNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
-    setPrUnreadCount(prev => Math.max(0, prev - 1));
+    setPrUnreadCount(prev => Math.max(0, prev - (notif.isRead ? 0 : 1)));
     if (notif.link) setActivePage('prs');
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+        method: 'PUT',
+        headers: getHeaders()
+      });
+      setPrNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setPrUnreadCount(0);
+    } catch (err) {
+      console.error('Error marking all notifications read:', err);
+    }
   };
 
   useEffect(() => {
@@ -867,8 +866,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   cursor: 'default',
                   textAlign: 'left'
                 }} onClick={e => e.stopPropagation()}>
-                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px' }}>
-                    Purchase Request & Order Updates
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Purchase Request & Order Updates</span>
+                    <span onClick={handleMarkAllNotificationsRead} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
                   </div>
                   {prNotifications.length === 0 ? (
                     <div style={{ padding: '16px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
@@ -957,27 +957,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 <button onClick={() => setShowSupplierForm(!showSupplierForm)}
                   style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
                   {showSupplierForm ? 'Hide Form' : '+ Add Supplier'}
-                </button>
-              )}
-              {activePage === 'payment' && (
-                <button
-                  onClick={handleDownloadReport}
-                  disabled={downloadingReport}
-                  style={{
-                    background: '#0d1b4b',
-                    color: 'white',
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    cursor: downloadingReport ? 'not-allowed' : 'pointer',
-                    fontWeight: '600',
-                    fontSize: '13px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px'
-                  }}
-                >
-                  {downloadingReport ? '⏳ Generating PDF...' : '📥 Download Report'}
                 </button>
               )}
             </div>

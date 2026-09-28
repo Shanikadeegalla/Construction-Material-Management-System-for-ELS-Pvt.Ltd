@@ -9,17 +9,11 @@ const listAllUsers = async () => {
     const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/ConstructionDB';
     await mongoose.connect(mongoUri);
 
-    const users = await User.find({}).sort({ role: 1 });
-    console.log(`\nTotal users in database: ${users.length}`);
+    const users = await User.find({});
+    console.log(`Found ${users.length} users in database:\n`);
     users.forEach((u, i) => {
-      console.log(`\nUser #${i + 1}:`);
-      console.log(`  Name:     ${u.name}`);
-      console.log(`  Email:    ${u.email}`);
-      console.log(`  Role:     ${u.role}`);
-      console.log(`  Status:   ${u.status !== undefined ? u.status : 'N/A'}`);
-      console.log(`  isActive: ${u.isActive !== undefined ? u.isActive : 'N/A'}`);
+      console.log(`${i+1}. Name: ${u.name} | Email: ${u.email} | Role: ${u.role} | Status: ${u.status} | Username: ${u.username || 'N/A'}`);
     });
-
   } catch (err) {
     console.error(err);
   } finally {

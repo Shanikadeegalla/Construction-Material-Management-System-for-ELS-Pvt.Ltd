@@ -14,6 +14,8 @@ function SiteStoreDashboard({ user, onLogout }) {
 
   const [view, setView] = useState('dashboard'); // 'dashboard', 'site-inventory', 'request-materials', 'issue-usage'
   const [showNotifications, setShowNotifications] = useState(false);
+  const [userNotifications, setUserNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [materials, setMaterials] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -251,6 +253,51 @@ function SiteStoreDashboard({ user, onLogout }) {
     }
   };
 
+  const fetchUserNotifications = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      if (!token) return;
+      const res = await fetch('http://localhost:5000/api/notifications', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUserNotifications(data.data || []);
+        setUnreadCount((data.data || []).filter(n => !n.isRead).length);
+      }
+    } catch (err) {
+      console.error('Error fetching user notifications:', err);
+    }
+  };
+
+  const handleMarkNotificationRead = async (notif) => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error('Error marking notification read:', err);
+    }
+    setUserNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
+    setUnreadCount(prev => Math.max(0, prev - (notif.isRead ? 0 : 1)));
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setUserNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setUnreadCount(0);
+    } catch (err) {
+      console.error('Error marking all notifications read:', err);
+    }
+  };
+
   useEffect(() => {
     fetchMaterials();
     fetchProjects();
@@ -258,6 +305,7 @@ function SiteStoreDashboard({ user, onLogout }) {
     fetchItemMasters();
     fetchMyRequests();
     fetchIssueHistory();
+    fetchUserNotifications();
   }, [selectedProjId]);
 
   useEffect(() => {
@@ -646,7 +694,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                 {/* Notification Bell */}
                 <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
                   <span style={{ fontSize: '18px' }}>🔔</span>
-                  {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length > 0 && (
+                  {unreadCount > 0 && (
                     <span style={{
                       position: 'absolute',
                       top: '2px',
@@ -662,7 +710,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                       alignItems: 'center',
                       justifyContent: 'center'
                     }}>
-                      {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length}
+                      {unreadCount}
                     </span>
                   )}
                   {showNotifications && (
@@ -683,24 +731,31 @@ function SiteStoreDashboard({ user, onLogout }) {
                       textAlign: 'left'
                     }} onClick={e => e.stopPropagation()}>
                       <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>Site Store Stock Alerts</span>
-                        <span style={{ fontSize: '11px', background: '#fee2e2', color: '#ef4444', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>Alerts</span>
+                        <span>Site Store Notifications</span>
+                        <span onClick={handleMarkAllNotificationsRead} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
                       </div>
-                      {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length === 0 ? (
+                      {userNotifications.length === 0 ? (
                         <div style={{ padding: '24px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
-                          All site stock levels normal.
+                          No new notifications.
                         </div>
                       ) : (
-                        materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).map((notif, idx) => (
-                          <div key={idx} style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
-                              <span style={{ color: '#0f172a' }}>{notif.materialName || notif.name}</span>
-                              <span style={{ color: '#ef4444', background: '#fef2f2', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>
-                                Low Stock
-                              </span>
+                        userNotifications.map((notif, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => handleMarkNotificationRead(notif)}
+                            style={{
+                              padding: '12px',
+                              borderBottom: idx === userNotifications.length - 1 ? 'none' : '1px solid #f1f5f9',
+                              fontSize: '13px',
+                              cursor: 'pointer',
+                              background: notif.isRead ? 'white' : '#f8fafc'
+                            }}
+                          >
+                            <div style={{ color: notif.isRead ? '#475569' : '#0f172a', fontWeight: notif.isRead ? '400' : '600' }}>
+                              {notif.message}
                             </div>
-                            <div style={{ color: '#475569', fontSize: '12px' }}>
-                              Current Qty: <strong>{notif.quantity} {notif.unit}</strong> (Reorder: {notif.reorderLevel ?? 50})
+                            <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px' }}>
+                              {formatFullDate(notif.createdAt)}
                             </div>
                           </div>
                         ))

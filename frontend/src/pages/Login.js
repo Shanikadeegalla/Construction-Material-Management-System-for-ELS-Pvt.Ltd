@@ -7,6 +7,7 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -14,23 +15,33 @@ const Login = () => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
+  const handleRoleRedirect = (role) => {
+    const normalized = (role || '').toLowerCase();
+    if (normalized === 'admin') navigate('/admin/dashboard');
+    else if (normalized === 'director') navigate('/director/dashboard');
+    else if (normalized === 'projectmanager' || normalized === 'pm') navigate('/pm/dashboard');
+    else if (normalized === 'mainstoreofficer' || normalized === 'store') navigate('/store/dashboard');
+    else if (normalized === 'sitestoreofficer' || normalized === 'sitestore') navigate('/sitestore/dashboard');
+    else if (normalized === 'purchasemanager' || normalized === 'purchase') navigate('/purchase/dashboard');
+    else navigate('/admin/dashboard');
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
-      const user = await login(formData);
-      if (user.role === 'admin') navigate('/admin/dashboard');
-      else if (user.role === 'pm') navigate('/pm/dashboard');
-      else if (user.role === 'store') navigate('/store/dashboard');
-      else if (user.role === 'sitestore') navigate('/sitestore/dashboard');
-      else if (user.role === 'purchase') navigate('/purchase/dashboard');
+      const res = await login(formData);
+      if (res && res.role) {
+        handleRoleRedirect(res.role);
+      }
     } catch (err) {
-      setError('Invalid username or password!');
+      setError(err.response?.data?.message || 'Invalid username or password!');
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="login-page">

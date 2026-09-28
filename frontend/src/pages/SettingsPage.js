@@ -14,7 +14,6 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
   const [phone, setPhone] = useState(user?.phone || '');
   const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl || '');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(user?.settings?.profile?.sidebarCollapsed || false);
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(user?.settings?.profile?.twoFactorEnabled || false);
 
   // Helper to convert relative server upload path to absolute URL
   const getAvatarSrc = (url) => {
@@ -48,6 +47,9 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
   const [language, setLanguage] = useState(user?.settings?.system?.locale?.language || 'en');
   const [timezone, setTimezone] = useState(user?.settings?.system?.locale?.timezone || 'Asia/Colombo');
   const [dateFormat, setDateFormat] = useState(user?.settings?.system?.locale?.dateFormat || 'YYYY-MM-DD');
+
+  // Profile Settings State
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(user?.settings?.profile?.twoFactorEnabled || false);
 
   // Password fields
   const [currentPassword, setCurrentPassword] = useState('');
@@ -753,26 +755,6 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
           {/* Credentials Card */}
           <div style={styles.card}>
             <div style={styles.title}>🔒 Security & Credentials</div>
-            
-            {/* 2FA switch */}
-            <div style={{ ...styles.toggleRow, marginBottom: '24px', borderBottom: darkMode ? '1px solid rgba(255,255,255,0.05)' : '1px solid #f1f5f9', paddingBottom: '16px' }}>
-              <div>
-                <div style={{ fontWeight: '600', fontSize: '14px' }}>Two-Factor Verification (2FA)</div>
-                <div style={{ fontSize: '12px', color: darkMode ? '#94a3b8' : '#64748b', marginTop: '2px' }}>Require login token via email upon entering credentials.</div>
-              </div>
-              <div style={styles.switch} onClick={() => {
-                const checked = !twoFactorEnabled;
-                setTwoFactorEnabled(checked);
-                saveSettingsChange({
-                  system: { darkMode, notifications: { systemAlerts, emailNotifs, desktopNotifs }, locale: { language, timezone, dateFormat } },
-                  profile: { sidebarCollapsed, twoFactorEnabled: checked }
-                });
-              }}>
-                <div style={styles.slider(twoFactorEnabled)}>
-                  <div style={styles.knob(twoFactorEnabled)} />
-                </div>
-              </div>
-            </div>
 
            
             {/* Change Password form */}

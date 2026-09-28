@@ -29,7 +29,7 @@ const formatTyping = (raw) => {
   return parts.join('/');
 };
 
-const DateInput = ({ value, onChange, required, disabled, style, placeholder = 'dd/mm/yyyy', name }) => {
+const DateInput = ({ value, onChange, required, disabled, style, placeholder = 'dd/mm/yyyy', name, min, max }) => {
   const [display, setDisplay] = useState(isoToDisplay(value));
   const pickerRef = useRef(null);
 
@@ -64,6 +64,9 @@ const DateInput = ({ value, onChange, required, disabled, style, placeholder = '
     el.focus();
   };
 
+  const formattedMin = min ? String(min).split('T')[0] : undefined;
+  const formattedMax = max ? String(max).split('T')[0] : undefined;
+
   return (
     <div>
       <div style={{ position: 'relative' }}>
@@ -77,6 +80,8 @@ const DateInput = ({ value, onChange, required, disabled, style, placeholder = '
           onChange={handleChange}
           required={required}
           disabled={disabled}
+          min={formattedMin}
+          max={formattedMax}
           style={{ ...(isInvalid ? { ...style, borderColor: '#ef4444' } : style), paddingRight: '34px' }}
           title="dd/mm/yyyy"
           aria-invalid={isInvalid}
@@ -116,6 +121,8 @@ const DateInput = ({ value, onChange, required, disabled, style, placeholder = '
           value={value ? String(value).split('T')[0] : ''}
           onChange={handlePickerChange}
           disabled={disabled}
+          min={formattedMin}
+          max={formattedMax}
           aria-hidden="true"
           style={{
             position: 'absolute',
