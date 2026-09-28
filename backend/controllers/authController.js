@@ -26,7 +26,8 @@ export const getNextEmployeeId = async (req, res, next) => {
   }
 };
 
-const isStrongPassword = (password) =>
+export const isStrongPassword = (password) =>
+  !!password &&
   password.length >= 8 &&
   /[A-Z]/.test(password) &&
   /[a-z]/.test(password) &&

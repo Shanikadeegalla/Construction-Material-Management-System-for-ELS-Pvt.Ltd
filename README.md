@@ -1,57 +1,116 @@
-# Construction Material Management System for ELS Construction
+# ELS Construction (Pvt) Ltd - Construction Material Management System (CMMS)
 
-This is the Construction Material Management System for ELS Pvt. Ltd.
+A modern MERN-stack enterprise web platform designed for ELS Construction (Pvt) Ltd to manage end-to-end construction material workflows, site store isolation, BOM planning, procurement, goods receipts, material issuance, variance reporting, and supplier invoice settlements.
 
-## Project Setup Instructions
+---
 
-Follow these steps to set up and run the project locally on your machine.
+## 🚀 Key Features & Domain Scoping
 
-### 1. Prerequisites
-Ensure you have the following installed:
-* [Node.js](https://nodejs.org/) (v16 or higher recommended)
-* [MongoDB Community Server](https://www.mongodb.com/try/download/community) (running locally on port `27017`), or a [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) cloud database.
+- **Isolated Site Store Tracking**: Strict per-project inventory isolation prevents cross-project material pooling.
+- **Multilevel Stock Alerts**: Tiered inventory monitoring (`Critical`, `Reorder`, `Overstock`) with automated status badges.
+- **BOM Cumulative Limit Protection**: Enforces cumulative Purchase Request limits against approved Bill of Quantities (BOM).
+- **Payment Gateway & Manual Settlement**: Supports Stripe online checkout as well as manual Cash & Cheque payment recording with automatic Invoice status updates.
+- **Role-Based Access Control (RBAC)**: Gated permissions across 6 operational roles (`Admin`, `Director`, `ProjectManager`, `PurchaseManager`, `MainStoreOfficer`, `SiteStoreOfficer`).
+- **Audit Logging**: Immutable operational log tracking key system transactions.
 
-### 2. Clone the Repository
+---
+
+## 🛠️ Prerequisites
+
+- **Node.js**: v18.0.0 or higher
+- **npm**: v9.0.0 or higher
+- **MongoDB**: Local MongoDB instance or MongoDB Atlas cluster URI
+
+---
+
+## ⚙️ Step-by-Step Installation & Setup
+
+### 1. Repository Setup & Dependencies
+
 ```bash
-git clone <repository-url>
-cd mern-boilerplate
+# Clone the repository
+git clone https://github.com/Shanikadeegalla/Construction-Material-Management-System-for-ELS-Pvt.Ltd.git
+cd Construction-Material-Management-System-for-ELS-Pvt.Ltd
+
+# Install backend dependencies
+cd backend
+npm install
+
+# Install frontend dependencies
+cd ../frontend
+npm install
 ```
 
-### 3. Setup Environment Variables
-Environment files (`.env`) are excluded from Git tracking to protect keys and prevent conflicts. You must create them locally from the templates:
+### 2. Environment Configuration
 
-* **Backend Configuration**:
-  1. Copy `backend/.env.example` to create `backend/.env`.
-  2. Update `MONGO_URI` in `backend/.env` with your database connection details (it defaults to your local MongoDB at `mongodb://127.0.0.1:27017/ConstructionDB`).
-  
-* **Root Configuration**:
-  1. Copy `.env.example` to create `.env` in the root folder.
-  2. Edit `.env` as needed.
+Copy the example environment files and configure your keys:
 
-### 4. Install Dependencies
-Since `node_modules` is not tracked in Git, you must install dependencies:
+```bash
+# Backend Environment Setup
+cd ../backend
+cp .env.example .env
 
-* **Backend dependencies**:
-  ```bash
-  cd backend
-  npm install
-  ```
-* **Frontend dependencies**:
-  ```bash
-  cd frontend
-  npm install
-  ```
+# Frontend Environment Setup
+cd ../frontend
+cp .env.example .env
+```
 
-### 5. Running the Application
-* **Start Backend**:
-  ```bash
-  cd backend
-  npm run dev
-  ```
-  *(or `npm start` to run with node directly)*
-  
-* **Start Frontend**:
-  ```bash
-  cd frontend
-  npm start
-  ```
+Ensure your `backend/.env` contains valid values for:
+- `MONGO_URI`
+- `JWT_SECRET`
+- `ENCRYPTION_KEY`
+- `STRIPE_SECRET_KEY`
+
+---
+
+## 🧪 Seeding Demo Data for Viva / Demonstration
+
+Run the automated idempotent demo seeder script to populate pristine demo accounts, active projects, approved BOMs, Item Master items, and suppliers:
+
+```bash
+cd backend
+npm run seed:demo
+```
+
+### Seeded Viva Demonstration Accounts (Default Password: `Password123!`)
+- **Admin**: `admin@elslanka.com`
+- **Director**: `director@elslanka.com`
+- **Project Manager**: `pm@elslanka.com`
+- **Purchase Manager**: `purchase@elslanka.com`
+- **Main Store Officer**: `mainstore@elslanka.com`
+- **Site Store Officer**: `sitestore@elslanka.com`
+
+---
+
+## 🧪 Running Automated Unit Tests
+
+Run the Jest unit test suite covering password policy, encryption roundtrips, BOM versioning, and negative stock assertions:
+
+```bash
+cd backend
+npm test
+```
+
+---
+
+## 🖥️ Running Development Servers
+
+### 1. Start Backend API Server
+```bash
+cd backend
+npm run dev
+# Server running on http://localhost:5000
+```
+
+### 2. Start Frontend React Application
+```bash
+cd frontend
+npm start
+# Client running on http://localhost:3000
+```
+
+---
+
+## 📄 Documentation & System Test Specification
+
+For a complete manual testing specification detailing all 10 core role scenarios (`TC01` - `TC10`), view the [docs/SYSTEM_TEST_CASES.md](file:///c:/Users/USER/.gemini/antigravity/scratch/mern-boilerplate/docs/SYSTEM_TEST_CASES.md) document.

@@ -91,6 +91,8 @@ export const createSupplier = async (req, res) => {
   }
 };
 
+export const addSupplier = createSupplier;
+
 // Update supplier
 // PUT /api/suppliers/:id
 export const updateSupplier = async (req, res) => {

@@ -1249,12 +1249,12 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <tbody>
                       {[...pos].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5).map((po, i) => {
                         const isPending = po.status === 'Pending';
-                        const projName = po.prId?.projectName || po.prId?.project || '-';
+                        const projName = po.prId?.projectName || (typeof po.prId?.project === 'object' ? (po.prId?.project?.projectName || po.prId?.project?.name) : po.prId?.project) || '-';
                         return (
                           <tr key={po._id || i} style={{ borderBottom: '1px solid #e2e8f0', fontSize: '12px' }}>
                             <td style={{ padding: '8px 12px', fontWeight: '600', color: '#0d1b4b' }}>{po.poNumber || '-'}</td>
                             <td style={{ padding: '8px 12px', color: '#334155' }}>{projName}</td>
-                            <td style={{ padding: '8px 12px', color: '#334155' }}>{po.supplier || '-'}</td>
+                            <td style={{ padding: '8px 12px', color: '#334155' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '-') : (po.supplier || '-')}</td>
                             <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>{Number(po.totalAmount || 0).toLocaleString()}</td>
                             <td style={{ padding: '8px 12px', textAlign: 'center' }}>
                               <span style={{
@@ -1387,12 +1387,12 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                   <tbody>
                     {pos.map((po, i) => {
                       const isPending = po.status === 'Pending';
-                      const projName = po.prId?.projectName || po.prId?.project || '-';
+                      const projName = po.prId?.projectName || (typeof po.prId?.project === 'object' ? (po.prId?.project?.projectName || po.prId?.project?.name) : po.prId?.project) || '-';
                       return (
                         <tr key={po._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#0f172a', fontWeight: '600' }}>{po.poNumber || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{projName}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{po.supplier || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '-') : (po.supplier || '-')}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>{Number(po.totalAmount || 0).toLocaleString()}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{po.createdBy || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#64748b' }}>{formatDate(po.createdAt)}</td>

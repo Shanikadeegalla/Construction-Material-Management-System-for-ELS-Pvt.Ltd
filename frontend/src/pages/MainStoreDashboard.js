@@ -1046,7 +1046,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     ...prs.map(pr => ({
       date: pr.createdAt,
       icon: '📝',
-      text: `Purchase Request submitted for ${pr.projectName || pr.project} (${pr.materials?.length || 0} item${pr.materials?.length === 1 ? '' : 's'})`
+      text: `Purchase Request submitted for ${pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || 'Project'} (${pr.materials?.length || 0} item${pr.materials?.length === 1 ? '' : 's'})`
     }))
   ].filter(a => a.date).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6);
 
@@ -1122,20 +1122,70 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         );
       });
     } else if (modal === 'low-stock') {
-      title = 'Low Stock Items Alert Directory';
-      tableHeaders = ['Material Name', 'Current Qty', 'Min Required', 'Shortage', 'Actions'];
+      title = 'Multilevel Stock Alerts Directory';
+      tableHeaders = ['Material Name', 'Current Qty', 'Min Required', 'Stock Alert Level', 'Actions'];
 
-      const lowItems = mainMaterials.filter(m => m.quantity <= m.minimumStock);
-      const filtered = lowItems.filter(m => (m.name || '').toLowerCase().includes(query));
+      const alertItems = mainMaterials.filter(m => {
+        const qty = m.quantity || 0;
+        const min = m.minimumStock || 0;
+        const reorder = m.reorderLevel !== undefined && m.reorderLevel !== null ? m.reorderLevel : min;
+        const max = m.maximumStock || 0;
+        return qty <= min || (reorder > 0 && qty <= reorder) || (max > 0 && qty >= max);
+      });
+      const filtered = alertItems.filter(m => (m.name || '').toLowerCase().includes(query));
 
       tableRows = filtered.map((m, idx) => {
-        const shortage = m.minimumStock - m.quantity;
+        const qty = m.quantity || 0;
+        const min = m.minimumStock || 0;
+        const reorder = m.reorderLevel !== undefined && m.reorderLevel !== null ? m.reorderLevel : min;
+        const max = m.maximumStock || 0;
+
+        let level = 'Normal';
+        let badgeBg = '#f1f5f9';
+        let badgeColor = '#475569';
+        let badgeMsg = 'Normal Stock';
+
+        if (qty <= 0) {
+          level = 'Critical';
+          badgeBg = '#fee2e2';
+          badgeColor = '#991b1b';
+          badgeMsg = 'Critical: Out of Stock';
+        } else if (qty <= min) {
+          level = 'Critical';
+          badgeBg = '#fee2e2';
+          badgeColor = '#991b1b';
+          badgeMsg = 'Critical: Below Min Stock';
+        } else if (reorder > 0 && qty <= reorder) {
+          level = 'Reorder';
+          badgeBg = '#fef3c7';
+          badgeColor = '#92400e';
+          badgeMsg = 'Reorder Level Reached';
+        } else if (max > 0 && qty >= max) {
+          level = 'Overstock';
+          badgeBg = '#e0e7ff';
+          badgeColor = '#3730a3';
+          badgeMsg = 'Overstock Level Reached';
+        }
+
+        const shortage = min > qty ? min - qty : 0;
+
         return (
           <tr key={m._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#c62828' }}>{m.name}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{m.name}</td>
             <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700' }}>{m.quantity} {m.unit}</td>
             <td style={{ padding: '12px 16px', fontSize: '13px' }}>{m.minimumStock} {m.unit}</td>
-            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#c62828' }}>{shortage} {m.unit}</td>
+            <td style={{ padding: '12px 16px' }}>
+              <span style={{
+                background: badgeBg,
+                color: badgeColor,
+                padding: '4px 10px',
+                borderRadius: '12px',
+                fontSize: '11px',
+                fontWeight: '700'
+              }}>
+                {badgeMsg}
+              </span>
+            </td>
             <td style={{ padding: '12px 16px' }}>
               <button 
                 onClick={() => {
@@ -1144,8 +1194,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     materialName: m.name,
                     unit: m.unit,
                     quantity: shortage || 10,
-                    urgency: 'Urgent',
-                    notes: `Requested shortage of ${shortage} units to restore minimum stock level.`
+                    urgency: level === 'Critical' ? 'Urgent' : 'Normal',
+                    notes: `Requested for ${m.name} due to ${badgeMsg}`
                   });
                   setShowPrForm(true);
                   setView('purchase-request');
@@ -1199,11 +1249,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       tableRows = filtered.map((g, idx) => (
         <tr key={g._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#1565c0' }}>{g.grnNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{g.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof g.supplier === 'object' ? (g.supplier?.name || g.supplier?.supplierId || '—') : (g.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>{formatDateTime(g.receivedDate || g.createdAt)}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {g.items?.map((item, itemIdx) => (
-              <div key={itemIdx}>{item.materialName || item.material || 'Material'} (Received: {item.receivedQty} {item.unit || 'bag'})</div>
+              <div key={itemIdx}>{item.materialName || (typeof item.material === 'object' ? (item.material?.name || item.material?.materialName) : item.material) || 'Material'} (Received: {item.receivedQty} {item.unit || 'bag'})</div>
             ))}
           </td>
           <td style={{ padding: '12px 16px' }}>
@@ -1433,7 +1483,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         }}
                       >
                         <div style={{ color: notif.isRead ? '#475569' : '#0d1b4b', fontWeight: notif.isRead ? '400' : '600', marginBottom: '4px' }}>
-                          {notif.message || notif.materialName}
+                          {notif.message || (typeof notif.materialName === 'object' ? (notif.materialName?.name || notif.materialName?.materialName) : notif.materialName) || (typeof notif.name === 'string' ? notif.name : '') || 'Notification'}
                         </div>
                         <div style={{ color: '#64748b', fontSize: '11px' }}>
                           {formatFullDate(notif.createdAt)}
@@ -1787,7 +1837,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           </div>
                           <div>
                             <div style={styles.fieldLabel}>Project</div>
-                            <div style={{ fontWeight: 600, color: '#0d1b4b' }}>{po.prId?.project || po.prId?.projectName || 'N/A'}</div>
+                            <div style={{ fontWeight: 600, color: '#0d1b4b' }}>{po.prId?.project?.projectName || po.prId?.project?.name || (typeof po.prId?.project === 'string' ? po.prId?.project : '') || po.prId?.projectName || 'N/A'}</div>
                           </div>
                         </>
                       )}
@@ -2381,7 +2431,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                       return (
                         <tr key={`${pr._id || idx}-${mi}`} style={{ borderBottom: '1px solid #eee' }}>
                           <td style={styles.tdBold}>PR-{String(idx + 1).padStart(3, '0')}</td>
-                          <td style={styles.td}>{pr.projectName || pr.project}</td>
+                          <td style={styles.td}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
                           <td style={styles.td}>{m.materialName}</td>
                           <td style={styles.td}>{m.quantity} {m.unit}</td>
                           <td style={styles.td}>{available} {m.unit}</td>

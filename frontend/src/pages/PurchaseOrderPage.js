@@ -35,6 +35,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [payingInvoiceId, setPayingInvoiceId] = useState(null);
   const [payingPoId, setPayingPoId] = useState(null);
 
+  // Manual payment modal state
+  const [payModalPO, setPayModalPO] = useState(null);
+  const [payMethod, setPayMethod] = useState('Stripe');
+  const [chequeNo, setChequeNo] = useState('');
+  const [bankName, setBankName] = useState('');
+  const [chequeDate, setChequeDate] = useState('');
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+
   // PO Form State
   const [form, setForm] = useState({
     prId: '',
@@ -267,10 +275,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     if (paymentResult === 'success' && sessionId && hasSession()) {
       (async () => {
         try {
-          const res = await fetch('http://localhost:5000/api/payments/verify-session', {
+          const res = await fetch('http://localhost:5000/api/payments/confirm-session', {
             method: 'POST',
             headers: getHeaders(),
-            body: JSON.stringify({ sessionId })
+            body: JSON.stringify({ sessionId, purchaseOrderId: params.get('po') })
           });
           const data = await res.json();
           if (data.success && data.paid) {
@@ -578,7 +586,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit} (LKR {item.unitPrice})</div>
@@ -610,7 +618,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
@@ -643,7 +651,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
@@ -669,7 +677,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
@@ -1030,7 +1038,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   {orders.slice(0, 5).map((po, i) => (
                     <tr key={po._id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{po.supplier}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
                       <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{po.totalAmount?.toLocaleString()}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{formatDate(po.createdAt)}</td>
                       <td style={{ padding: '12px 16px' }}>
@@ -1064,7 +1072,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   {purchaseRequests.slice(0, 5).map((pr, i) => (
                     <tr key={pr._id || i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || pr.project}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
                         {pr.materials?.map((m, idx) => (
                           <div key={idx}>{m.materialName} ×{m.quantity} {m.unit || 'bags'}</div>
@@ -1114,7 +1122,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   {purchaseRequests.map((pr, i) => (
                     <tr key={pr._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || pr.project || '—'}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
                         {pr.materials?.map((m, idx) => (
                           <div key={idx}><strong>{m.materialName}</strong>: {m.quantity} {m.unit || 'bags'}</div>
@@ -1138,10 +1146,38 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ display: 'flex', gap: '6px' }}>
                           {pr.status === 'Pending' && (
-                            <button onClick={() => handleConvertToPO(pr)}
-                              style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
-                              Convert to PO
-                            </button>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button onClick={() => handleConvertToPO(pr)}
+                                style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                Convert to PO
+                              </button>
+                              <button onClick={async () => {
+                                const reason = window.prompt(`Enter reason for declining Purchase Request for ${pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}:`);
+                                if (reason === null) return;
+                                try {
+                                  const res = await fetch(`http://localhost:5000/api/purchase-requests/${pr._id}/status`, {
+                                    method: 'PUT',
+                                    headers: getHeaders(),
+                                    body: JSON.stringify({ status: 'Declined', reason })
+                                  });
+                                  const data = await res.json();
+                                  if (data.success) {
+                                    setMessage(`✅ Purchase Request declined.`);
+                                    fetchData();
+                                  } else {
+                                    setError(data.message || 'Failed to decline Purchase Request.');
+                                  }
+                                } catch (err) {
+                                  setError('Failed to decline Purchase Request.');
+                                }
+                              }}
+                                style={{ background: '#ef4444', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                Decline
+                              </button>
+                            </div>
+                          )}
+                          {pr.status === 'Declined' && (
+                            <span style={{ fontSize: '11px', color: '#ef4444', fontStyle: 'italic', fontWeight: 'bold' }}>Declined ({pr.declineReason || 'No reason'})</span>
                           )}
                           {pr.status === 'PO Created' && (
                             <span style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic' }}>PO already created</span>
@@ -1386,7 +1422,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               ))}
                             </select>
                           ) : (
-                            <span style={{ fontWeight: '500' }}>{po.supplier}</span>
+                            <span style={{ fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</span>
                           )}
                         </td>
                         <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
@@ -1442,16 +1478,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                             )}
                             {['Approved', 'Sent', 'Delivered'].includes(po.status) && po.paymentStatus !== 'paid' && (
                               <button
-                                disabled={payingPoId === po._id}
-                                onClick={async () => {
-                                  try {
-                                    setPayingPoId(po._id);
-                                    setError('');
-                                    await createCheckoutSession(po._id);
-                                  } catch (err) {
-                                    setError(err.message || 'Failed to initiate payment checkout.');
-                                    setPayingPoId(null);
-                                  }
+                                onClick={() => {
+                                  setPayModalPO(po);
+                                  setPayMethod('Stripe');
+                                  setError('');
                                 }}
                                 style={{
                                   background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
@@ -1465,7 +1495,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                   marginTop: '2px'
                                 }}
                               >
-                                {payingPoId === po._id ? 'Redirecting...' : '💳 Pay Now'}
+                                💳 Pay Now
                               </button>
                             )}
                             <select
@@ -1759,6 +1789,118 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       </div>
 
       {renderPOStatsModal()}
+      {(() => {
+        if (!payModalPO) return null;
+        return (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div style={{ background: 'white', padding: '28px', borderRadius: '10px', width: '480px', maxWidth: '90%', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
+              <h2 style={{ marginTop: 0, color: '#0d1b4b', fontSize: '18px', marginBottom: '16px' }}>
+                Payment Options - PO: {payModalPO.poNumber}
+              </h2>
+              <div style={{ background: '#f8fafc', padding: '12px 16px', borderRadius: '6px', marginBottom: '20px', fontSize: '13px' }}>
+                <div><strong>Supplier:</strong> {typeof payModalPO.supplier === 'object' ? (payModalPO.supplier?.name || payModalPO.supplier?.supplierId || '—') : (payModalPO.supplier || '—')}</div>
+                <div><strong>Amount:</strong> LKR {payModalPO.totalAmount?.toLocaleString()}</div>
+              </div>
+
+              <label style={{ display: 'block', fontWeight: 'bold', fontSize: '13px', marginBottom: '8px' }}>Select Payment Method:</label>
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
+                {[
+                  { id: 'Stripe', label: '💳 Card (Stripe)' },
+                  { id: 'Cash', label: '💵 Cash' },
+                  { id: 'Cheque', label: '📜 Cheque' }
+                ].map(m => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setPayMethod(m.id)}
+                    style={{
+                      flex: 1,
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      border: payMethod === m.id ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                      background: payMethod === m.id ? '#eff6ff' : 'white',
+                      color: payMethod === m.id ? '#1e40af' : '#475569',
+                      fontWeight: 'bold',
+                      fontSize: '13px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+
+              {payMethod === 'Cheque' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Cheque Number</label>
+                    <input type="text" placeholder="e.g. CHQ-88912" value={chequeNo} onChange={e => setChequeNo(e.target.value)} style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', marginTop: '4px' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Bank Name</label>
+                    <input type="text" placeholder="e.g. Commercial Bank" value={bankName} onChange={e => setBankName(e.target.value)} style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', marginTop: '4px' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Cheque Date</label>
+                    <input type="date" value={chequeDate} onChange={e => setChequeDate(e.target.value)} style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', marginTop: '4px' }} />
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button type="button" onClick={() => setPayModalPO(null)} style={{ padding: '8px 16px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmittingPayment}
+                  onClick={async () => {
+                    if (!payModalPO) return;
+                    setError(''); setMessage('');
+                    setIsSubmittingPayment(true);
+                    try {
+                      if (payMethod === 'Stripe') {
+                        await createCheckoutSession(payModalPO._id);
+                      } else {
+                        const res = await fetch('http://localhost:5000/api/payments/manual', {
+                          method: 'POST',
+                          headers: getHeaders(),
+                          body: JSON.stringify({
+                            purchaseOrderId: payModalPO._id,
+                            method: payMethod,
+                            amount: payModalPO.totalAmount,
+                            chequeNumber: chequeNo,
+                            bankName,
+                            chequeDate
+                          })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                          setMessage(`✅ ${payMethod} payment recorded successfully for PO ${payModalPO.poNumber}!`);
+                          setPayModalPO(null);
+                          setChequeNo('');
+                          setBankName('');
+                          setChequeDate('');
+                          fetchData();
+                        } else {
+                          setError(data.message || 'Failed to record payment.');
+                        }
+                      }
+                    } catch (err) {
+                      setError(err.message || 'Payment execution failed.');
+                    } finally {
+                      setIsSubmittingPayment(false);
+                    }
+                  }}
+                  style={{ padding: '8px 20px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}
+                >
+                  {isSubmittingPayment ? 'Processing...' : payMethod === 'Stripe' ? 'Proceed to Stripe' : 'Confirm Payment'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

@@ -15,10 +15,6 @@ function App() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
-  const [registerName, setRegisterName] = useState('');
-  const [registerEmail, setRegisterEmail] = useState('');
-  const [registerPassword, setRegisterPassword] = useState('');
-  const [registerRole, setRegisterRole] = useState('MainStoreOfficer');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -96,32 +92,6 @@ function App() {
     } finally { setLoading(false); }
   };
 
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    setError(''); setSuccess('');
-    if (!registerName || !registerEmail || !registerPassword || !registerRole) {
-      setError('Please fill out all fields.'); return;
-    }
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_AUTH_URL}/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: registerName, email: registerEmail, password: registerPassword, role: registerRole }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSuccess('Registration successful! Please login below.');
-        setView('login');
-        setRegisterName(''); setRegisterEmail(''); setRegisterPassword(''); setRegisterRole('MainStoreOfficer');
-      } else {
-        setError(data.message || 'Registration failed.');
-      }
-    } catch (err) {
-      setError('Connection refused. Please ensure the backend server is running.');
-    } finally { setLoading(false); }
-  };
-
   const handleLogout = () => {
     localStorage.removeItem('user');
     setUser(null);
@@ -175,49 +145,6 @@ function App() {
         </button>
       </form>
 
-    </div>
-  );
-
-  const renderRegister = () => (
-    <div style={styles.card}>
-      <h2 style={styles.cardTitle}>Create Account</h2>
-      <p style={styles.cardSub}>Join us! Choose a specific workspace role.</p>
-      {error && <div style={styles.errorAlert}>{error}</div>}
-      <form onSubmit={handleRegister} style={styles.form}>
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Full Name</label>
-          <input type="text" placeholder="John Doe" value={registerName}
-            onChange={(e) => setRegisterName(e.target.value)} style={styles.input} required />
-        </div>
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Email Address</label>
-          <input type="email" placeholder="john@example.com" value={registerEmail}
-            onChange={(e) => setRegisterEmail(e.target.value)} style={styles.input} required />
-        </div>
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Password</label>
-          <input type="password" placeholder="8+ chars, upper, lower, number, symbol" value={registerPassword}
-            onChange={(e) => setRegisterPassword(e.target.value)} style={styles.input} required />
-        </div>
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Assign Workspace Role</label>
-          <select value={registerRole} onChange={(e) => setRegisterRole(e.target.value)} style={styles.select}>
-            <option value="Admin">Admin</option>
-            <option value="Director">Director</option>
-            <option value="ProjectManager">Project Manager</option>
-            <option value="PurchaseManager">Purchase Manager</option>
-            <option value="MainStoreOfficer">Main Store Officer</option>
-            <option value="SiteStoreOfficer">Site Store Officer</option>
-          </select>
-        </div>
-        <button type="submit" disabled={loading} style={styles.button}>
-          {loading ? 'Registering...' : 'Sign Up'}
-        </button>
-      </form>
-      <div style={styles.authSwitch}>
-        Already have an account?{' '}
-        <span onClick={() => { setView('login'); setError(''); setSuccess(''); }} style={styles.switchLink}>Sign In</span>
-      </div>
     </div>
   );
 

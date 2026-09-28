@@ -245,9 +245,18 @@ export const confirmPaymentSession = async (req, res) => {
     }
 
     const po = await PurchaseOrder.findById(payment.purchaseOrder);
-    if (po && po.paymentStatus !== 'paid') {
-      po.paymentStatus = 'paid';
-      await po.save();
+    if (po) {
+      if (po.paymentStatus !== 'paid') {
+        po.paymentStatus = 'paid';
+        await po.save();
+      }
+      const inv = await Invoice.findOne({ po: payment.purchaseOrder });
+      if (inv && inv.status === 'Approved') {
+        inv.status = 'Paid';
+        inv.paidAt = new Date();
+        inv.stripeSessionId = payment.stripeSessionId;
+        await inv.save();
+      }
     }
 
     let emailSent = !!payment.emailSentAt;
@@ -301,6 +310,14 @@ export const handleWebhook = async (req, res) => {
           po.paymentStatus = 'paid';
           await po.save();
 
+          const inv = await Invoice.findOne({ po: payment.purchaseOrder });
+          if (inv && inv.status === 'Approved') {
+            inv.status = 'Paid';
+            inv.paidAt = new Date();
+            inv.stripeSessionId = payment.stripeSessionId;
+            await inv.save();
+          }
+
           // Dispatch email notification (with PDF receipt attached) to the supplier
           const supplierDoc = await Supplier.findById(payment.supplier);
           const invoice = await Invoice.findOne({ po: payment.purchaseOrder }).populate('grn', 'grnNumber');
@@ -317,6 +334,75 @@ export const handleWebhook = async (req, res) => {
   }
 
   res.status(200).json({ received: true });
+};
+
+// @desc    Record a manual (Cash/Cheque) payment for a Purchase Order
+// @route   POST /api/payments/manual
+// @access  Private (PurchaseManager / Admin)
+export const recordManualPayment = async (req, res) => {
+  try {
+    const { purchaseOrderId, method, amount, chequeNumber, bankName, chequeDate } = req.body;
+    if (!purchaseOrderId || !method) {
+      return res.status(400).json({ success: false, message: 'purchaseOrderId and method are required.' });
+    }
+    if (!['Cash', 'Cheque'].includes(method)) {
+      return res.status(400).json({ success: false, message: 'Method must be Cash or Cheque.' });
+    }
+
+    const po = await PurchaseOrder.findById(purchaseOrderId);
+    if (!po) {
+      return res.status(404).json({ success: false, message: 'Purchase Order not found.' });
+    }
+    if (po.paymentStatus === 'paid') {
+      return res.status(400).json({ success: false, message: 'This Purchase Order is already paid.' });
+    }
+
+    const paymentAmount = amount ? Number(amount) : po.totalAmount;
+    let supplierDoc = null;
+    if (po.supplier) {
+      supplierDoc = await Supplier.findById(po.supplier);
+    }
+
+    const payment = await Payment.create({
+      purchaseOrder: po._id,
+      supplier: supplierDoc ? supplierDoc._id : po.supplier,
+      amount: paymentAmount,
+      currency: CURRENCY,
+      method,
+      chequeNumber: chequeNumber || '',
+      bankName: bankName || '',
+      chequeDate: chequeDate ? new Date(chequeDate) : undefined,
+      status: 'completed',
+      paidAt: new Date(),
+      paidBy: req.user ? req.user._id : undefined,
+      recordedBy: req.user ? req.user._id : undefined
+    });
+
+    po.paymentStatus = 'paid';
+    await po.save();
+
+    const invoice = await Invoice.findOne({ po: po._id });
+    if (invoice) {
+      invoice.status = 'Paid';
+      invoice.paidAt = new Date();
+      await invoice.save();
+    }
+
+    try {
+      await sendPaymentConfirmation({ payment, po, supplierDoc, invoice });
+    } catch (mailErr) {
+      console.error('Error sending manual payment confirmation email:', mailErr);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Manual ${method} payment recorded successfully.`,
+      data: payment
+    });
+  } catch (error) {
+    console.error('Error recording manual payment:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
 
 // @desc    Get payment status/history for a Purchase Order

@@ -1694,7 +1694,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <option value="">-- Choose a Project --</option>
                     {projects.map(p => (
                       <option key={p._id} value={p._id}>
-                        {p.projectId || 'Draft'} - {p.projectName || p.name}
+                        {typeof p.projectId === 'object' ? (p.projectId?.projectId || p.projectId?.name || 'Draft') : (p.projectId || 'Draft')} - {p.projectName || p.name}
                       </option>
                     ))}
                   </select>
@@ -2341,7 +2341,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '20px', background: '#f8fafc', padding: '12px', borderRadius: '6px', fontSize: '13px', color: '#1e293b' }}>
-                <div><strong>Project ID:</strong> {viewingProject.projectId || 'N/A'}</div>
+                <div><strong>Project ID:</strong> {typeof viewingProject.projectId === 'object' ? (viewingProject.projectId?.projectId || viewingProject.projectId?.name || 'N/A') : (viewingProject.projectId || 'N/A')}</div>
                 <div><strong>Client Name:</strong> {viewingProject.clientName || 'N/A'}</div>
                 <div><strong>Location:</strong> {viewingProject.location || 'N/A'}</div>
                 <div><strong>Project Status:</strong> {getStatusBadge(viewingProject.status)}</div>

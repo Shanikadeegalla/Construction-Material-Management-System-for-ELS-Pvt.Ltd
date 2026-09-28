@@ -4,7 +4,6 @@ import cors from 'cors';
 import path from 'path';
 import connectDB from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
-import userRoutes from './routes/userRoutes.js';
 import inventoryRoutes from './routes/inventory.js';
 import supplierRoutes from './routes/suppliers.js';
 import purchaseRequestRoutes from './routes/purchaseRequests.js';
@@ -48,7 +47,6 @@ app.use('/uploads', express.static(path.resolve('uploads')));
 
 // Mount routes
 app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/purchase-requests', purchaseRequestRoutes);
