@@ -111,6 +111,14 @@ router.post('/', protect, checkPermission('Create Project'), uploadProjectFiles,
       return res.status(400).json({ success: false, message: 'All required fields must be provided.' });
     }
 
+    if (new Date(expectedEndDate) < new Date(startDate)) {
+      return res.status(400).json({ success: false, message: 'Expected End Date cannot be earlier than Start Date.' });
+    }
+
+    if (Number(budget) <= 0 || isNaN(Number(budget))) {
+      return res.status(400).json({ success: false, message: 'Budget must be a positive number greater than zero.' });
+    }
+
     // Auto-generate project code (PRJ-YYYY-XXX)
     const dateObj = new Date(startDate);
     const { projectId } = await computeNextProjectId(startDate);
@@ -193,6 +201,17 @@ router.put('/:id', protect, uploadProjectFiles, async (req, res) => {
     // Auth check
     if (project.createdBy.toString() !== req.user._id.toString() && req.user.role !== 'Admin') {
       return res.status(403).json({ success: false, message: 'Not authorized to edit this project.' });
+    }
+
+    const effectiveStartDate = startDate ? new Date(startDate) : project.startDate;
+    const effectiveEndDate = expectedEndDate ? new Date(expectedEndDate) : project.expectedEndDate;
+
+    if (effectiveStartDate && effectiveEndDate && new Date(effectiveEndDate) < new Date(effectiveStartDate)) {
+      return res.status(400).json({ success: false, message: 'Expected End Date cannot be earlier than Start Date.' });
+    }
+
+    if (budget !== undefined && (Number(budget) <= 0 || isNaN(Number(budget)))) {
+      return res.status(400).json({ success: false, message: 'Budget must be a positive number greater than zero.' });
     }
 
     if (projectName) project.projectName = projectName;

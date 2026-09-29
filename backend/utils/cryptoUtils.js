@@ -1,7 +1,10 @@
 import crypto from 'crypto';
 
 const ALGORITHM = 'aes-256-cbc';
-const SECRET_KEY = process.env.ENCRYPTION_KEY || 'mysecretkeymustbe32byteslong12345';
+if (!process.env.ENCRYPTION_KEY) {
+  throw new Error('ENCRYPTION_KEY environment variable is missing.');
+}
+const SECRET_KEY = process.env.ENCRYPTION_KEY;
 const KEY_BUFFER = Buffer.from(SECRET_KEY.substring(0, 32), 'utf8');
 const FIXED_IV = Buffer.from('1234567890123456'); // 16 bytes fixed IV for database fields
 

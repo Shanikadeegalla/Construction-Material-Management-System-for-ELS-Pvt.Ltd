@@ -15,10 +15,6 @@ function App() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
-  const [registerName, setRegisterName] = useState('');
-  const [registerEmail, setRegisterEmail] = useState('');
-  const [registerPassword, setRegisterPassword] = useState('');
-  const [registerRole, setRegisterRole] = useState('MainStoreOfficer');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -54,6 +50,26 @@ function App() {
     }
   }, []);
 
+  const handleVerifySuccess = (userData) => {
+    localStorage.setItem('user', JSON.stringify(userData));
+    localStorage.setItem('cmms_last_login', new Date().toISOString());
+
+    // Sync dark mode preference from user settings database
+    const isDark = userData.settings?.system?.darkMode === true;
+    localStorage.setItem('cmms_dark_mode', isDark);
+    if (isDark) {
+      document.body.classList.add('dark-mode');
+      document.documentElement.classList.add('dark-mode');
+    } else {
+      document.body.classList.remove('dark-mode');
+      document.documentElement.classList.remove('dark-mode');
+    }
+
+    setUser(userData);
+    setView('dashboard');
+    setLoginEmail(''); setLoginPassword('');
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -67,52 +83,9 @@ function App() {
       });
       const data = await res.json();
       if (data.success) {
-        const userData = data.data;
-        localStorage.setItem('user', JSON.stringify(userData));
-        localStorage.setItem('cmms_last_login', new Date().toISOString());
-        
-        // Sync dark mode preference from user settings database
-        const isDark = userData.settings?.system?.darkMode === true;
-        localStorage.setItem('cmms_dark_mode', isDark);
-        if (isDark) {
-          document.body.classList.add('dark-mode');
-          document.documentElement.classList.add('dark-mode');
-        } else {
-          document.body.classList.remove('dark-mode');
-          document.documentElement.classList.remove('dark-mode');
-        }
-        
-        setUser(userData);
-        setView('dashboard');
-        setLoginEmail(''); setLoginPassword('');
+        handleVerifySuccess(data.data);
       } else {
         setError(data.message || 'Invalid email or password.');
-      }
-    } catch (err) {
-      setError('Connection refused. Please ensure the backend server is running.');
-    } finally { setLoading(false); }
-  };
-
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    setError(''); setSuccess('');
-    if (!registerName || !registerEmail || !registerPassword || !registerRole) {
-      setError('Please fill out all fields.'); return;
-    }
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_AUTH_URL}/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: registerName, email: registerEmail, password: registerPassword, role: registerRole }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSuccess('Registration successful! Please login below.');
-        setView('login');
-        setRegisterName(''); setRegisterEmail(''); setRegisterPassword(''); setRegisterRole('MainStoreOfficer');
-      } else {
-        setError(data.message || 'Registration failed.');
       }
     } catch (err) {
       setError('Connection refused. Please ensure the backend server is running.');
@@ -175,49 +148,6 @@ function App() {
     </div>
   );
 
-  const renderRegister = () => (
-    <div style={styles.card}>
-      <h2 style={styles.cardTitle}>Create Account</h2>
-      <p style={styles.cardSub}>Join us! Choose a specific workspace role.</p>
-      {error && <div style={styles.errorAlert}>{error}</div>}
-      <form onSubmit={handleRegister} style={styles.form}>
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Full Name</label>
-          <input type="text" placeholder="John Doe" value={registerName}
-            onChange={(e) => setRegisterName(e.target.value)} style={styles.input} required />
-        </div>
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Email Address</label>
-          <input type="email" placeholder="john@example.com" value={registerEmail}
-            onChange={(e) => setRegisterEmail(e.target.value)} style={styles.input} required />
-        </div>
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Password</label>
-          <input type="password" placeholder="8+ chars, upper, lower, number, symbol" value={registerPassword}
-            onChange={(e) => setRegisterPassword(e.target.value)} style={styles.input} required />
-        </div>
-        <div style={styles.formGroup}>
-          <label style={styles.label}>Assign Workspace Role</label>
-          <select value={registerRole} onChange={(e) => setRegisterRole(e.target.value)} style={styles.select}>
-            <option value="Admin">Admin</option>
-            <option value="Director">Director</option>
-            <option value="ProjectManager">Project Manager</option>
-            <option value="PurchaseManager">Purchase Manager</option>
-            <option value="MainStoreOfficer">Main Store Officer</option>
-            <option value="SiteStoreOfficer">Site Store Officer</option>
-          </select>
-        </div>
-        <button type="submit" disabled={loading} style={styles.button}>
-          {loading ? 'Registering...' : 'Sign Up'}
-        </button>
-      </form>
-      <div style={styles.authSwitch}>
-        Already have an account?{' '}
-        <span onClick={() => { setView('login'); setError(''); setSuccess(''); }} style={styles.switchLink}>Sign In</span>
-      </div>
-    </div>
-  );
-
   const handleUserUpdate = (updatedUser) => {
     const mergedUser = { ...user, ...updatedUser };
     localStorage.setItem('user', JSON.stringify(mergedUser));
@@ -226,22 +156,23 @@ function App() {
 
   const renderDashboard = () => {
     if (!user) return null;
-    if (user.role === 'Admin') {
+    const r = (user.role || '').toLowerCase();
+    if (r === 'admin') {
       return <AdminDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'Director') {
+    if (r === 'director') {
       return <DirectorDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'ProjectManager') {
+    if (r === 'projectmanager' || r === 'pm') {
       return <PMDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'PurchaseManager') {
+    if (r === 'purchasemanager' || r === 'purchase') {
       return <PurchaseOrderPage user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'MainStoreOfficer') {
+    if (r === 'mainstoreofficer' || r === 'store' || r === 'mainstore') {
       return <MainStoreDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
-    if (user.role === 'SiteStoreOfficer' || user.role === 'StoreOfficer') {
+    if (r === 'sitestoreofficer' || r === 'sitestore' || r === 'storeofficer') {
       return <SiteStoreDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
 

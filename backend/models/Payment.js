@@ -21,12 +21,32 @@ const paymentSchema = new mongoose.Schema({
   },
   stripeSessionId: {
     type: String,
-    required: true
+    default: ''
   },
   status: {
     type: String,
-    enum: ['pending', 'paid', 'failed'],
+    enum: ['pending', 'paid', 'completed', 'failed'],
     default: 'pending'
+  },
+  method: {
+    type: String,
+    enum: ['Stripe', 'Cash', 'Cheque'],
+    default: 'Stripe'
+  },
+  chequeNumber: {
+    type: String,
+    default: ''
+  },
+  bankName: {
+    type: String,
+    default: ''
+  },
+  chequeDate: {
+    type: Date
+  },
+  recordedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   },
   paidAt: {
     type: Date

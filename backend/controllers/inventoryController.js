@@ -127,18 +127,50 @@ export const getLowStock = async (req, res) => {
     }
     const materials = await Material.find(query);
     
-    const lowStock = [];
+    const stockAlerts = [];
     for (const m of materials) {
       const doc = m.toObject();
       if (doc.location === 'SiteStore') {
         doc.name = decryptDB(doc.name);
         doc.quantity = Number(decryptDB(doc.quantity)) || 0;
       }
-      if (doc.quantity <= doc.minimumStock) {
-        lowStock.push(doc);
+
+      const qty = doc.quantity || 0;
+      const minStock = doc.minimumStock || 0;
+      const reorderLevel = doc.reorderLevel !== undefined && doc.reorderLevel !== null ? doc.reorderLevel : minStock;
+      const maxStock = doc.maximumStock || 0;
+
+      let level = null;
+      let message = null;
+
+      if (qty <= 0) {
+        level = 'Critical';
+        message = 'Out of stock';
+      } else if (qty <= minStock) {
+        level = 'Critical';
+        message = 'Below minimum stock';
+      } else if (reorderLevel > 0 && qty <= reorderLevel) {
+        level = 'Reorder';
+        message = 'At or below reorder level';
+      } else if (maxStock > 0 && qty >= maxStock) {
+        level = 'Overstock';
+        message = 'At or above maximum stock';
+      }
+
+      if (level) {
+        stockAlerts.push({
+          ...doc,
+          materialName: doc.name,
+          currentQty: doc.quantity,
+          minimumStock: doc.minimumStock,
+          reorderLevel: doc.reorderLevel,
+          maximumStock: doc.maximumStock,
+          level,
+          message
+        });
       }
     }
-    res.json(lowStock);
+    res.json(stockAlerts);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

@@ -2,6 +2,7 @@ import express from 'express';
 import {
   createCheckoutSession,
   confirmPaymentSession,
+  recordManualPayment,
   getPaymentByPO,
   generatePaymentReport,
   getPaymentReceipt,
@@ -26,6 +27,14 @@ router.post(
   protect,
   authorizeRoles('PurchaseManager', 'Admin'),
   confirmPaymentSession
+);
+
+// Protected recording of manual (Cash/Cheque) payments (Purchase Manager & Admin only)
+router.post(
+  '/manual',
+  protect,
+  authorizeRoles('PurchaseManager', 'Admin'),
+  recordManualPayment
 );
 
 // Protected PDF payment report generation (Purchase Manager & Admin only)

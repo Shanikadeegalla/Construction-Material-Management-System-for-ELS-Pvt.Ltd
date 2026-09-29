@@ -131,27 +131,44 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     if (!hasSession()) return;
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/inventory/notifications', {
+      const res = await fetch('http://localhost:5000/api/notifications', {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
       if (data.success) {
-        setNotifications(data.data);
-      }
-
-      const countRes = await fetch('http://localhost:5000/api/notifications/count', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const countData = await countRes.json();
-      if (countData.success) {
-        setUnreadCount(countData.count);
+        setNotifications(data.data || []);
+        setUnreadCount((data.data || []).filter(n => !n.isRead).length);
       }
     } catch (err) {
-      setNotifications([
-        { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
-        { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
-      ]);
-      setUnreadCount(2);
+      console.error('Error fetching notifications:', err);
+    }
+  };
+
+  const handleMarkNotificationRead = async (notif) => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error('Error marking notification read:', err);
+    }
+    setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
+    setUnreadCount(prev => Math.max(0, prev - (notif.isRead ? 0 : 1)));
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setUnreadCount(0);
+    } catch (err) {
+      console.error('Error marking all notifications read:', err);
     }
   };
 
@@ -1029,7 +1046,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     ...prs.map(pr => ({
       date: pr.createdAt,
       icon: '📝',
-      text: `Purchase Request submitted for ${pr.projectName || pr.project} (${pr.materials?.length || 0} item${pr.materials?.length === 1 ? '' : 's'})`
+      text: `Purchase Request submitted for ${pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || 'Project'} (${pr.materials?.length || 0} item${pr.materials?.length === 1 ? '' : 's'})`
     }))
   ].filter(a => a.date).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6);
 
@@ -1105,20 +1122,70 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         );
       });
     } else if (modal === 'low-stock') {
-      title = 'Low Stock Items Alert Directory';
-      tableHeaders = ['Material Name', 'Current Qty', 'Min Required', 'Shortage', 'Actions'];
+      title = 'Multilevel Stock Alerts Directory';
+      tableHeaders = ['Material Name', 'Current Qty', 'Min Required', 'Stock Alert Level', 'Actions'];
 
-      const lowItems = mainMaterials.filter(m => m.quantity <= m.minimumStock);
-      const filtered = lowItems.filter(m => (m.name || '').toLowerCase().includes(query));
+      const alertItems = mainMaterials.filter(m => {
+        const qty = m.quantity || 0;
+        const min = m.minimumStock || 0;
+        const reorder = m.reorderLevel !== undefined && m.reorderLevel !== null ? m.reorderLevel : min;
+        const max = m.maximumStock || 0;
+        return qty <= min || (reorder > 0 && qty <= reorder) || (max > 0 && qty >= max);
+      });
+      const filtered = alertItems.filter(m => (m.name || '').toLowerCase().includes(query));
 
       tableRows = filtered.map((m, idx) => {
-        const shortage = m.minimumStock - m.quantity;
+        const qty = m.quantity || 0;
+        const min = m.minimumStock || 0;
+        const reorder = m.reorderLevel !== undefined && m.reorderLevel !== null ? m.reorderLevel : min;
+        const max = m.maximumStock || 0;
+
+        let level = 'Normal';
+        let badgeBg = '#f1f5f9';
+        let badgeColor = '#475569';
+        let badgeMsg = 'Normal Stock';
+
+        if (qty <= 0) {
+          level = 'Critical';
+          badgeBg = '#fee2e2';
+          badgeColor = '#991b1b';
+          badgeMsg = 'Critical: Out of Stock';
+        } else if (qty <= min) {
+          level = 'Critical';
+          badgeBg = '#fee2e2';
+          badgeColor = '#991b1b';
+          badgeMsg = 'Critical: Below Min Stock';
+        } else if (reorder > 0 && qty <= reorder) {
+          level = 'Reorder';
+          badgeBg = '#fef3c7';
+          badgeColor = '#92400e';
+          badgeMsg = 'Reorder Level Reached';
+        } else if (max > 0 && qty >= max) {
+          level = 'Overstock';
+          badgeBg = '#e0e7ff';
+          badgeColor = '#3730a3';
+          badgeMsg = 'Overstock Level Reached';
+        }
+
+        const shortage = min > qty ? min - qty : 0;
+
         return (
           <tr key={m._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#c62828' }}>{m.name}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{m.name}</td>
             <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700' }}>{m.quantity} {m.unit}</td>
             <td style={{ padding: '12px 16px', fontSize: '13px' }}>{m.minimumStock} {m.unit}</td>
-            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#c62828' }}>{shortage} {m.unit}</td>
+            <td style={{ padding: '12px 16px' }}>
+              <span style={{
+                background: badgeBg,
+                color: badgeColor,
+                padding: '4px 10px',
+                borderRadius: '12px',
+                fontSize: '11px',
+                fontWeight: '700'
+              }}>
+                {badgeMsg}
+              </span>
+            </td>
             <td style={{ padding: '12px 16px' }}>
               <button 
                 onClick={() => {
@@ -1127,8 +1194,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     materialName: m.name,
                     unit: m.unit,
                     quantity: shortage || 10,
-                    urgency: 'Urgent',
-                    notes: `Requested shortage of ${shortage} units to restore minimum stock level.`
+                    urgency: level === 'Critical' ? 'Urgent' : 'Normal',
+                    notes: `Requested for ${m.name} due to ${badgeMsg}`
                   });
                   setShowPrForm(true);
                   setView('purchase-request');
@@ -1182,11 +1249,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       tableRows = filtered.map((g, idx) => (
         <tr key={g._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#1565c0' }}>{g.grnNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{g.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof g.supplier === 'object' ? (g.supplier?.name || g.supplier?.supplierId || '—') : (g.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>{formatDateTime(g.receivedDate || g.createdAt)}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {g.items?.map((item, itemIdx) => (
-              <div key={itemIdx}>{item.materialName || item.material || 'Material'} (Received: {item.receivedQty} {item.unit || 'bag'})</div>
+              <div key={itemIdx}>{item.materialName || (typeof item.material === 'object' ? (item.material?.name || item.material?.materialName) : item.material) || 'Material'} (Received: {item.receivedQty} {item.unit || 'bag'})</div>
             ))}
           </td>
           <td style={{ padding: '12px 16px' }}>
@@ -1394,37 +1461,32 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   cursor: 'default',
                   textAlign: 'left'
                 }} onClick={e => e.stopPropagation()}>
-                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px' }}>
-                    Low Stock Alerts
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Main Store Notifications</span>
+                    <span onClick={handleMarkAllNotificationsRead} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
                   </div>
                   {notifications.length === 0 ? (
                     <div style={{ padding: '16px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
-                      All stock levels are normal.
+                      No new notifications.
                     </div>
                   ) : (
                     notifications.map((notif, idx) => (
-                      <div key={idx} style={{
-                        padding: '12px 16px',
-                        borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9',
-                        fontSize: '13px'
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
-                          <span style={{ color: '#0d1b4b' }}>{notif.materialName}</span>
-                          <span style={{
-                            color: notif.alertLevel === 'Critical' ? '#ef4444' : '#f59e0b',
-                            background: notif.alertLevel === 'Critical' ? '#fef2f2' : '#fef3c7',
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            fontSize: '10px'
-                          }}>
-                            {notif.alertLevel}
-                          </span>
+                      <div
+                        key={idx}
+                        onClick={() => handleMarkNotificationRead(notif)}
+                        style={{
+                          padding: '12px 16px',
+                          borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9',
+                          fontSize: '13px',
+                          cursor: 'pointer',
+                          background: notif.isRead ? 'white' : '#f8fafc'
+                        }}
+                      >
+                        <div style={{ color: notif.isRead ? '#475569' : '#0d1b4b', fontWeight: notif.isRead ? '400' : '600', marginBottom: '4px' }}>
+                          {notif.message || (typeof notif.materialName === 'object' ? (notif.materialName?.name || notif.materialName?.materialName) : notif.materialName) || (typeof notif.name === 'string' ? notif.name : '') || 'Notification'}
                         </div>
-                        <div style={{ color: '#475569', fontSize: '12px' }}>
-                          Qty: <strong>{notif.currentQty}</strong> / Min: {notif.minimumStock}
-                        </div>
-                        <div style={{ color: '#64748b', fontSize: '11px', marginTop: '2px' }}>
-                          📍 {notif.location}
+                        <div style={{ color: '#64748b', fontSize: '11px' }}>
+                          {formatFullDate(notif.createdAt)}
                         </div>
                       </div>
                     ))
@@ -1775,7 +1837,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           </div>
                           <div>
                             <div style={styles.fieldLabel}>Project</div>
-                            <div style={{ fontWeight: 600, color: '#0d1b4b' }}>{po.prId?.project || po.prId?.projectName || 'N/A'}</div>
+                            <div style={{ fontWeight: 600, color: '#0d1b4b' }}>{po.prId?.project?.projectName || po.prId?.project?.name || (typeof po.prId?.project === 'string' ? po.prId?.project : '') || po.prId?.projectName || 'N/A'}</div>
                           </div>
                         </>
                       )}
@@ -2369,7 +2431,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                       return (
                         <tr key={`${pr._id || idx}-${mi}`} style={{ borderBottom: '1px solid #eee' }}>
                           <td style={styles.tdBold}>PR-{String(idx + 1).padStart(3, '0')}</td>
-                          <td style={styles.td}>{pr.projectName || pr.project}</td>
+                          <td style={styles.td}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
                           <td style={styles.td}>{m.materialName}</td>
                           <td style={styles.td}>{m.quantity} {m.unit}</td>
                           <td style={styles.td}>{available} {m.unit}</td>

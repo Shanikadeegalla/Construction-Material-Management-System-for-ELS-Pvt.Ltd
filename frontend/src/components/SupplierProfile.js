@@ -230,7 +230,7 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
                 <tr key={po._id} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                   <td style={{ ...styles.td, fontWeight: '600', color: '#0d1b4b' }}>{po.poNumber}</td>
                   <td style={styles.td}>{formatDate(po.createdAt)}</td>
-                  <td style={styles.td}>{po.prId?.projectName || po.prId?.project || '-'}</td>
+                  <td style={styles.td}>{po.prId?.projectName || (typeof po.prId?.project === 'object' ? (po.prId?.project?.projectName || po.prId?.project?.name) : po.prId?.project) || '-'}</td>
                   <td style={styles.td}>LKR {Number(po.totalAmount).toLocaleString()}</td>
                   <td style={styles.td}><span style={statusBadge(po.status)}>{po.status}</span></td>
                 </tr>

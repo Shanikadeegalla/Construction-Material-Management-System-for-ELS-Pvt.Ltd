@@ -62,7 +62,7 @@ router.post('/upload-avatar', protect, upload.single('avatar'), (req, res) => {
   }
 });
 
-router.post('/register', registerUser);
+router.post('/register', protect, checkPermission('Create/Edit Users'), registerUser);
 router.post('/login', loginUser);
 router.get('/me', protect, getUserProfile);
 
