@@ -26,6 +26,7 @@ import autoTable from 'jspdf-autotable';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
 import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort, formatFullDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
+import Pagination, { usePagination } from '../components/Pagination';
 
 // Taxonomy of gate-able actions in the app, grouped by module. This mirrors the
 // backend's Permission collection (role + action -> Full/View/Partial/Approve/None).
@@ -166,6 +167,57 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [materialSearch, setMaterialSearch] = useState('');
   const [editingMaterialId, setEditingMaterialId] = useState(null);
   const [materialForm, setMaterialForm] = useState(emptyMaterialForm);
+
+  const filteredUsersList = React.useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter(u =>
+      (u.name || '').toLowerCase().includes(q) ||
+      (u.email || '').toLowerCase().includes(q) ||
+      (u.role || '').toLowerCase().includes(q)
+    );
+  }, [users, searchTerm]);
+
+  const filteredLogsList = React.useMemo(() => {
+    const q = logSearchQuery.trim().toLowerCase();
+    return auditLogs.filter(log => {
+      const matchText = !q || (
+        (log.userName || log.user?.name || log.userEmail || log.user?.email || '').toLowerCase().includes(q) ||
+        (log.action || '').toLowerCase().includes(q) ||
+        (log.details || '').toLowerCase().includes(q) ||
+        (log.ipAddress || '').toLowerCase().includes(q)
+      );
+      const matchStatus = logStatusFilter === 'All' || log.status === logStatusFilter;
+      const matchModule = logModuleFilter === 'All' || log.module === logModuleFilter;
+      return matchText && matchStatus && matchModule;
+    });
+  }, [auditLogs, logSearchQuery, logStatusFilter, logModuleFilter]);
+
+  const filteredSuppliersList = React.useMemo(() => {
+    const q = supplierSearch.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter(s =>
+      (s.name || '').toLowerCase().includes(q) ||
+      (s.supplierId || '').toLowerCase().includes(q) ||
+      (s.contactPerson || '').toLowerCase().includes(q) ||
+      (s.category || '').toLowerCase().includes(q)
+    );
+  }, [suppliers, supplierSearch]);
+
+  const filteredMaterialsList = React.useMemo(() => {
+    const q = materialSearch.trim().toLowerCase();
+    if (!q) return materialMasterList;
+    return materialMasterList.filter(m =>
+      (m.materialName || '').toLowerCase().includes(q) ||
+      (m.materialCode || '').toLowerCase().includes(q) ||
+      (m.category || '').toLowerCase().includes(q)
+    );
+  }, [materialMasterList, materialSearch]);
+
+  const usersPagination = usePagination(filteredUsersList, 8, [searchTerm]);
+  const logsPagination = usePagination(filteredLogsList, 8, [logSearchQuery, logStatusFilter, logModuleFilter]);
+  const suppliersPagination = usePagination(filteredSuppliersList, 8, [supplierSearch]);
+  const materialsPagination = usePagination(filteredMaterialsList, 8, [materialSearch]);
 
   const fetchMaterialMaster = async () => {
     try {
@@ -2027,12 +2079,12 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredUsers.length === 0 ? (
+                        {usersPagination.paginatedData.length === 0 ? (
                           <tr>
                             <td colSpan="5" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No users match your search.</td>
                           </tr>
                         ) : (
-                          filteredUsers.map((u, i) => {
+                          usersPagination.paginatedData.map((u, i) => {
                             const rColor = getRoleColor(u.role);
                             return (
                               <tr key={u._id || i} style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#f8fafc', transition: 'background 0.2s' }} className="table-row">
@@ -2057,6 +2109,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         )}
                       </tbody>
                     </table>
+                    <Pagination pagination={usersPagination} />
                   </div>
                 </div>
               )}
@@ -2795,12 +2848,12 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredLogs.length === 0 ? (
+                  {logsPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="5" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No audit logs matching selection.</td>
                     </tr>
                   ) : (
-                    filteredLogs.map((log, i) => (
+                    logsPagination.paginatedData.map((log, i) => (
                       <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#f8fafc' }}>
                         <td style={{ padding: '14px 24px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>{log.userName || log.userId?.name || 'System'}</td>
                         <td style={{ padding: '14px 24px', fontSize: '13px', color: '#334155' }}>{log.action}</td>
@@ -2825,7 +2878,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                   )}
                 </tbody>
               </table>
-
+              <Pagination pagination={logsPagination} />
             </div>
           )}
 
@@ -2994,10 +3047,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {suppliers.filter(s => {
-                      const q = supplierSearch.toLowerCase();
-                      return s.supplierId?.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q) || s.contactPerson?.toLowerCase().includes(q);
-                    }).map((s, i) => {
+                    {suppliersPagination.paginatedData.map((s, i) => {
                       return (
                         <tr key={s._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                           <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#0d1b4b' }}>{s.supplierId}</td>
@@ -3032,16 +3082,14 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         </tr>
                       );
                     })}
-                    {suppliers.filter(s => {
-                      const q = supplierSearch.toLowerCase();
-                      return s.supplierId?.toLowerCase().includes(q) || s.contactPerson?.toLowerCase().includes(q);
-                    }).length === 0 && (
+                    {filteredSuppliersList.length === 0 && (
                       <tr>
-                        <td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No suppliers match your search criteria.</td>
+                        <td colSpan="7" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No suppliers match your search criteria.</td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={suppliersPagination} />
               </div>
             </div>
           )}
@@ -3211,10 +3259,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {materialMasterList.filter(m => {
-                      const q = materialSearch.toLowerCase();
-                      return m.materialCode?.toLowerCase().includes(q) || m.materialName?.toLowerCase().includes(q) || m.category?.toLowerCase().includes(q);
-                    }).map((m, i) => (
+                    {materialsPagination.paginatedData.map((m, i) => (
                       <tr key={m._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                         <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#0d1b4b' }}>{m.materialCode}</td>
                         <td style={{ padding: '14px 16px', fontSize: '13px' }}>{m.materialName}</td>
@@ -3240,16 +3285,14 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         </td>
                       </tr>
                     ))}
-                    {materialMasterList.filter(m => {
-                      const q = materialSearch.toLowerCase();
-                      return m.materialCode?.toLowerCase().includes(q) || m.materialName?.toLowerCase().includes(q) || m.category?.toLowerCase().includes(q);
-                    }).length === 0 && (
+                    {filteredMaterialsList.length === 0 && (
                       <tr>
                         <td colSpan="7" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No materials match your search criteria.</td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={materialsPagination} />
               </div>
             </div>
           )}

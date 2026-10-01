@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { formatDate } from '../utils/dateUtils';
+import Pagination, { usePagination } from './Pagination';
 
 const API_BASE = 'http://localhost:5000';
 
@@ -131,6 +132,11 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
 
   const { supplier, purchaseOrders, quotations, invoices, grns, performance } = profile;
 
+  const poPagination = usePagination(purchaseOrders || [], 8, [purchaseOrders?.length]);
+  const quotePagination = usePagination(quotations || [], 8, [quotations?.length]);
+  const invPagination = usePagination(invoices || [], 8, [invoices?.length]);
+  const grnPagination = usePagination(grns || [], 8, [grns?.length]);
+
   return (
     <div style={{ padding: '32px', fontFamily: 'Segoe UI, Arial, sans-serif', background: '#f5f6fa', minHeight: '100vh' }}>
       <button onClick={onBack} style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '16px', fontSize: '13px' }}>← Back to Suppliers</button>
@@ -223,10 +229,10 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
               </tr>
             </thead>
             <tbody>
-              {purchaseOrders.length === 0 && (
+              {poPagination.paginatedData.length === 0 && (
                 <tr><td colSpan={5} style={{ ...styles.td, textAlign: 'center', padding: '24px', color: '#999' }}>No purchase orders yet.</td></tr>
               )}
-              {purchaseOrders.map((po, i) => (
+              {poPagination.paginatedData.map((po, i) => (
                 <tr key={po._id} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                   <td style={{ ...styles.td, fontWeight: '600', color: '#0d1b4b' }}>{po.poNumber}</td>
                   <td style={styles.td}>{formatDate(po.createdAt)}</td>
@@ -237,6 +243,7 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
               ))}
             </tbody>
           </table>
+          <Pagination pagination={poPagination} />
         </div>
       )}
 
@@ -294,10 +301,10 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
                 </tr>
               </thead>
               <tbody>
-                {quotations.length === 0 && (
+                {quotePagination.paginatedData.length === 0 && (
                   <tr><td colSpan={6} style={{ ...styles.td, textAlign: 'center', padding: '24px', color: '#999' }}>No quotations yet.</td></tr>
                 )}
-                {quotations.map((q, i) => (
+                {quotePagination.paginatedData.map((q, i) => (
                   <tr key={q._id} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                     <td style={{ ...styles.td, fontWeight: '600', color: '#0d1b4b' }}>{q.quotationNumber}</td>
                     <td style={styles.td}>{formatDate(q.date)}</td>
@@ -316,6 +323,7 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
                 ))}
               </tbody>
             </table>
+            <Pagination pagination={quotePagination} />
           </div>
         </div>
       )}
@@ -330,10 +338,10 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
               </tr>
             </thead>
             <tbody>
-              {invoices.length === 0 && (
+              {invPagination.paginatedData.length === 0 && (
                 <tr><td colSpan={6} style={{ ...styles.td, textAlign: 'center', padding: '24px', color: '#999' }}>No invoices recorded yet. Invoices are recorded by MainStore when goods are received.</td></tr>
               )}
-              {invoices.map((inv, i) => (
+              {invPagination.paginatedData.map((inv, i) => (
                 <tr key={inv._id} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                   <td style={{ ...styles.td, fontWeight: '600', color: '#0d1b4b' }}>{inv.invoiceNumber}</td>
                   <td style={styles.td}>{inv.po?.poNumber || '-'}</td>
@@ -345,6 +353,7 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
               ))}
             </tbody>
           </table>
+          <Pagination pagination={invPagination} />
 
           {grns && grns.length > 0 && (
             <div style={{ padding: '20px 16px', borderTop: '1px solid #eee' }}>
@@ -356,7 +365,7 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
                   </tr>
                 </thead>
                 <tbody>
-                  {grns.map((g, i) => (
+                  {grnPagination.paginatedData.map((g, i) => (
                     <tr key={g._id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                       <td style={{ ...styles.td, fontWeight: '600' }}>{g.grnNumber}</td>
                       <td style={styles.td}>{g.poReference}</td>
@@ -366,6 +375,7 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
                   ))}
                 </tbody>
               </table>
+              <Pagination pagination={grnPagination} />
             </div>
           )}
         </div>
