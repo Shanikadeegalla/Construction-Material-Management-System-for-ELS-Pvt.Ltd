@@ -6,6 +6,7 @@ import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phon
 import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import { createCheckoutSession } from '../services/paymentService';
+import Pagination, { usePagination } from '../components/Pagination';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
@@ -82,6 +83,32 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
   // Supplier Profile view state
   const [viewingSupplierId, setViewingSupplierId] = useState(null);
+
+  const filteredOrders = React.useMemo(() => {
+    const query = poSearchTerm.trim().toLowerCase();
+    if (!query) return orders;
+    return orders.filter(po =>
+      (po.poNumber || '').toLowerCase().includes(query) ||
+      (po.supplier || '').toLowerCase().includes(query) ||
+      (po.status || '').toLowerCase().includes(query) ||
+      (po.items || []).some(item => (item.materialName || '').toLowerCase().includes(query))
+    );
+  }, [orders, poSearchTerm]);
+
+  const filteredSuppliers = React.useMemo(() => {
+    const query = supplierSearch.trim().toLowerCase();
+    if (!query) return suppliers;
+    return suppliers.filter(s =>
+      (s.name || '').toLowerCase().includes(query) ||
+      (s.supplierId || '').toLowerCase().includes(query) ||
+      (s.contactPerson || '').toLowerCase().includes(query) ||
+      (s.category || '').toLowerCase().includes(query)
+    );
+  }, [suppliers, supplierSearch]);
+
+  const poPagination = usePagination(filteredOrders, 8, [poSearchTerm]);
+  const prPagination = usePagination(purchaseRequests, 8, [purchaseRequests.length]);
+  const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -559,11 +586,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     { label: 'Outstanding Amount', value: `LKR ${outstandingInvoiceSum.toLocaleString()}`, color: '#d97706' },
     { label: 'Overdue Invoices', value: overdueCount, color: overdueCount > 0 ? '#ef4444' : '#64748b' }
   ];
-
-  const filteredSuppliers = suppliers.filter(s =>
-    s.name?.toLowerCase().includes(supplierSearch.toLowerCase()) ||
-    s.category?.toLowerCase().includes(supplierSearch.toLowerCase())
-  );
 
   const renderPOStatsModal = () => {
     if (!modal) return null;
@@ -1119,7 +1141,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {purchaseRequests.map((pr, i) => (
+                  {prPagination.paginatedData.map((pr, i) => (
                     <tr key={pr._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
                       <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
@@ -1193,6 +1215,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={prPagination} />
             </div>
           )}
 
@@ -1365,21 +1388,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   </thead>
                   <tbody>
                     {(() => {
-                      const query = poSearchTerm.trim().toLowerCase();
-                      const filteredOrders = !query ? orders : orders.filter(po =>
-                        (po.poNumber || '').toLowerCase().includes(query) ||
-                        (po.supplier || '').toLowerCase().includes(query) ||
-                        (po.status || '').toLowerCase().includes(query) ||
-                        (po.items || []).some(item => (item.materialName || '').toLowerCase().includes(query))
-                      );
-                      if (filteredOrders.length === 0) {
+                      if (poPagination.paginatedData.length === 0) {
                         return (
                           <tr>
                             <td colSpan="10" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No purchase orders match your search criteria.</td>
                           </tr>
                         );
                       }
-                      return filteredOrders.map((po, i) => (
+                      return poPagination.paginatedData.map((po, i) => (
                       <tr key={po._id} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
                         <td style={{ padding: '12px 16px', fontSize: '13px' }}>
@@ -1514,6 +1530,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     })()}
                   </tbody>
                 </table>
+                <Pagination pagination={poPagination} />
               </div>
             </div>
           )}
@@ -1586,7 +1603,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredSuppliers.map((s, i) => (
+                    {supplierPagination.paginatedData.map((s, i) => (
                       <tr key={s._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                         {editingSupplierId === s._id ? (
                           // Editing Row
@@ -1662,6 +1679,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     ))}
                   </tbody>
                 </table>
+                <Pagination pagination={supplierPagination} />
               </div>
             </div>
           )}

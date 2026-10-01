@@ -3,6 +3,7 @@ import { Calendar } from 'lucide-react';
 import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
 import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
+import Pagination, { usePagination } from '../components/Pagination';
 
 function SiteStoreDashboard({ user, onLogout }) {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -24,6 +25,16 @@ function SiteStoreDashboard({ user, onLogout }) {
   // Site Inventory screen filters
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('All');
+
+  const siteFilteredMaterials = React.useMemo(() => {
+    return materials.filter(m => {
+      const matchesSearch = (m.name || '').toLowerCase().includes(inventorySearchQuery.toLowerCase());
+      const matchesCat = inventoryCategoryFilter === 'All' || m.category === inventoryCategoryFilter;
+      return matchesSearch && matchesCat;
+    });
+  }, [materials, inventorySearchQuery, inventoryCategoryFilter]);
+
+  const siteInventoryPagination = usePagination(siteFilteredMaterials, 8, [inventorySearchQuery, inventoryCategoryFilter]);
 
   // Phase 8 - project selection (drives which project's Site Store inventory/history is shown)
   const [projects, setProjects] = useState([]);
@@ -73,10 +84,12 @@ function SiteStoreDashboard({ user, onLogout }) {
   });
   const [issueSubmitting, setIssueSubmitting] = useState(false);
 
-  // Material Issue & Usage History, fetched from the backend (MaterialUsage
-  // records created by this screen), scoped to the selected project.
   const [issueHistory, setIssueHistory] = useState([]);
   const [expandedHistoryId, setExpandedHistoryId] = useState(null);
+
+  const myRequestsPagination = usePagination(myRequests, 8, [myRequests.length]);
+  const issueHistoryPagination = usePagination(issueHistory, 8, [issueHistory.length]);
+  const minsPagination = usePagination(mins, 8, [mins.length]);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -616,12 +629,6 @@ function SiteStoreDashboard({ user, onLogout }) {
     consumedByMaterial[u.materialName] = (consumedByMaterial[u.materialName] || 0) + Number(u.actualQty || 0);
   });
 
-  const siteFilteredMaterials = materials.filter(m => {
-    const matchesSearch = m.name.toLowerCase().includes(inventorySearchQuery.toLowerCase());
-    const matchesCategory = inventoryCategoryFilter === 'All' || m.category === inventoryCategoryFilter;
-    return matchesSearch && matchesCategory;
-  });
-
   return (
     <div style={styles.dashboardLayout}>
       {/* Navigation Sidebar */}
@@ -907,7 +914,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {mins.map(m => (
+                    {minsPagination.paginatedData.map(m => (
                       <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ ...styles.td, fontWeight: 'bold' }}>{m.minNumber}</td>
                         <td style={styles.td}>
@@ -940,6 +947,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                   </tbody>
                 </table>
               )}
+              <Pagination pagination={minsPagination} />
             </div>
           </div>
         )}
@@ -1021,7 +1029,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {siteFilteredMaterials.map(m => {
+                    {siteInventoryPagination.paginatedData.map(m => {
                       const status = inventoryMaterialStatus(m);
                       return (
                         <tr key={m._id} style={{ borderBottom: '1px solid #eee', backgroundColor: status.tier !== 'NORMAL' ? 'rgba(239,68,68,0.08)' : 'white' }}>
@@ -1044,6 +1052,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                   </tbody>
                 </table>
               )}
+              <Pagination pagination={siteInventoryPagination} />
             </div>
 
             {/* In-Transit Material Issuance Notes Section */}
@@ -1351,12 +1360,12 @@ function SiteStoreDashboard({ user, onLogout }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {myRequests.length === 0 ? (
+                  {myRequestsPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="7" style={styles.emptyState}>No material requests submitted yet.</td>
                     </tr>
                   ) : (
-                    myRequests.map(r => {
+                    myRequestsPagination.paginatedData.map(r => {
                       const statusStyle = {
                         Pending: { bg: '#fff3e0', color: '#b7791f' },
                         Processing: { bg: '#e3f2fd', color: '#1565c0' },
@@ -1404,6 +1413,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={myRequestsPagination} />
             </div>
           </div>
         )}
@@ -1548,12 +1558,12 @@ function SiteStoreDashboard({ user, onLogout }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {issueHistory.length === 0 ? (
+                  {issueHistoryPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="9" style={{ padding: '24px', textAlign: 'center', color: '#999' }}>No material issue & usage records found.</td>
                     </tr>
                   ) : (
-                    issueHistory.map((item, i) => (
+                    issueHistoryPagination.paginatedData.map((item, i) => (
                       <React.Fragment key={item._id || i}>
                         <tr style={{ borderBottom: '1px solid #eee' }}>
                           <td style={styles.tdBold}>{item.minNumber || '-'}</td>
@@ -1592,6 +1602,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={issueHistoryPagination} />
             </div>
           </div>
         )}

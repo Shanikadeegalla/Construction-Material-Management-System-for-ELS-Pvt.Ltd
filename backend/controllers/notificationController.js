@@ -1,17 +1,47 @@
 import Notification from '../models/Notification.js';
+import { createNotificationHelper } from '../utils/notificationHelper.js';
 
-// @desc    Get user notifications by recipientId / userId
+// @desc    Get user notifications by recipientId / userId / role
 // @route   GET /api/notifications
 // @access  Private
 export const getNotifications = async (req, res) => {
   try {
     const userId = req.query.userId || req.query.recipientId || req.user?._id;
+    const userRole = req.user?.role;
 
-    if (!userId) {
-      return res.status(200).json({ success: true, count: 0, data: [] });
+    let filter = {};
+
+    if (userRole === 'Director') {
+      const directorTypes = ['BOM_submitted', 'BOM_SUBMITTED', 'PO_submitted', 'PO_SUBMITTED', 'Invoice_submitted', 'Payment_approval'];
+      const nonDirectorTypes = [
+        'alert', 'info',
+        'MIN_EXCEEDS_BOM', 'MIN_REQUEST_SUBMITTED',
+        'SSR_SUBMITTED', 'SSR_TRANSFERRED', 'SSR_REJECTED',
+        'BOM_STOCK_CHECK_REQUIRED', 'PR_SUBMITTED', 'PR_DECLINED'
+      ];
+
+      filter = {
+        $and: [
+          {
+            $or: [
+              { recipientId: userId, type: { $in: directorTypes } },
+              { role: 'Director' },
+              { targetRole: 'Director' },
+              { type: { $in: directorTypes } }
+            ]
+          },
+          {
+            type: { $nin: nonDirectorTypes }
+          }
+        ]
+      };
+    } else {
+      if (!userId) {
+        return res.status(200).json({ success: true, count: 0, data: [] });
+      }
+      filter = { recipientId: userId };
     }
 
-    const filter = { recipientId: userId };
     if (req.query.isRead !== undefined) {
       filter.isRead = req.query.isRead === 'true';
     }
@@ -34,14 +64,44 @@ export const getNotifications = async (req, res) => {
 export const getNotificationCount = async (req, res) => {
   try {
     const userId = req.query.userId || req.query.recipientId || req.user?._id;
-    if (!userId) {
+    const userRole = req.user?.role;
+
+    if (!userId && userRole !== 'Director') {
       return res.status(200).json({ success: true, count: 0 });
     }
 
-    const count = await Notification.countDocuments({
-      recipientId: userId,
-      isRead: false
-    });
+    let filter = { isRead: false };
+
+    if (userRole === 'Director') {
+      const directorTypes = ['BOM_submitted', 'BOM_SUBMITTED', 'PO_submitted', 'PO_SUBMITTED', 'Invoice_submitted', 'Payment_approval'];
+      const nonDirectorTypes = [
+        'alert', 'info',
+        'MIN_EXCEEDS_BOM', 'MIN_REQUEST_SUBMITTED',
+        'SSR_SUBMITTED', 'SSR_TRANSFERRED', 'SSR_REJECTED',
+        'BOM_STOCK_CHECK_REQUIRED', 'PR_SUBMITTED', 'PR_DECLINED'
+      ];
+
+      filter = {
+        isRead: false,
+        $and: [
+          {
+            $or: [
+              { recipientId: userId, type: { $in: directorTypes } },
+              { role: 'Director' },
+              { targetRole: 'Director' },
+              { type: { $in: directorTypes } }
+            ]
+          },
+          {
+            type: { $nin: nonDirectorTypes }
+          }
+        ]
+      };
+    } else {
+      filter.recipientId = userId;
+    }
+
+    const count = await Notification.countDocuments(filter);
 
     res.status(200).json({ success: true, count });
   } catch (error) {
@@ -56,7 +116,6 @@ export const markAsRead = async (req, res) => {
   try {
     const userId = req.query.userId || req.query.recipientId || req.user?._id;
     const filter = { _id: req.params.id };
-    if (userId) filter.recipientId = userId;
 
     let notification = await Notification.findOneAndUpdate(
       filter,
@@ -88,8 +147,38 @@ export const markAsRead = async (req, res) => {
 export const markAllAsRead = async (req, res) => {
   try {
     const userId = req.body?.userId || req.body?.recipientId || req.query?.userId || req.query?.recipientId || req.user?._id;
-    const filter = { isRead: false };
-    if (userId) filter.recipientId = userId;
+    const userRole = req.user?.role;
+
+    let filter = { isRead: false };
+
+    if (userRole === 'Director') {
+      const directorTypes = ['BOM_submitted', 'BOM_SUBMITTED', 'PO_submitted', 'PO_SUBMITTED', 'Invoice_submitted', 'Payment_approval'];
+      const nonDirectorTypes = [
+        'alert', 'info',
+        'MIN_EXCEEDS_BOM', 'MIN_REQUEST_SUBMITTED',
+        'SSR_SUBMITTED', 'SSR_TRANSFERRED', 'SSR_REJECTED',
+        'BOM_STOCK_CHECK_REQUIRED', 'PR_SUBMITTED', 'PR_DECLINED'
+      ];
+
+      filter = {
+        isRead: false,
+        $and: [
+          {
+            $or: [
+              { recipientId: userId, type: { $in: directorTypes } },
+              { role: 'Director' },
+              { targetRole: 'Director' },
+              { type: { $in: directorTypes } }
+            ]
+          },
+          {
+            type: { $nin: nonDirectorTypes }
+          }
+        ]
+      };
+    } else if (userId) {
+      filter.recipientId = userId;
+    }
 
     await Notification.updateMany(filter, { isRead: true });
     res.status(200).json({ success: true, message: 'All notifications marked as read.' });
@@ -98,19 +187,5 @@ export const markAllAsRead = async (req, res) => {
   }
 };
 
-// Utility helper to create notification programmatically
-export const createNotificationHelper = async (recipientId, message, type = 'info', link = '') => {
-  try {
-    const notif = new Notification({
-      recipientId,
-      message,
-      type,
-      link
-    });
-    await notif.save();
-    return notif;
-  } catch (err) {
-    console.error('Error creating notification:', err);
-    return null;
-  }
-};
+export { createNotificationHelper };
+

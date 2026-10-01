@@ -5,6 +5,7 @@ import { Calendar } from 'lucide-react';
 import { formatDate, formatDateLong, formatDayMonth, formatFullDate, formatShortDate, formatTime, formatDateTime } from '../utils/dateUtils';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import Pagination, { usePagination } from '../components/Pagination';
 import {
   BarChart,
   Bar,
@@ -73,6 +74,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [versionBId, setVersionBId] = useState('');
   const [directorNote, setDirectorNote] = useState('');
 
+  const bomsPagination = usePagination(boms, 8, [boms.length]);
+  const posPagination = usePagination(pos, 8, [pos.length]);
+  const invoicesPagination = usePagination(invoices, 8, [invoices.length]);
+
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
     return {
@@ -97,8 +102,18 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
-        setNotifications(data.data);
-        setUnreadCount(data.data.filter(n => !n.isRead).length);
+        const directorTypes = ['BOM_submitted', 'BOM_SUBMITTED', 'PO_submitted', 'PO_SUBMITTED', 'Invoice_submitted', 'Payment_approval'];
+        const excludedTypes = ['MIN_EXCEEDS_BOM', 'MIN_REQUEST_SUBMITTED', 'SSR_SUBMITTED', 'SSR_TRANSFERRED', 'SSR_REJECTED', 'BOM_STOCK_CHECK_REQUIRED', 'PR_SUBMITTED', 'PR_DECLINED'];
+        
+        const filteredNotifs = (data.data || []).filter(n => {
+          if (excludedTypes.includes(n.type)) return false;
+          if (directorTypes.includes(n.type)) return true;
+          if (n.role === 'Director' || n.targetRole === 'Director') return true;
+          return n.recipientId === user?._id || n.recipientId === user?.id;
+        });
+
+        setNotifications(filteredNotifs);
+        setUnreadCount(filteredNotifs.filter(n => !n.isRead).length);
       }
     } catch (err) {
       console.error('Error fetching notifications:', err);
@@ -1318,7 +1333,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {boms.map((bom, i) => {
+                    {bomsPagination.paginatedData.map((bom, i) => {
                       return (
                         <tr key={bom._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#333' }}>{bom.bomNumber || '-'}</td>
@@ -1366,6 +1381,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={bomsPagination} />
               </div>
             </div>
           )}
@@ -1385,7 +1401,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {pos.map((po, i) => {
+                    {posPagination.paginatedData.map((po, i) => {
                       const isPending = po.status === 'Pending';
                       const projName = po.prId?.projectName || (typeof po.prId?.project === 'object' ? (po.prId?.project?.projectName || po.prId?.project?.name) : po.prId?.project) || '-';
                       return (
@@ -1437,6 +1453,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={posPagination} />
               </div>
             </div>
           )}
@@ -1456,7 +1473,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {invoices.map((inv, i) => {
+                    {invoicesPagination.paginatedData.map((inv, i) => {
                       const isPending = inv.status === 'Pending Approval';
                       return (
                         <tr key={inv._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
@@ -1505,6 +1522,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={invoicesPagination} />
               </div>
             </div>
           )}

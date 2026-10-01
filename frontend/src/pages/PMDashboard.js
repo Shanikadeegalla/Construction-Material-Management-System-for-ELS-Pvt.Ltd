@@ -3,6 +3,7 @@ import SettingsPage from './SettingsPage';
 import { Calendar } from 'lucide-react';
 import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
+import Pagination, { usePagination } from '../components/Pagination';
 
 const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -67,6 +68,9 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [nextProjectId, setNextProjectId] = useState('');
   const [nextProjectIdLoading, setNextProjectIdLoading] = useState(false);
+
+  const projectsPagination = usePagination(projects, 8, [projects.length]);
+  const bomsPagination = usePagination(boms, 8, [boms.length]);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -826,6 +830,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     const projId = b.projectId?._id || b.projectId;
     return (b.status === 'Approved' || b.status === 'Rejected') && (myProjectIds.has(projId) || myProjectNames.has(projName));
   });
+  const directorBomsPagination = usePagination(directorReviewedBoms, 8, [directorReviewedBoms.length]);
   const myPendingRequests = requests.filter(r =>
     r.status === 'Pending' && myProjectNames.has(r.projectName || r.project)
   );
@@ -1101,7 +1106,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                 </tr>
               </thead>
               <tbody>
-                {projects.map((p, idx) => (
+                {projectsPagination.paginatedData.map((p, idx) => (
                   <tr key={p._id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '12px', fontSize: '13px', fontWeight: '700', color: '#0d1b4b' }}>{p.projectId}</td>
                     <td style={{ padding: '12px', fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{p.projectName}</td>
@@ -1167,6 +1172,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               </tbody>
             </table>
           </div>
+          <Pagination pagination={projectsPagination} />
         </div>
       </div>
     );
@@ -1579,7 +1585,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {directorReviewedBoms.map((b, idx) => (
+                    {directorBomsPagination.paginatedData.map((b, idx) => (
                       <tr key={b._id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                         <td style={{ padding: '12px', fontSize: '13px', color: '#334155' }}>{b.bomNumber || '-'}</td>
                         <td style={{ padding: '12px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{b.projectId?.projectName || b.projectId?.name || b.projectName || '-'}</td>
@@ -1622,6 +1628,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                   </tbody>
                 </table>
               </div>
+              <Pagination pagination={directorBomsPagination} />
             </div>
           )}
 
@@ -2068,8 +2075,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                       </tr>
                     </thead>
                     <tbody>
-                      {boms.map((b, idx) => {
-                        console.log('BOM row data:', b);
+                      {bomsPagination.paginatedData.map((b, idx) => {
                         return (
                           <tr key={b._id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                             <td style={{ padding: '12px', fontSize: '13px', color: '#334155' }}>{b.bomNumber || '-'}</td>
@@ -2100,6 +2106,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tbody>
                   </table>
                 </div>
+                <Pagination pagination={bomsPagination} />
               </div>
             </div>
           )}

@@ -6,6 +6,7 @@ import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
 import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import * as XLSX from 'xlsx';
+import Pagination, { usePagination } from '../components/Pagination';
 
 function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [view, setView] = useState('dashboard'); // 'dashboard', 'inventory', 'grn', 'purchase-request', 'min', 'approved-boms', 'stock-adjustments', 'stock-ledger', 'reports', 'notifications', 'settings'
@@ -81,6 +82,67 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
 
+  // Purchase Requests screen filters
+  const [prSearch, setPrSearch] = useState('');
+  const [prStatusFilter, setPrStatusFilter] = useState('All');
+
+  // Stock Ledger screen
+  const [stockLedger, setStockLedger] = useState([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerTypeFilter, setLedgerTypeFilter] = useState('All');
+
+  // Notifications screen (persisted Notification records, distinct from the
+  // low-stock alert list used by the header bell)
+  const [persistedNotifications, setPersistedNotifications] = useState([]);
+  const [notifFilter, setNotifFilter] = useState('All');
+
+  const mainMaterials = React.useMemo(() => materials.filter(m => m.location === 'MainStore'), [materials]);
+
+  const filteredMaterials = React.useMemo(() => {
+    return mainMaterials.filter(item => {
+      const name = item.materialCode ? `${item.materialCode} ${item.name || item.materialName}` : (item.name || item.materialName || '');
+      const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCat = categoryFilter === 'All' || item.category === categoryFilter;
+      return matchesSearch && matchesCat;
+    });
+  }, [mainMaterials, searchQuery, categoryFilter]);
+
+  const inventoryPagination = usePagination(filteredMaterials, 8, [searchQuery, categoryFilter]);
+  const grnPagination = usePagination(grns, 8, [grns.length]);
+  const transfersPagination = usePagination(transferNotes, 8, [transferNotes.length]);
+  const pendingRequestsPagination = usePagination(pendingRequests, 8, [pendingRequests.length]);
+  const bomsPagination = usePagination(approvedBoms, 8, [approvedBoms.length]);
+
+  const filteredStockLedger = React.useMemo(() => {
+    const q = ledgerSearch.toLowerCase();
+    return stockLedger.filter(e => {
+      const matchesSearch = !q || (e.materialName || '').toLowerCase().includes(q);
+      const matchesType = ledgerTypeFilter === 'All' || e.type === ledgerTypeFilter;
+      return matchesSearch && matchesType;
+    });
+  }, [stockLedger, ledgerSearch, ledgerTypeFilter]);
+  const stockLedgerPagination = usePagination(filteredStockLedger, 8, [ledgerSearch, ledgerTypeFilter]);
+
+  const prRows = React.useMemo(() => {
+    const rows = [];
+    prs.forEach((pr, idx) => {
+      (pr.materials || []).forEach((m, mi) => {
+        rows.push({ pr, idx, m, mi });
+      });
+    });
+    return rows.filter(({ pr, m }) => {
+      const matchesStatus = prStatusFilter === 'All' || pr.status === prStatusFilter;
+      const q = prSearch.toLowerCase();
+      const matchesSearch = !q || (pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '').toLowerCase().includes(q) || (m.materialName || '').toLowerCase().includes(q);
+      return matchesStatus && matchesSearch;
+    });
+  }, [prs, prStatusFilter, prSearch]);
+  const prsPagination = usePagination(prRows, 8, [prStatusFilter, prSearch]);
+
+  const stockAdjustments = React.useMemo(() => stockLedger.filter(e => e.type === 'Adjustment'), [stockLedger]);
+  const adjustmentsPagination = usePagination(stockAdjustments, 8, [stockAdjustments.length]);
+
   // Stock Adjustment form state
   const [adjustmentForm, setAdjustmentForm] = useState({ materialId: '', physicalCount: '', reason: 'Count Correction', notes: '' });
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
@@ -103,21 +165,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   // Purchase Orders (used to prefill GRN creation from a Sent/Delivered PO)
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [selectedGrnPO, setSelectedGrnPO] = useState('');
-
-  // Purchase Requests screen filters
-  const [prSearch, setPrSearch] = useState('');
-  const [prStatusFilter, setPrStatusFilter] = useState('All');
-
-  // Stock Ledger screen
-  const [stockLedger, setStockLedger] = useState([]);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
-  const [ledgerSearch, setLedgerSearch] = useState('');
-  const [ledgerTypeFilter, setLedgerTypeFilter] = useState('All');
-
-  // Notifications screen (persisted Notification records, distinct from the
-  // low-stock alert list used by the header bell)
-  const [persistedNotifications, setPersistedNotifications] = useState([]);
-  const [notifFilter, setNotifFilter] = useState('All');
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -995,15 +1042,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   };
 
   // Calculations for stats
-  const mainMaterials = materials.filter(m => m.location === 'MainStore');
   const totalSKUs = mainMaterials.length;
   const stockValue = mainMaterials.reduce((sum, m) => sum + (m.quantity * m.unitPrice), 0);
-
-  const filteredMaterials = mainMaterials.filter(m => {
-    const matchesSearch = m.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = categoryFilter === 'All' || m.category === categoryFilter;
-    return matchesSearch && matchesCategory;
-  });
 
   // Stock status tiers, driven entirely by the thresholds stored on the
   // Material record (never hard-coded per material in the UI):
@@ -1717,7 +1757,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredMaterials.map(m => {
+                    {inventoryPagination.paginatedData.map(m => {
                       const status = materialStatus(m);
                       return (
                         <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: status.tier !== 'NORMAL' ? 'rgba(239,68,68,0.05)' : 'white' }}>
@@ -1747,6 +1787,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tbody>
                 </table>
               )}
+              <Pagination pagination={inventoryPagination} />
             </div>
           </div>
         )}
@@ -2047,7 +2088,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {grns.map((g, i) => {
+                  {grnPagination.paginatedData.map((g, i) => {
                     const matchedSupplier = suppliers.find(s =>
                       s.name === g.supplier || s.supplierId === g.supplier || s._id === g.supplierId
                     );
@@ -2080,6 +2121,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   })}
                 </tbody>
               </table>
+              <Pagination pagination={grnPagination} />
             </div>
           </div>
         )}
@@ -2158,7 +2200,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredLedger.map((e, i) => (
+                          {stockLedgerPagination.paginatedData.map((e, i) => (
                             <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
                               <td style={styles.td}>{formatDateTime(e.date)}</td>
                               <td style={styles.tdBold}>{e.materialName} <span style={{ color: '#94a3b8', fontWeight: 'normal' }}>{e.unit}</span></td>
@@ -2199,6 +2241,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         </tfoot>
                       </table>
                     )}
+                    <Pagination pagination={stockLedgerPagination} />
                   </div>
                 </>
               );
@@ -2400,31 +2443,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {(() => {
-                    const rows = [];
-                    prs.forEach((pr, idx) => {
-                      (pr.materials || []).forEach((m, mi) => {
-                        rows.push({ pr, idx, m, mi });
-                      });
-                    });
-                    const filtered = rows.filter(({ pr, m }) => {
-                      const matchesStatus = prStatusFilter === 'All' || pr.status === prStatusFilter;
-                      const q = prSearch.toLowerCase();
-                      const matchesSearch = !q || (pr.projectName || pr.project || '').toLowerCase().includes(q) || (m.materialName || '').toLowerCase().includes(q);
-                      return matchesStatus && matchesSearch;
-                    });
-
-                    if (filtered.length === 0) {
-                      return (
-                        <tr>
-                          <td colSpan="9" style={{ padding: '30px', textAlign: 'center', color: '#999' }}>
-                            No purchase requests match the current filters.
-                          </td>
-                        </tr>
-                      );
-                    }
-
-                    return filtered.map(({ pr, idx, m, mi }) => {
+                  {prsPagination.paginatedData.length === 0 ? (
+                    <tr>
+                      <td colSpan="9" style={{ padding: '30px', textAlign: 'center', color: '#999' }}>
+                        No purchase requests match the current filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    prsPagination.paginatedData.map(({ pr, idx, m, mi }) => {
                       const mainMat = mainMaterials.find(x => x.name === m.materialName);
                       const available = mainMat ? mainMat.quantity : 0;
                       const shortage = Math.max((Number(m.quantity) || 0) - available, 0);
@@ -2459,10 +2485,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           <td style={styles.td}>{formatDate(pr.createdAt)}</td>
                         </tr>
                       );
-                    });
-                  })()}
+                    })
+                  )}
                 </tbody>
               </table>
+              <Pagination pagination={prsPagination} />
             </div>
           </div>
         )}
@@ -2802,12 +2829,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {pendingRequests.length === 0 ? (
+                  {pendingRequestsPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="6" style={styles.emptyState}>No pending Site Store requests.</td>
                     </tr>
                   ) : (
-                    pendingRequests.map(r => {
+                    pendingRequestsPagination.paginatedData.map(r => {
                       const hasShortage = r.materials.some(item => {
                         const outstanding = item.quantity - (item.fulfilledQty || 0);
                         if (outstanding <= 0) return false;
@@ -2860,6 +2887,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={pendingRequestsPagination} />
             </div>
 
             <div style={{ ...styles.tableContainer, marginTop: '24px' }}>
@@ -2876,12 +2904,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {transferNotes.length === 0 ? (
+                  {transfersPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="6" style={styles.emptyState}>No Material Transfer Notes created yet.</td>
                     </tr>
                   ) : (
-                    transferNotes.map(m => (
+                    transfersPagination.paginatedData.map(m => (
                       <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ ...styles.tdBold, color: '#1a365d' }}>{m.mtnNumber}</td>
                         <td style={styles.td}>{m.siteStoreName}</td>
@@ -2902,6 +2930,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={transfersPagination} />
             </div>
           </div>
         )}
@@ -2925,12 +2954,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {approvedBoms.length === 0 ? (
+                  {bomsPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="6" style={styles.emptyState}>No Director-approved BOMs yet.</td>
                     </tr>
                   ) : (
-                    approvedBoms.map(bom => (
+                    bomsPagination.paginatedData.map(bom => (
                       <tr key={bom._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ ...styles.tdBold, color: '#1a365d' }}>{bom.bomNumber || '-'}</td>
                         <td style={styles.td}>{bom.projectId?.projectName || bom.projectId?.name || bom.projectName || '-'}</td>
@@ -2956,6 +2985,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={bomsPagination} />
             </div>
 
             {selectedBom && (
