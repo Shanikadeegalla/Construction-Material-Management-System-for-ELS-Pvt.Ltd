@@ -7,7 +7,15 @@ import { decryptDB } from '../utils/cryptoUtils.js';
 // @access  Private
 export const getUsageRecords = async (req, res) => {
   try {
-    const usages = await MaterialUsage.find({}).sort({ usageDate: -1 });
+    const filter = {};
+    if (req.query.projectId) filter.projectId = req.query.projectId;
+    if (req.query.projectName) filter.projectName = req.query.projectName;
+    if (req.query.from || req.query.to) {
+      filter.usageDate = {};
+      if (req.query.from) filter.usageDate.$gte = new Date(req.query.from);
+      if (req.query.to) filter.usageDate.$lte = new Date(req.query.to);
+    }
+    const usages = await MaterialUsage.find(filter).sort({ usageDate: -1 });
     const decrypted = usages.map(u => {
       const doc = u.toObject();
       doc.materialName = decryptDB(doc.materialName);
@@ -84,8 +92,17 @@ export const addUsageRecord = async (req, res) => {
 
 export const getVarianceReport = async (req, res) => {
   try {
-    // 1. Get all approved BOMs
-    const boms = await BOM.find({ status: 'Approved' });
+    // 1. Get the approved BOM in force for each project. A project can hold
+    // several approved versions over time; only the most recently approved
+    // one is the plan actual usage is measured against.
+    const allApproved = await BOM.find({ status: 'Approved' }).sort({ updatedAt: -1, createdAt: -1 });
+    const seenProjects = new Set();
+    const boms = allApproved.filter(b => {
+      const key = String(b.projectId);
+      if (seenProjects.has(key)) return false;
+      seenProjects.add(key);
+      return true;
+    });
     
     // 2. Get all usage records
     const usages = await MaterialUsage.find({});
@@ -126,6 +143,9 @@ export const getVarianceReport = async (req, res) => {
           plannedQty: Number(mat.plannedQty) || 0,
           actualQty: 0,
           unitCost: Number(mat.estimatedUnitCost) || 0,
+          bomNumber: bom.bomNumber || '',
+          bomVersion: bom.version || '',
+          inBom: true,
         };
       });
     });
@@ -147,9 +167,13 @@ export const getVarianceReport = async (req, res) => {
           plannedQty: 0,
           actualQty: 0,
           unitCost: 0,
+          bomNumber: '',
+          bomVersion: '',
+          inBom: false,
         };
       }
       projectMaterials[proj][key].actualQty += Number(use.actualQty) || 0;
+      projectMaterials[proj][key].issueCount = (projectMaterials[proj][key].issueCount || 0) + 1;
     });
 
     // Third, flatten into a list and calculate variance
@@ -186,7 +210,14 @@ export const getVarianceReport = async (req, res) => {
           variancePct: numericVariancePct,
           wastageQty,
           wastageCost,
-          severity
+          severity,
+          remainingQty: Math.max(item.plannedQty - item.actualQty, 0),
+          usedPct: item.plannedQty > 0 ? Number(((item.actualQty / item.plannedQty) * 100).toFixed(1)) : null,
+          issueCount: item.issueCount || 0,
+          inBom: item.inBom,
+          bomNumber: item.bomNumber,
+          bomVersion: item.bomVersion,
+          status: !item.inBom ? 'Unplanned' : diff > 0 ? 'Overused' : item.actualQty === 0 ? 'Not Started' : diff === 0 ? 'On Plan' : 'Within Plan'
         });
       });
     });
@@ -196,6 +227,9 @@ export const getVarianceReport = async (req, res) => {
       projectName: u.projectName,
       materialName: u.materialName,
       actualQty: u.actualQty,
+      unit: u.unit,
+      activity: u.activity || '',
+      minNumber: u.minNumber || '',
       usageDate: u.usageDate,
       recordedBy: u.recordedBy
     })).sort((a,b) => new Date(a.usageDate) - new Date(b.usageDate));

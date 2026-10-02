@@ -1,4 +1,5 @@
-const API_URL = 'http://localhost:5000/api/payments';
+import { API_BASE } from '../config';
+const API_URL = `${API_BASE}/api/payments`;
 
 const getAuthHeaders = () => {
   const user = localStorage.getItem('user');
@@ -18,12 +19,12 @@ const getAuthHeaders = () => {
   };
 };
 
-// Creates a Stripe Checkout Session for a given purchaseOrderId and redirects browser to returned Stripe checkout URL
-export const createCheckoutSession = async (purchaseOrderId) => {
+// Creates a Stripe Checkout Session for a Director-approved invoice and redirects browser to returned Stripe checkout URL
+export const createCheckoutSession = async (invoiceId) => {
   const res = await fetch(`${API_URL}/create-checkout-session`, {
     method: 'POST',
     headers: getAuthHeaders(),
-    body: JSON.stringify({ purchaseOrderId })
+    body: JSON.stringify({ invoiceId })
   });
 
   const data = await res.json();

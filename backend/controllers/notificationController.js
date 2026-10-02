@@ -187,5 +187,5 @@ export const markAllAsRead = async (req, res) => {
   }
 };
 
-export { createNotificationHelper };
+export { createNotificationHelper, createNotificationHelper as notifyRoles };
 

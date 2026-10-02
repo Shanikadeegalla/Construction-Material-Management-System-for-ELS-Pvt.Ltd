@@ -14,8 +14,9 @@ import {
 } from '../controllers/supplierController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
+import { UPLOAD_DIR } from '../config/uploadDir.js';
 
-const uploadDir = 'uploads/';
+const uploadDir = UPLOAD_DIR;
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }

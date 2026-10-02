@@ -3,7 +3,7 @@ import MaterialRequest from '../models/MaterialRequest.js';
 import Material from '../models/Material.js';
 import Project from '../models/Project.js';
 import { recordMovement } from '../utils/stockService.js';
-import { createNotificationHelper } from './notificationController.js';
+import { createNotificationHelper, notifyRoles } from './notificationController.js';
 import { encryptDB, decryptDB } from '../utils/cryptoUtils.js';
 
 // SiteStore Material names/quantities are encrypted at rest, so matching an
@@ -17,12 +17,12 @@ const findSiteMaterialByName = async (siteStoreId, materialName) => {
   return siteMats.find(sm => decryptDB(sm.name) === materialName) || null;
 };
 
-// Moves stock for every line in `materials` (each already validated to be
-// <= current Main Store availability) from Main Store into the given Site
-// Store, creates the MTN document, and - when this fulfils a MaterialRequest
-// - updates that request's per-line fulfilledQty/status and notifies the
-// requester. Shared by both the manual (exact-quantity) and auto-generate
-// (capped-to-availability) transfer flows so they stay consistent.
+// Issues stock for every line in `materials` (each already validated to be
+// <= current Main Store availability) out of Main Store, creates the MTN
+// document as In Transit, and - when this fulfils a MaterialRequest - updates
+// that request's per-line fulfilledQty/status and notifies the requester.
+// Site Store inventory is NOT touched here: it only increases once the Site
+// Store confirms receipt (receiveTransferNote).
 const executeTransfer = async ({
   materials,
   mainMatsByName,
@@ -37,9 +37,9 @@ const executeTransfer = async ({
   const count = await MaterialTransferNote.countDocuments({});
   const mtnNumber = `MTN-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`;
 
-  // Move stock: decrease Main Store, then increase (or create) the Site
-  // Store line for every material. Every step up to here was validated
-  // above, so this loop should not fail under normal operation.
+  // Issue stock: decrease Main Store for every material. Every step up to
+  // here was validated above, so this loop should not fail under normal
+  // operation.
   const completedMoves = [];
   try {
     for (const m of materials) {
@@ -54,33 +54,6 @@ const executeTransfer = async ({
         performedBy: createdBy
       });
       completedMoves.push({ materialDoc: mainMat, quantityChange: qty });
-
-      let siteMat = await findSiteMaterialByName(siteStoreId, m.materialName);
-
-      if (!siteMat) {
-        siteMat = new Material({
-          name: encryptDB(m.materialName),
-          category: mainMat.category,
-          unit: mainMat.unit,
-          quantity: encryptDB('0'),
-          minimumStock: mainMat.minimumStock,
-          maximumStock: mainMat.maximumStock,
-          reorderLevel: mainMat.reorderLevel,
-          location: 'SiteStore',
-          unitPrice: mainMat.unitPrice,
-          project_id: siteStoreId,
-          projectId: siteStoreId
-        });
-        await siteMat.save();
-      }
-
-      await recordMovement({
-        materialDoc: siteMat,
-        type: 'MTN Transfer In',
-        quantityChange: qty,
-        reference: mtnNumber,
-        performedBy: createdBy
-      });
     }
   } catch (moveErr) {
     // Best-effort compensation: this codebase has no DB-transaction
@@ -120,7 +93,7 @@ const executeTransfer = async ({
         transferQty: Number(m.quantity)
       };
     }),
-    status: 'Transferred',
+    status: 'In Transit',
     createdBy
   });
   await mtn.save();
@@ -142,8 +115,8 @@ const executeTransfer = async ({
 
     if (sourceRequest.requestedByUserId) {
       const msg = shortfallLines.length === 0
-        ? `Your material request ${sourceRequest.requestNo} has been fully transferred (${mtn.mtnNumber}).`
-        : `Your material request ${sourceRequest.requestNo} was partially transferred (${mtn.mtnNumber}). Still short: ${shortfallLines.map(s => `${s.materialName} (${s.outstanding} ${s.unit})`).join(', ')}.`;
+        ? `Your material request ${sourceRequest.requestNo} has been issued by Main Store (${mtn.mtnNumber}) - confirm receipt once it arrives.`
+        : `Your material request ${sourceRequest.requestNo} was partially issued by Main Store (${mtn.mtnNumber}) - confirm receipt once it arrives. Still short: ${shortfallLines.map(s => `${s.materialName} (${s.outstanding} ${s.unit})`).join(', ')}.`;
       await createNotificationHelper(
         sourceRequest.requestedByUserId,
         msg,
@@ -151,6 +124,17 @@ const executeTransfer = async ({
         '/site-store-dashboard'
       );
     }
+  }
+
+  // An ad hoc (Main Store-initiated) transfer has no requester to tell, so
+  // every Site Store Officer is told a delivery is on its way.
+  if (!sourceRequest) {
+    await notifyRoles(
+      ['SiteStoreOfficer'],
+      `Main Store issued ${mtn.mtnNumber} to ${siteStoreName} (${mtn.materials.length} item${mtn.materials.length === 1 ? '' : 's'}) - confirm receipt once it arrives.`,
+      'MTN_ISSUED',
+      '/site-store-dashboard'
+    );
   }
 
   return { mtn, shortfallLines };
@@ -251,21 +235,101 @@ export const createTransferNote = async (req, res) => {
       createdBy
     });
 
-    res.status(201).json({ success: true, message: 'Material Transfer Note created and stock transferred.', data: mtn });
+    res.status(201).json({ success: true, message: 'Material Transfer Note issued. Stock is in transit until the Site Store confirms receipt.', data: mtn });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// @desc    List Material Transfer Notes (Main Store sees all, Site Store sees its own)
+// @desc    Site Store confirms receipt of an In Transit Material Transfer
+//          Note: every line is added to that Site Store's inventory (creating
+//          the site stock row on first receipt) and logged in the stock
+//          ledger, then the note is closed as Received.
+// @route   POST /api/material-transfer-notes/:id/receive
+// @access  Private (SiteStoreOfficer - "Confirm Material Receipt" permission)
+export const receiveTransferNote = async (req, res) => {
+  try {
+    // Claim the note first so a double-click / second officer can't add the
+    // same delivery to site stock twice.
+    const receivedBy = req.user ? req.user.name : 'Site Store Officer';
+    const claimed = await MaterialTransferNote.findOneAndUpdate(
+      { _id: req.params.id, status: 'In Transit' },
+      { status: 'Received', receivedBy, receivedAt: new Date() },
+      { new: true }
+    );
+    if (!claimed) {
+      const exists = await MaterialTransferNote.exists({ _id: req.params.id });
+      if (!exists) {
+        return res.status(404).json({ success: false, message: 'Material Transfer Note not found.' });
+      }
+      return res.status(400).json({ success: false, message: 'This Material Transfer Note has already been received.' });
+    }
+
+    try {
+      for (const line of claimed.materials) {
+        let siteMat = await findSiteMaterialByName(claimed.siteStoreId, line.materialName);
+
+        if (!siteMat) {
+          const mainMat = await Material.findOne({ name: line.materialName, location: 'MainStore' });
+          siteMat = new Material({
+            name: encryptDB(line.materialName),
+            category: mainMat ? mainMat.category : 'Other',
+            unit: mainMat ? mainMat.unit : line.unit,
+            quantity: encryptDB('0'),
+            minimumStock: mainMat ? mainMat.minimumStock : 10,
+            maximumStock: mainMat ? mainMat.maximumStock : 100,
+            reorderLevel: mainMat ? mainMat.reorderLevel : 50,
+            location: 'SiteStore',
+            unitPrice: mainMat ? mainMat.unitPrice : 0,
+            project_id: claimed.siteStoreId,
+            projectId: claimed.siteStoreId
+          });
+          await siteMat.save();
+        }
+
+        await recordMovement({
+          materialDoc: siteMat,
+          type: 'MTN Transfer In',
+          quantityChange: Number(line.transferQty),
+          reference: claimed.mtnNumber,
+          performedBy: receivedBy
+        });
+      }
+    } catch (moveErr) {
+      // Put the note back so the receipt can be retried.
+      await MaterialTransferNote.updateOne(
+        { _id: claimed._id },
+        { $set: { status: 'In Transit', receivedBy: '' }, $unset: { receivedAt: 1 } }
+      );
+      throw moveErr;
+    }
+
+    await notifyRoles(
+      ['MainStoreOfficer'],
+      `${claimed.siteStoreName} confirmed receipt of ${claimed.mtnNumber} (received by ${receivedBy}).`,
+      'MTN_RECEIVED',
+      '/main-store-dashboard'
+    );
+
+    res.status(200).json({ success: true, message: 'Receipt confirmed and Site Store inventory updated.', data: claimed });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    List Material Transfer Notes. Optional ?siteStoreId= / ?status=
+//          filters; a Site Store Officer pinned to one project only ever sees
+//          that site's notes.
 // @route   GET /api/material-transfer-notes
 // @access  Private
 export const getTransferNotes = async (req, res) => {
   try {
     const filter = {};
+    if (req.query.siteStoreId) filter.siteStoreId = req.query.siteStoreId;
+    if (req.query.status) filter.status = req.query.status;
     if (req.user.role === 'SiteStoreOfficer') {
       const siteStoreId = req.user.projectId || req.user.project_id;
-      filter.siteStoreId = siteStoreId;
+      if (siteStoreId) filter.siteStoreId = siteStoreId;
     }
     const notes = await MaterialTransferNote.find(filter).sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: notes });

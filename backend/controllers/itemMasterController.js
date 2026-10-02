@@ -160,10 +160,15 @@ export const updateItemMaster = async (req, res) => {
 export const deleteItemMaster = async (req, res) => {
   try {
     const { id } = req.params;
-    const item = await ItemMaster.findByIdAndDelete(id);
+    const item = await ItemMaster.findById(id);
     if (!item) {
       return res.status(404).json({ success: false, message: 'Material master record not found.' });
     }
+    // Only deactivated materials may be removed, so an active material can't be deleted by mistake
+    if (item.status !== 'Inactive') {
+      return res.status(400).json({ success: false, message: 'Deactivate the material before removing it.' });
+    }
+    await item.deleteOne();
     res.status(200).json({ success: true, message: 'Material master record deleted.' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

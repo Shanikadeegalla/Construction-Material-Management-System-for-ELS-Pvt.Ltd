@@ -4,6 +4,8 @@ import Project from '../models/Project.js';
 import User from '../models/userModel.js';
 import ItemMaster from '../models/ItemMaster.js';
 import Material from '../models/Material.js';
+import PurchaseRequest from '../models/PurchaseRequest.js';
+import PurchaseOrder from '../models/PurchaseOrder.js';
 import { createNotificationHelper } from './notificationController.js';
 
 // Helper to calculate the next version for a project
@@ -229,7 +231,9 @@ export const createBOM = async (req, res) => {
         version: finalVersion,
         createdBy: creatorId,
         materials: mappedMaterials,
-        status: status || 'Draft',
+        // Never trust the client's status here - a BOM can only be created as
+        // Draft or Submitted. Approval happens only through approveBOM.
+        status: isSubmitted ? 'Submitted' : 'Draft',
         submittedAt: isSubmitted ? new Date() : undefined
       });
 
@@ -271,14 +275,24 @@ export const approveBOM = async (req, res) => {
     const approvedBy = req.user ? req.user.name : 'Director';
     const { note } = req.body;
 
-    const bom = await BOM.findByIdAndUpdate(
-      req.params.id,
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid BOM ID.' });
+    }
+
+    // Only a BOM that is waiting for the Director can be approved - a Draft or
+    // Rejected BOM must be (re)submitted by the Project Manager first.
+    const bom = await BOM.findOneAndUpdate(
+      { _id: req.params.id, status: { $in: ['Submitted', 'Pending'] } },
       { status: 'Approved', approvedBy, rejectionReason: note || '' },
       { new: true }
     ).populate('projectId');
 
     if (!bom) {
-      return res.status(404).json({ success: false, message: 'BOM not found.' });
+      const exists = await BOM.exists({ _id: req.params.id });
+      if (!exists) {
+        return res.status(404).json({ success: false, message: 'BOM not found.' });
+      }
+      return res.status(400).json({ success: false, message: 'Only a submitted BOM can be approved.' });
     }
 
     const projectName = bom.projectName || (bom.projectId ? (bom.projectId.projectName || bom.projectId.name) : 'Project');
@@ -336,17 +350,106 @@ export const rejectBOM = async (req, res) => {
 export const getApprovedBOM = async (req, res) => {
   try {
     const { projectId } = req.params;
-    const bom = await BOM.findOne({ projectId, status: 'Approved' })
-      .populate('projectId', 'projectName projectId name clientName location');
+    if (!mongoose.Types.ObjectId.isValid(projectId)) {
+      return res.status(400).json({ success: false, message: 'Invalid project ID.' });
+    }
+
+    const bom = await getLatestApprovedBOM(projectId);
 
     if (!bom) {
       return res.status(404).json({ success: false, message: 'No approved BOM found for this project.' });
     }
 
+    await bom.populate('projectId', 'projectName projectId name clientName location');
+
     res.status(200).json({ success: true, data: bom });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
+};
+
+// A project can have several approved BOM versions over time. The one in
+// force is the most recently approved - approval is the last change made to
+// an approved BOM, so that is the one with the newest updatedAt.
+export const getLatestApprovedBOM = async (projectId) => {
+  return BOM.findOne({ projectId, status: 'Approved' }).sort({ updatedAt: -1, createdAt: -1 });
+};
+
+// Compares every material on an approved BOM against Main Store stock.
+// Shared by the stock-check endpoint and by PR creation, so the shortage the
+// officer sees is exactly the shortage the PR is validated against.
+//
+// Matching is BOM material -> ItemMaster (materialId) -> Main Store Material
+// by materialCode. The plain name is only a fallback for older rows that have
+// no ItemMaster link/code.
+//
+// alreadyRequestedQty is what active Main Store PRs for this same BOM already
+// cover, so the same shortage is not requested twice. This only reads data -
+// it never changes stock.
+export const computeBOMStockCheck = async (bom) => {
+  const mainStoreMaterials = await Material.find({ location: 'MainStore' });
+
+  const masterIds = bom.materials.map((item) => item.materialId).filter(Boolean);
+  const masters = await ItemMaster.find({ _id: { $in: masterIds } });
+  const codeByMasterId = {};
+  for (const master of masters) {
+    codeByMasterId[String(master._id)] = master.materialCode;
+  }
+
+  // A PR is still "active" while it is waiting for the Purchase Manager, or
+  // while the PO made from it has not been delivered/closed/rejected yet.
+  const bomPrs = await PurchaseRequest.find({
+    bomId: bom._id,
+    source: 'MainStore',
+    status: { $in: ['Pending', 'PO Created'] }
+  });
+  const poCreatedPrIds = bomPrs.filter((pr) => pr.status === 'PO Created').map((pr) => pr._id);
+  const openPos = await PurchaseOrder.find({
+    prId: { $in: poCreatedPrIds },
+    status: { $in: ['Draft', 'Pending', 'Approved', 'Sent'] }
+  });
+  const openPoPrIds = new Set(openPos.map((po) => String(po.prId)));
+  const activePrs = bomPrs.filter((pr) => pr.status === 'Pending' || openPoPrIds.has(String(pr._id)));
+
+  return bom.materials.map((item) => {
+    const code = item.materialId ? codeByMasterId[String(item.materialId)] : null;
+    const itemName = item.name.trim().toLowerCase();
+
+    let stockRows = code ? mainStoreMaterials.filter((m) => m.materialCode === code) : [];
+    if (stockRows.length === 0) {
+      stockRows = mainStoreMaterials.filter((m) => String(m.name).trim().toLowerCase() === itemName);
+    }
+    const available = stockRows.reduce((sum, m) => sum + (Number(m.quantity) || 0), 0);
+
+    const shortage = Math.max(item.plannedQty - available, 0);
+
+    let alreadyRequestedQty = 0;
+    for (const pr of activePrs) {
+      for (const prItem of pr.materials) {
+        const sameMaterial = (item.materialId && prItem.materialId)
+          ? String(prItem.materialId) === String(item.materialId)
+          : prItem.materialName.trim().toLowerCase() === itemName;
+        if (sameMaterial) {
+          alreadyRequestedQty += prItem.quantity;
+        }
+      }
+    }
+
+    return {
+      materialId: item.materialId || null,
+      name: item.name,
+      category: item.category,
+      unit: item.unit,
+      estimatedUnitCost: item.estimatedUnitCost || 0,
+      plannedQty: item.plannedQty,
+      available,
+      shortage,
+      status: shortage > 0 ? 'Shortage' : 'Sufficient',
+      alreadyRequestedQty,
+      // What can still be put on a new PR without duplicating an active one.
+      requestableQty: Math.max(shortage - alreadyRequestedQty, 0)
+    };
+  });
 };
 
 // @desc    Compare an approved BOM's planned materials against Main Store stock
@@ -355,33 +458,17 @@ export const getApprovedBOM = async (req, res) => {
 export const getBOMStockCheck = async (req, res) => {
   try {
     const { bomId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(bomId)) {
+      return res.status(400).json({ success: false, message: 'Invalid BOM ID.' });
+    }
+
     const bom = await BOM.findOne({ _id: bomId, status: 'Approved' });
 
     if (!bom) {
       return res.status(404).json({ success: false, message: 'Approved BOM not found.' });
     }
 
-    const mainStoreMaterials = await Material.find({ location: 'MainStore' });
-
-    const availableByName = {};
-    for (const material of mainStoreMaterials) {
-      availableByName[material.name] = material.quantity;
-    }
-
-    const data = bom.materials.map((item) => {
-      const available = availableByName[item.name] || 0;
-      const shortage = Math.max(item.plannedQty - available, 0);
-
-      return {
-        name: item.name,
-        category: item.category,
-        unit: item.unit,
-        plannedQty: item.plannedQty,
-        available,
-        shortage,
-        status: shortage > 0 ? 'Shortage' : 'Sufficient'
-      };
-    });
+    const data = await computeBOMStockCheck(bom);
 
     res.status(200).json({ success: true, data });
   } catch (error) {

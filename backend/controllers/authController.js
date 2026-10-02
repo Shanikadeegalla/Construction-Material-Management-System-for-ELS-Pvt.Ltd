@@ -325,8 +325,8 @@ export const updateUser = async (req, res, next) => {
         res.status(400);
         throw new Error('Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character.');
       }
-      if (req.user.role !== 'Admin') {
-        // Regular user must provide correct current password
+      if (req.user.role !== 'Admin' || req.user._id.toString() === req.params.id) {
+        // Anyone changing their own password (Admin included) must provide the correct current password
         if (!currentPassword) {
           res.status(400);
           throw new Error('Current password is required to change password');

@@ -10,7 +10,21 @@ const purchaseRequestSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  // The approved BOM this PR was raised against (set when Main Store creates a
+  // PR from a BOM shortage). Optional so older PR documents stay valid.
+  bomId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'BOM',
+    default: null
+  },
   materials: [{
+    // ItemMaster reference copied from the BOM line, used to detect a PR that
+    // already covers the same BOM material. Optional for older documents.
+    materialId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ItemMaster',
+      default: null
+    },
     materialName: {
       type: String,
       required: true

@@ -26,6 +26,7 @@ import paymentRoutes from './routes/paymentRoutes.js';
 import { handleWebhook } from './controllers/paymentController.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 import { handleEncryption } from './middleware/encryptionMiddleware.js';
+import { UPLOAD_DIR } from './config/uploadDir.js';
 
 // Connect to Database
 connectDB();
@@ -33,7 +34,10 @@ connectDB();
 const app = express();
 
 // Middlewares
-app.use(cors());
+// CORS_ORIGIN may hold a comma-separated allow-list (e.g. the deployed
+// frontend URL); when unset every origin is allowed, as in local development.
+const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map(o => o.trim()).filter(Boolean);
+app.use(cors(allowedOrigins.length ? { origin: allowedOrigins } : undefined));
 
 // Stripe requires the raw request body to verify webhook signatures, so this
 // route must be registered before express.json() parses the body.
@@ -43,7 +47,7 @@ app.use(express.json()); // Body parser
 app.use(handleEncryption);
 
 // Serve static uploads
-app.use('/uploads', express.static(path.resolve('uploads')));
+app.use('/uploads', express.static(UPLOAD_DIR));
 
 // Mount routes
 app.use('/api/auth', authRoutes);
@@ -78,7 +82,13 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(
-  PORT,
-  console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`)
-);
+// On Vercel the app is invoked as a serverless function (see the default
+// export below) and must not bind a port itself.
+if (!process.env.VERCEL) {
+  app.listen(
+    PORT,
+    console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`)
+  );
+}
+
+export default app;

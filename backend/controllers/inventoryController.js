@@ -8,6 +8,7 @@ import StockMovement from '../models/StockMovement.js';
 import mongoose from 'mongoose';
 import { encryptDB, decryptDB } from '../utils/cryptoUtils.js';
 import { recordMovement, getDecryptedQuantity } from '../utils/stockService.js';
+import { notifyRoles } from './notificationController.js';
 
 // @desc    Get all materials (optionally filter by location)
 // @route   GET /api/inventory
@@ -342,6 +343,15 @@ export const createGRN = async (req, res) => {
           });
         }
       }
+    }
+
+    if (poReference) {
+      await notifyRoles(
+        ['PurchaseManager'],
+        `Goods received for ${poReference} (${grnNumber}, ${grnStatus === 'Verified' ? 'full delivery' : 'partial / mismatched delivery'}).`,
+        'info',
+        '/purchase-orders'
+      );
     }
 
     // Fetch updated inventory to return

@@ -5,12 +5,13 @@ import fs from 'fs';
 import Project from '../models/Project.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
+import { UPLOAD_DIR } from '../config/uploadDir.js';
 
 const router = express.Router();
 
 // Ensure upload folders exist
-const drawingsDir = './uploads/drawings';
-const specificationsDir = './uploads/specifications';
+const drawingsDir = path.join(UPLOAD_DIR, 'drawings');
+const specificationsDir = path.join(UPLOAD_DIR, 'specifications');
 [drawingsDir, specificationsDir].forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });

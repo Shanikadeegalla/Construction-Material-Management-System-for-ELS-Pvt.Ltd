@@ -2,6 +2,7 @@ import express from 'express';
 import {
   getPurchaseRequests,
   createPurchaseRequest,
+  createPurchaseRequestFromBOM,
   updatePurchaseRequestStatus
 } from '../controllers/purchaseRequestController.js';
 import { protect } from '../middleware/authMiddleware.js';
@@ -15,6 +16,9 @@ const router = express.Router();
 router.route('/')
   .get(protect, getPurchaseRequests)
   .post(protect, checkPermission('Create PR'), createPurchaseRequest);
+
+// Main Store raises a PR for the shortages of a Director-approved BOM
+router.post('/from-bom', protect, checkPermission('Create PR'), createPurchaseRequestFromBOM);
 
 router.put('/:id/status', protect, checkPermission('Manage PO Lifecycle'), updatePurchaseRequestStatus);
 

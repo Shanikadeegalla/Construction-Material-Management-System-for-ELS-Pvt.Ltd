@@ -8,6 +8,7 @@ import DirectorDashboard from './pages/DirectorDashboard';
 import SiteStoreDashboard from './pages/SiteStoreDashboard';
 import PaymentSuccess from './pages/PaymentSuccess';
 import PaymentCancel from './pages/PaymentCancel';
+import { API_BASE } from './config';
 
 function App() {
   const [view, setView] = useState('login');
@@ -19,7 +20,7 @@ function App() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const API_AUTH_URL = 'http://localhost:5000/api/auth';
+  const API_AUTH_URL = `${API_BASE}/api/auth`;
 
   useEffect(() => {
     // Check dark mode preference

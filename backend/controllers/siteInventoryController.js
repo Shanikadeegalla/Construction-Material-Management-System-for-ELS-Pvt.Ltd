@@ -4,6 +4,8 @@ import Project from '../models/Project.js';
 import BOM from '../models/BOM.js';
 import { decryptDB } from '../utils/cryptoUtils.js';
 import { recordMovement, getDecryptedQuantity } from '../utils/stockService.js';
+import { getLatestApprovedBOM } from './bomController.js';
+import { createNotificationHelper, notifyRoles } from './notificationController.js';
 
 // Helper to decrypt a string
 const decryptIfNeeded = (val) => {
@@ -138,12 +140,29 @@ export const issueMaterialToProject = async (req, res) => {
     const priorCount = await MaterialUsage.countDocuments({ minNumber: { $exists: true, $ne: '' } });
     const minNumber = `MIN-${new Date().getFullYear()}-${String(priorCount + 1).padStart(3, '0')}`;
 
+    // Planned quantity comes from the project's approved BOM currently in
+    // force. Variance is cumulative: everything issued to this project for
+    // this material so far (including this issue) against the BOM plan - a
+    // single issue compared to the whole plan would always look "under".
     let plannedQty = 0;
-    const approvedBOM = await BOM.findOne({ projectId, status: 'Approved' });
+    let inBom = false;
+    const approvedBOM = await getLatestApprovedBOM(projectId);
     if (approvedBOM) {
-      const match = approvedBOM.materials.find(m => m.name.toLowerCase() === decryptedName.toLowerCase());
-      if (match) plannedQty = Number(match.plannedQty) || 0;
+      const match = approvedBOM.materials.find(m => m.name.trim().toLowerCase() === decryptedName.trim().toLowerCase());
+      if (match) {
+        plannedQty = Number(match.plannedQty) || 0;
+        inBom = true;
+      }
     }
+
+    const priorUsages = await MaterialUsage.find({ projectId });
+    const previouslyUsed = priorUsages.reduce((sum, u) => {
+      const name = String(decryptDB(u.materialName) || '').trim().toLowerCase();
+      if (name !== decryptedName.trim().toLowerCase()) return sum;
+      return sum + (Number(decryptDB(u.actualQty)) || 0);
+    }, 0);
+    const cumulativeActual = previouslyUsed + qty;
+    const cumulativeVariance = cumulativeActual - plannedQty;
 
     // Audited inventory deduction
     await recordMovement({
@@ -168,7 +187,7 @@ export const issueMaterialToProject = async (req, res) => {
         unit: siteMaterial.unit,
         plannedQty,
         actualQty: qty,
-        variance: qty - plannedQty,
+        variance: cumulativeVariance,
         activity: actStr,
         purpose: actStr,
         notes: notes || '',
@@ -187,9 +206,40 @@ export const issueMaterialToProject = async (req, res) => {
       throw usageErr;
     }
 
+    // Flag overuse the moment the project's cumulative consumption passes the
+    // BOM plan (or the material was never planned at all), so wastage is
+    // caught when it happens rather than only in a later report.
+    const overuseQty = Math.max(cumulativeVariance, 0);
+    const crossedPlan = overuseQty > 0 && previouslyUsed <= plannedQty;
+    let warning = '';
+    if (overuseQty > 0) {
+      warning = inBom
+        ? `${decryptedName} usage on ${projectName} is now ${cumulativeActual} ${siteMaterial.unit} against a BOM plan of ${plannedQty} ${siteMaterial.unit} (over by ${overuseQty} ${siteMaterial.unit}).`
+        : `${decryptedName} is not in the approved BOM for ${projectName} - ${cumulativeActual} ${siteMaterial.unit} used with no planned quantity.`;
+    }
+    if (crossedPlan) {
+      const msg = `Material overuse: ${warning}`;
+      if (approvedBOM && approvedBOM.createdBy) {
+        await createNotificationHelper(approvedBOM.createdBy, msg, 'USAGE_EXCEEDS_BOM', '/pm-dashboard');
+      } else {
+        await notifyRoles(['ProjectManager'], msg, 'USAGE_EXCEEDS_BOM', '/pm-dashboard');
+      }
+      await notifyRoles(['Director'], msg, 'USAGE_EXCEEDS_BOM', '/director-dashboard');
+    }
+
     res.status(201).json({
       success: true,
       message: `Material issued and usage recorded successfully (${minNumber}).`,
+      warning,
+      summary: {
+        plannedQty,
+        previouslyUsed,
+        cumulativeActual,
+        variance: cumulativeVariance,
+        remainingPlan: Math.max(plannedQty - cumulativeActual, 0),
+        overuseQty,
+        inBom
+      },
       data: usage
     });
   } catch (error) {
