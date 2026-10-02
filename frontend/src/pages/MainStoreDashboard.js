@@ -8,6 +8,7 @@ import DateInput from '../components/DateInput';
 import * as XLSX from 'xlsx';
 import { API_BASE } from '../config';
 import ReportsCenter from './ReportsCenter';
+import Pagination, { usePagination } from '../components/Pagination';
 
 function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [view, setView] = useState('dashboard'); // 'dashboard', 'inventory', 'grn', 'purchase-request', 'min', 'approved-boms', 'stock-adjustments', 'stock-ledger', 'reports', 'notifications', 'settings'
@@ -85,6 +86,67 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
 
+  // Purchase Requests screen filters
+  const [prSearch, setPrSearch] = useState('');
+  const [prStatusFilter, setPrStatusFilter] = useState('All');
+
+  // Stock Ledger screen
+  const [stockLedger, setStockLedger] = useState([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerTypeFilter, setLedgerTypeFilter] = useState('All');
+
+  // Notifications screen (persisted Notification records, distinct from the
+  // low-stock alert list used by the header bell)
+  const [persistedNotifications, setPersistedNotifications] = useState([]);
+  const [notifFilter, setNotifFilter] = useState('All');
+
+  const mainMaterials = React.useMemo(() => materials.filter(m => m.location === 'MainStore'), [materials]);
+
+  const filteredMaterials = React.useMemo(() => {
+    return mainMaterials.filter(item => {
+      const name = item.materialCode ? `${item.materialCode} ${item.name || item.materialName}` : (item.name || item.materialName || '');
+      const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCat = categoryFilter === 'All' || item.category === categoryFilter;
+      return matchesSearch && matchesCat;
+    });
+  }, [mainMaterials, searchQuery, categoryFilter]);
+
+  const inventoryPagination = usePagination(filteredMaterials, 8, [searchQuery, categoryFilter]);
+  const grnPagination = usePagination(grns, 8, [grns.length]);
+  const transfersPagination = usePagination(transferNotes, 8, [transferNotes.length]);
+  const pendingRequestsPagination = usePagination(pendingRequests, 8, [pendingRequests.length]);
+  const bomsPagination = usePagination(approvedBoms, 8, [approvedBoms.length]);
+
+  const filteredStockLedger = React.useMemo(() => {
+    const q = ledgerSearch.toLowerCase();
+    return stockLedger.filter(e => {
+      const matchesSearch = !q || (e.materialName || '').toLowerCase().includes(q);
+      const matchesType = ledgerTypeFilter === 'All' || e.type === ledgerTypeFilter;
+      return matchesSearch && matchesType;
+    });
+  }, [stockLedger, ledgerSearch, ledgerTypeFilter]);
+  const stockLedgerPagination = usePagination(filteredStockLedger, 8, [ledgerSearch, ledgerTypeFilter]);
+
+  const prRows = React.useMemo(() => {
+    const rows = [];
+    prs.forEach((pr, idx) => {
+      (pr.materials || []).forEach((m, mi) => {
+        rows.push({ pr, idx, m, mi });
+      });
+    });
+    return rows.filter(({ pr, m }) => {
+      const matchesStatus = prStatusFilter === 'All' || pr.status === prStatusFilter;
+      const q = prSearch.toLowerCase();
+      const matchesSearch = !q || (pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '').toLowerCase().includes(q) || (m.materialName || '').toLowerCase().includes(q);
+      return matchesStatus && matchesSearch;
+    });
+  }, [prs, prStatusFilter, prSearch]);
+  const prsPagination = usePagination(prRows, 8, [prStatusFilter, prSearch]);
+
+  const stockAdjustments = React.useMemo(() => stockLedger.filter(e => e.type === 'Adjustment'), [stockLedger]);
+  const adjustmentsPagination = usePagination(stockAdjustments, 8, [stockAdjustments.length]);
+
   // Stock Adjustment form state
   const [adjustmentForm, setAdjustmentForm] = useState({ materialId: '', physicalCount: '', reason: 'Count Correction', notes: '' });
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
@@ -108,21 +170,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [selectedGrnPO, setSelectedGrnPO] = useState('');
 
-  // Purchase Requests screen filters
-  const [prSearch, setPrSearch] = useState('');
-  const [prStatusFilter, setPrStatusFilter] = useState('All');
-
-  // Stock Ledger screen
-  const [stockLedger, setStockLedger] = useState([]);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
-  const [ledgerSearch, setLedgerSearch] = useState('');
-  const [ledgerTypeFilter, setLedgerTypeFilter] = useState('All');
-
-  // Notifications screen (persisted Notification records, distinct from the
-  // low-stock alert list used by the header bell)
-  const [persistedNotifications, setPersistedNotifications] = useState([]);
-  const [notifFilter, setNotifFilter] = useState('All');
-
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
     return {
@@ -135,27 +182,44 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     if (!hasSession()) return;
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`${API_BASE}/api/inventory/notifications`, {
+      const res = await fetch(`${API_BASE}/api/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
       if (data.success) {
-        setNotifications(data.data);
-      }
-
-      const countRes = await fetch(`${API_BASE}/api/notifications/count`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const countData = await countRes.json();
-      if (countData.success) {
-        setUnreadCount(countData.count);
+        setNotifications(data.data || []);
+        setUnreadCount((data.data || []).filter(n => !n.isRead).length);
       }
     } catch (err) {
-      setNotifications([
-        { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
-        { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
-      ]);
-      setUnreadCount(2);
+      console.error('Error fetching notifications:', err);
+    }
+  };
+
+  const handleMarkNotificationRead = async (notif) => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch(`${API_BASE}/api/notifications/${notif._id}/read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error('Error marking notification read:', err);
+    }
+    setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
+    setUnreadCount(prev => Math.max(0, prev - (notif.isRead ? 0 : 1)));
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setUnreadCount(0);
+    } catch (err) {
+      console.error('Error marking all notifications read:', err);
     }
   };
 
@@ -1015,15 +1079,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   };
 
   // Calculations for stats
-  const mainMaterials = materials.filter(m => m.location === 'MainStore');
   const totalSKUs = mainMaterials.length;
   const stockValue = mainMaterials.reduce((sum, m) => sum + (m.quantity * m.unitPrice), 0);
-
-  const filteredMaterials = mainMaterials.filter(m => {
-    const matchesSearch = m.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = categoryFilter === 'All' || m.category === categoryFilter;
-    return matchesSearch && matchesCategory;
-  });
 
   // Stock status tiers, driven entirely by the thresholds stored on the
   // Material record (never hard-coded per material in the UI):
@@ -1066,7 +1123,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     ...prs.map(pr => ({
       date: pr.createdAt,
       icon: '📝',
-      text: `Purchase Request submitted for ${pr.projectName || pr.project} (${pr.materials?.length || 0} item${pr.materials?.length === 1 ? '' : 's'})`
+      text: `Purchase Request submitted for ${pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || 'Project'} (${pr.materials?.length || 0} item${pr.materials?.length === 1 ? '' : 's'})`
     }))
   ].filter(a => a.date).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 6);
 
@@ -1142,20 +1199,70 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         );
       });
     } else if (modal === 'low-stock') {
-      title = 'Low Stock Items Alert Directory';
-      tableHeaders = ['Material Name', 'Current Qty', 'Min Required', 'Shortage', 'Actions'];
+      title = 'Multilevel Stock Alerts Directory';
+      tableHeaders = ['Material Name', 'Current Qty', 'Min Required', 'Stock Alert Level', 'Actions'];
 
-      const lowItems = mainMaterials.filter(m => m.quantity <= m.minimumStock);
-      const filtered = lowItems.filter(m => (m.name || '').toLowerCase().includes(query));
+      const alertItems = mainMaterials.filter(m => {
+        const qty = m.quantity || 0;
+        const min = m.minimumStock || 0;
+        const reorder = m.reorderLevel !== undefined && m.reorderLevel !== null ? m.reorderLevel : min;
+        const max = m.maximumStock || 0;
+        return qty <= min || (reorder > 0 && qty <= reorder) || (max > 0 && qty >= max);
+      });
+      const filtered = alertItems.filter(m => (m.name || '').toLowerCase().includes(query));
 
       tableRows = filtered.map((m, idx) => {
-        const shortage = m.minimumStock - m.quantity;
+        const qty = m.quantity || 0;
+        const min = m.minimumStock || 0;
+        const reorder = m.reorderLevel !== undefined && m.reorderLevel !== null ? m.reorderLevel : min;
+        const max = m.maximumStock || 0;
+
+        let level = 'Normal';
+        let badgeBg = '#f1f5f9';
+        let badgeColor = '#475569';
+        let badgeMsg = 'Normal Stock';
+
+        if (qty <= 0) {
+          level = 'Critical';
+          badgeBg = '#fee2e2';
+          badgeColor = '#991b1b';
+          badgeMsg = 'Critical: Out of Stock';
+        } else if (qty <= min) {
+          level = 'Critical';
+          badgeBg = '#fee2e2';
+          badgeColor = '#991b1b';
+          badgeMsg = 'Critical: Below Min Stock';
+        } else if (reorder > 0 && qty <= reorder) {
+          level = 'Reorder';
+          badgeBg = '#fef3c7';
+          badgeColor = '#92400e';
+          badgeMsg = 'Reorder Level Reached';
+        } else if (max > 0 && qty >= max) {
+          level = 'Overstock';
+          badgeBg = '#e0e7ff';
+          badgeColor = '#3730a3';
+          badgeMsg = 'Overstock Level Reached';
+        }
+
+        const shortage = min > qty ? min - qty : 0;
+
         return (
           <tr key={m._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#c62828' }}>{m.name}</td>
+            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{m.name}</td>
             <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700' }}>{m.quantity} {m.unit}</td>
             <td style={{ padding: '12px 16px', fontSize: '13px' }}>{m.minimumStock} {m.unit}</td>
-            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#c62828' }}>{shortage} {m.unit}</td>
+            <td style={{ padding: '12px 16px' }}>
+              <span style={{
+                background: badgeBg,
+                color: badgeColor,
+                padding: '4px 10px',
+                borderRadius: '12px',
+                fontSize: '11px',
+                fontWeight: '700'
+              }}>
+                {badgeMsg}
+              </span>
+            </td>
             <td style={{ padding: '12px 16px' }}>
               <button 
                 onClick={() => {
@@ -1164,8 +1271,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     materialName: m.name,
                     unit: m.unit,
                     quantity: shortage || 10,
-                    urgency: 'Urgent',
-                    notes: `Requested shortage of ${shortage} units to restore minimum stock level.`
+                    urgency: level === 'Critical' ? 'Urgent' : 'Normal',
+                    notes: `Requested for ${m.name} due to ${badgeMsg}`
                   });
                   setShowPrForm(true);
                   setView('purchase-request');
@@ -1219,11 +1326,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       tableRows = filtered.map((g, idx) => (
         <tr key={g._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#1565c0' }}>{g.grnNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{g.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof g.supplier === 'object' ? (g.supplier?.name || g.supplier?.supplierId || '—') : (g.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>{formatDateTime(g.receivedDate || g.createdAt)}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {g.items?.map((item, itemIdx) => (
-              <div key={itemIdx}>{item.materialName || item.material || 'Material'} (Received: {item.receivedQty} {item.unit || 'bag'})</div>
+              <div key={itemIdx}>{item.materialName || (typeof item.material === 'object' ? (item.material?.name || item.material?.materialName) : item.material) || 'Material'} (Received: {item.receivedQty} {item.unit || 'bag'})</div>
             ))}
           </td>
           <td style={{ padding: '12px 16px' }}>
@@ -1431,37 +1538,32 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   cursor: 'default',
                   textAlign: 'left'
                 }} onClick={e => e.stopPropagation()}>
-                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px' }}>
-                    Low Stock Alerts
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Main Store Notifications</span>
+                    <span onClick={handleMarkAllNotificationsRead} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
                   </div>
                   {notifications.length === 0 ? (
                     <div style={{ padding: '16px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
-                      All stock levels are normal.
+                      No new notifications.
                     </div>
                   ) : (
                     notifications.map((notif, idx) => (
-                      <div key={idx} style={{
-                        padding: '12px 16px',
-                        borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9',
-                        fontSize: '13px'
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
-                          <span style={{ color: '#0d1b4b' }}>{notif.materialName}</span>
-                          <span style={{
-                            color: notif.alertLevel === 'Critical' ? '#ef4444' : '#f59e0b',
-                            background: notif.alertLevel === 'Critical' ? '#fef2f2' : '#fef3c7',
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            fontSize: '10px'
-                          }}>
-                            {notif.alertLevel}
-                          </span>
+                      <div
+                        key={idx}
+                        onClick={() => handleMarkNotificationRead(notif)}
+                        style={{
+                          padding: '12px 16px',
+                          borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9',
+                          fontSize: '13px',
+                          cursor: 'pointer',
+                          background: notif.isRead ? 'white' : '#f8fafc'
+                        }}
+                      >
+                        <div style={{ color: notif.isRead ? '#475569' : '#0d1b4b', fontWeight: notif.isRead ? '400' : '600', marginBottom: '4px' }}>
+                          {notif.message || (typeof notif.materialName === 'object' ? (notif.materialName?.name || notif.materialName?.materialName) : notif.materialName) || (typeof notif.name === 'string' ? notif.name : '') || 'Notification'}
                         </div>
-                        <div style={{ color: '#475569', fontSize: '12px' }}>
-                          Qty: <strong>{notif.currentQty}</strong> / Min: {notif.minimumStock}
-                        </div>
-                        <div style={{ color: '#64748b', fontSize: '11px', marginTop: '2px' }}>
-                          📍 {notif.location}
+                        <div style={{ color: '#64748b', fontSize: '11px' }}>
+                          {formatFullDate(notif.createdAt)}
                         </div>
                       </div>
                     ))
@@ -1692,7 +1794,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredMaterials.map(m => {
+                    {inventoryPagination.paginatedData.map(m => {
                       const status = materialStatus(m);
                       return (
                         <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: status.tier !== 'NORMAL' ? 'rgba(239,68,68,0.05)' : 'white' }}>
@@ -1722,6 +1824,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tbody>
                 </table>
               )}
+              <Pagination pagination={inventoryPagination} />
             </div>
           </div>
         )}
@@ -1812,7 +1915,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           </div>
                           <div>
                             <div style={styles.fieldLabel}>Project</div>
-                            <div style={{ fontWeight: 600, color: '#0d1b4b' }}>{po.prId?.project || po.prId?.projectName || 'N/A'}</div>
+                            <div style={{ fontWeight: 600, color: '#0d1b4b' }}>{po.prId?.project?.projectName || po.prId?.project?.name || (typeof po.prId?.project === 'string' ? po.prId?.project : '') || po.prId?.projectName || 'N/A'}</div>
                           </div>
                         </>
                       )}
@@ -2022,7 +2125,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {grns.map((g, i) => {
+                  {grnPagination.paginatedData.map((g, i) => {
                     const matchedSupplier = suppliers.find(s =>
                       s.name === g.supplier || s.supplierId === g.supplier || s._id === g.supplierId
                     );
@@ -2055,6 +2158,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   })}
                 </tbody>
               </table>
+              <Pagination pagination={grnPagination} />
             </div>
           </div>
         )}
@@ -2133,7 +2237,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredLedger.map((e, i) => (
+                          {stockLedgerPagination.paginatedData.map((e, i) => (
                             <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
                               <td style={styles.td}>{formatDateTime(e.date)}</td>
                               <td style={styles.tdBold}>{e.materialName} <span style={{ color: '#94a3b8', fontWeight: 'normal' }}>{e.unit}</span></td>
@@ -2174,6 +2278,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         </tfoot>
                       </table>
                     )}
+                    <Pagination pagination={stockLedgerPagination} />
                   </div>
                 </>
               );
@@ -2375,38 +2480,21 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {(() => {
-                    const rows = [];
-                    prs.forEach((pr, idx) => {
-                      (pr.materials || []).forEach((m, mi) => {
-                        rows.push({ pr, idx, m, mi });
-                      });
-                    });
-                    const filtered = rows.filter(({ pr, m }) => {
-                      const matchesStatus = prStatusFilter === 'All' || pr.status === prStatusFilter;
-                      const q = prSearch.toLowerCase();
-                      const matchesSearch = !q || (pr.projectName || pr.project || '').toLowerCase().includes(q) || (m.materialName || '').toLowerCase().includes(q);
-                      return matchesStatus && matchesSearch;
-                    });
-
-                    if (filtered.length === 0) {
-                      return (
-                        <tr>
-                          <td colSpan="9" style={{ padding: '30px', textAlign: 'center', color: '#999' }}>
-                            No purchase requests match the current filters.
-                          </td>
-                        </tr>
-                      );
-                    }
-
-                    return filtered.map(({ pr, idx, m, mi }) => {
+                  {prsPagination.paginatedData.length === 0 ? (
+                    <tr>
+                      <td colSpan="9" style={{ padding: '30px', textAlign: 'center', color: '#999' }}>
+                        No purchase requests match the current filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    prsPagination.paginatedData.map(({ pr, idx, m, mi }) => {
                       const mainMat = mainMaterials.find(x => x.name === m.materialName);
                       const available = mainMat ? mainMat.quantity : 0;
                       const shortage = Math.max((Number(m.quantity) || 0) - available, 0);
                       return (
                         <tr key={`${pr._id || idx}-${mi}`} style={{ borderBottom: '1px solid #eee' }}>
                           <td style={styles.tdBold}>PR-{String(idx + 1).padStart(3, '0')}</td>
-                          <td style={styles.td}>{pr.projectName || pr.project}</td>
+                          <td style={styles.td}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
                           <td style={styles.td}>{m.materialName}</td>
                           <td style={styles.td}>{m.quantity} {m.unit}</td>
                           <td style={styles.td}>{available} {m.unit}</td>
@@ -2434,10 +2522,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           <td style={styles.td}>{formatDate(pr.createdAt)}</td>
                         </tr>
                       );
-                    });
-                  })()}
+                    })
+                  )}
                 </tbody>
               </table>
+              <Pagination pagination={prsPagination} />
             </div>
           </div>
         )}
@@ -2777,12 +2866,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {pendingRequests.length === 0 ? (
+                  {pendingRequestsPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="6" style={styles.emptyState}>No pending Site Store requests.</td>
                     </tr>
                   ) : (
-                    pendingRequests.map(r => {
+                    pendingRequestsPagination.paginatedData.map(r => {
                       const hasShortage = r.materials.some(item => {
                         const outstanding = item.quantity - (item.fulfilledQty || 0);
                         if (outstanding <= 0) return false;
@@ -2835,6 +2924,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={pendingRequestsPagination} />
             </div>
 
             <div style={{ ...styles.tableContainer, marginTop: '24px' }}>
@@ -2852,12 +2942,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {transferNotes.length === 0 ? (
+                  {transfersPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="7" style={styles.emptyState}>No Material Transfer Notes created yet.</td>
                     </tr>
                   ) : (
-                    transferNotes.map(m => (
+                    transfersPagination.paginatedData.map(m => (
                       <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ ...styles.tdBold, color: '#1a365d' }}>{m.mtnNumber}</td>
                         <td style={styles.td}>{m.siteStoreName}</td>
@@ -2883,6 +2973,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={transfersPagination} />
             </div>
           </div>
         )}
@@ -2906,12 +2997,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {approvedBoms.length === 0 ? (
+                  {bomsPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="6" style={styles.emptyState}>No Director-approved BOMs yet.</td>
                     </tr>
                   ) : (
-                    approvedBoms.map(bom => (
+                    bomsPagination.paginatedData.map(bom => (
                       <tr key={bom._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ ...styles.tdBold, color: '#1a365d' }}>{bom.bomNumber || '-'}</td>
                         <td style={styles.td}>{bom.projectId?.projectName || bom.projectId?.name || bom.projectName || '-'}</td>
@@ -2937,6 +3028,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={bomsPagination} />
             </div>
 
             {bomCompareLoading && !selectedBom && (

@@ -8,6 +8,7 @@ import DateInput from '../components/DateInput';
 import { downloadPaymentReport, downloadPaymentReceipt } from '../services/paymentService';
 import ReportsCenter from './ReportsCenter';
 import { API_BASE } from '../config';
+import Pagination, { usePagination } from '../components/Pagination';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
@@ -96,6 +97,32 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
   // Supplier Profile view state
   const [viewingSupplierId, setViewingSupplierId] = useState(null);
+
+  const filteredOrders = React.useMemo(() => {
+    const query = poSearchTerm.trim().toLowerCase();
+    if (!query) return orders;
+    return orders.filter(po =>
+      (po.poNumber || '').toLowerCase().includes(query) ||
+      (po.supplier || '').toLowerCase().includes(query) ||
+      (po.status || '').toLowerCase().includes(query) ||
+      (po.items || []).some(item => (item.materialName || '').toLowerCase().includes(query))
+    );
+  }, [orders, poSearchTerm]);
+
+  const filteredSuppliers = React.useMemo(() => {
+    const query = supplierSearch.trim().toLowerCase();
+    if (!query) return suppliers;
+    return suppliers.filter(s =>
+      (s.name || '').toLowerCase().includes(query) ||
+      (s.supplierId || '').toLowerCase().includes(query) ||
+      (s.contactPerson || '').toLowerCase().includes(query) ||
+      (s.category || '').toLowerCase().includes(query)
+    );
+  }, [suppliers, supplierSearch]);
+
+  const poPagination = usePagination(filteredOrders, 8, [poSearchTerm]);
+  const prPagination = usePagination(purchaseRequests, 8, [purchaseRequests.length]);
+  const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -244,8 +271,21 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       console.error('Error marking notification as read:', err);
     }
     setPrNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
-    setPrUnreadCount(prev => Math.max(0, prev - 1));
+    setPrUnreadCount(prev => Math.max(0, prev - (notif.isRead ? 0 : 1)));
     if (notif.link) setActivePage('prs');
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
+        method: 'PUT',
+        headers: getHeaders()
+      });
+      setPrNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setPrUnreadCount(0);
+    } catch (err) {
+      console.error('Error marking all notifications read:', err);
+    }
   };
 
   useEffect(() => {
@@ -592,11 +632,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     { label: 'Overdue Invoices', value: overdueCount, color: overdueCount > 0 ? '#ef4444' : '#64748b' }
   ];
 
-  const filteredSuppliers = suppliers.filter(s =>
-    s.name?.toLowerCase().includes(supplierSearch.toLowerCase()) ||
-    s.category?.toLowerCase().includes(supplierSearch.toLowerCase())
-  );
-
   const renderPOStatsModal = () => {
     if (!modal) return null;
 
@@ -618,7 +653,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit} (LKR {item.unitPrice})</div>
@@ -650,7 +685,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
@@ -683,7 +718,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
@@ -709,7 +744,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{po.supplier}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
@@ -908,8 +943,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   cursor: 'default',
                   textAlign: 'left'
                 }} onClick={e => e.stopPropagation()}>
-                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px' }}>
-                    Purchase Request & Order Updates
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Purchase Request & Order Updates</span>
+                    <span onClick={handleMarkAllNotificationsRead} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
                   </div>
                   {prNotifications.length === 0 ? (
                     <div style={{ padding: '16px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
@@ -1000,27 +1036,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   {showSupplierForm ? 'Hide Form' : '+ Add Supplier'}
                 </button>
               )}
-              {activePage === 'payment' && (
-                <button
-                  onClick={handleDownloadReport}
-                  disabled={downloadingReport}
-                  style={{
-                    background: '#0d1b4b',
-                    color: 'white',
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    cursor: downloadingReport ? 'not-allowed' : 'pointer',
-                    fontWeight: '600',
-                    fontSize: '13px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px'
-                  }}
-                >
-                  {downloadingReport ? '⏳ Generating PDF...' : '📥 Download Report'}
-                </button>
-              )}
             </div>
           </div>
         </div>
@@ -1092,7 +1107,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   {orders.slice(0, 5).map((po, i) => (
                     <tr key={po._id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{po.supplier}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
                       <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{po.totalAmount?.toLocaleString()}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{formatDate(po.createdAt)}</td>
                       <td style={{ padding: '12px 16px' }}>
@@ -1126,7 +1141,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   {purchaseRequests.slice(0, 5).map((pr, i) => (
                     <tr key={pr._id || i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || pr.project}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
                         {pr.materials?.map((m, idx) => (
                           <div key={idx}>{m.materialName} ×{m.quantity} {m.unit || 'bags'}</div>
@@ -1173,10 +1188,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {purchaseRequests.map((pr, i) => (
+                  {prPagination.paginatedData.map((pr, i) => (
                     <tr key={pr._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || pr.project || '—'}</td>
+                      <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
                         {pr.materials?.map((m, idx) => (
                           <div key={idx}><strong>{m.materialName}</strong>: {m.quantity} {m.unit || 'bags'}</div>
@@ -1200,10 +1215,38 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ display: 'flex', gap: '6px' }}>
                           {pr.status === 'Pending' && (
-                            <button onClick={() => handleConvertToPO(pr)}
-                              style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
-                              Convert to PO
-                            </button>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <button onClick={() => handleConvertToPO(pr)}
+                                style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                Convert to PO
+                              </button>
+                              <button onClick={async () => {
+                                const reason = window.prompt(`Enter reason for declining Purchase Request for ${pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}:`);
+                                if (reason === null) return;
+                                try {
+                                  const res = await fetch(`${API_BASE}/api/purchase-requests/${pr._id}/status`, {
+                                    method: 'PUT',
+                                    headers: getHeaders(),
+                                    body: JSON.stringify({ status: 'Declined', reason })
+                                  });
+                                  const data = await res.json();
+                                  if (data.success) {
+                                    setMessage(`✅ Purchase Request declined.`);
+                                    fetchData();
+                                  } else {
+                                    setError(data.message || 'Failed to decline Purchase Request.');
+                                  }
+                                } catch (err) {
+                                  setError('Failed to decline Purchase Request.');
+                                }
+                              }}
+                                style={{ background: '#ef4444', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                Decline
+                              </button>
+                            </div>
+                          )}
+                          {pr.status === 'Declined' && (
+                            <span style={{ fontSize: '11px', color: '#ef4444', fontStyle: 'italic', fontWeight: 'bold' }}>Declined ({pr.declineReason || 'No reason'})</span>
                           )}
                           {pr.status === 'PO Created' && (
                             <span style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic' }}>PO already created</span>
@@ -1219,6 +1262,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={prPagination} />
             </div>
           )}
 
@@ -1391,21 +1435,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   </thead>
                   <tbody>
                     {(() => {
-                      const query = poSearchTerm.trim().toLowerCase();
-                      const filteredOrders = !query ? orders : orders.filter(po =>
-                        (po.poNumber || '').toLowerCase().includes(query) ||
-                        (po.supplier || '').toLowerCase().includes(query) ||
-                        (po.status || '').toLowerCase().includes(query) ||
-                        (po.items || []).some(item => (item.materialName || '').toLowerCase().includes(query))
-                      );
-                      if (filteredOrders.length === 0) {
+                      if (poPagination.paginatedData.length === 0) {
                         return (
                           <tr>
                             <td colSpan="10" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No purchase orders match your search criteria.</td>
                           </tr>
                         );
                       }
-                      return filteredOrders.map((po, i) => (
+                      return poPagination.paginatedData.map((po, i) => (
                       <tr key={po._id} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
                         <td style={{ padding: '12px 16px', fontSize: '13px' }}>
@@ -1448,7 +1485,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               ))}
                             </select>
                           ) : (
-                            <span style={{ fontWeight: '500' }}>{po.supplier}</span>
+                            <span style={{ fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</span>
                           )}
                         </td>
                         <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
@@ -1517,6 +1554,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     })()}
                   </tbody>
                 </table>
+                <Pagination pagination={poPagination} />
               </div>
             </div>
           )}
@@ -1589,7 +1627,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredSuppliers.map((s, i) => (
+                    {supplierPagination.paginatedData.map((s, i) => (
                       <tr key={s._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                         {editingSupplierId === s._id ? (
                           // Editing Row
@@ -1665,6 +1703,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     ))}
                   </tbody>
                 </table>
+                <Pagination pagination={supplierPagination} />
               </div>
             </div>
           )}

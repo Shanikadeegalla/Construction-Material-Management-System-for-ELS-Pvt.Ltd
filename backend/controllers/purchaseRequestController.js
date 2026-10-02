@@ -76,6 +76,12 @@ export const createPurchaseRequest = async (req, res) => {
       return res.status(400).json({ success: false, message: 'No approved BOM is available for this project.' });
     }
 
+    // Fetch all active PRs for this project (status not Declined)
+    const existingPrs = await PurchaseRequest.find({
+      $or: [{ project: finalProjectName }, { projectName: finalProjectName }],
+      status: { $ne: 'Declined' }
+    });
+
     const mappedMaterials = [];
     for (const m of materials) {
       const matName = m.materialName || m.name || '';
@@ -101,10 +107,23 @@ export const createPurchaseRequest = async (req, res) => {
         });
       }
 
-      if (qty > bomItem.plannedQty) {
+      // Calculate cumulative quantity already requested across active PRs
+      let alreadyRequestedQty = 0;
+      existingPrs.forEach(epr => {
+        (epr.materials || []).forEach(em => {
+          if ((em.materialName || em.name || '').trim().toLowerCase() === bomItem.name.trim().toLowerCase()) {
+            alreadyRequestedQty += Number(em.quantity) || 0;
+          }
+        });
+      });
+
+      const remainingAllowed = Math.max(0, bomItem.plannedQty - alreadyRequestedQty);
+
+      if ((alreadyRequestedQty + qty) > bomItem.plannedQty) {
+        const remaining = bomItem.plannedQty - alreadyRequestedQty;
         return res.status(400).json({ 
           success: false, 
-          message: `Requested quantity for "${matName}" (${qty}) exceeds the approved BOM quantity (${bomItem.plannedQty}).` 
+          message: `"${matName}": BOM allows ${bomItem.plannedQty}, ${alreadyRequestedQty} already requested, ${remaining < 0 ? 0 : remaining} remaining.` 
         });
       }
 

@@ -4,6 +4,7 @@ import { Calendar } from 'lucide-react';
 import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import { API_BASE } from '../config';
+import Pagination, { usePagination } from '../components/Pagination';
 
 const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -68,6 +69,9 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [nextProjectId, setNextProjectId] = useState('');
   const [nextProjectIdLoading, setNextProjectIdLoading] = useState(false);
+
+  const projectsPagination = usePagination(projects, 8, [projects.length]);
+  const bomsPagination = usePagination(boms, 8, [boms.length]);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -146,8 +150,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
-  // Fetches real BOM approval/rejection notifications (Director actions) so the
-  // PM sees them in the bell, separate from the low-stock inventory alerts above.
+  // Fetches real notifications addressed to this user (BOM approvals, PRs, etc.)
   const fetchBomNotifications = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -156,12 +159,26 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
-        const bomNotifs = (data.data || []).filter(n => (n.type || '').toLowerCase().startsWith('bom'));
-        setBomNotifications(bomNotifs);
-        setBomUnreadCount(bomNotifs.filter(n => !n.isRead).length);
+        const userNotifs = data.data || [];
+        setBomNotifications(userNotifs);
+        setBomUnreadCount(userNotifs.filter(n => !n.isRead).length);
       }
     } catch (err) {
-      console.error('Error fetching BOM notifications:', err);
+      console.error('Error fetching user notifications:', err);
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setBomNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setBomUnreadCount(0);
+    } catch (err) {
+      console.error('Error marking all notifications read:', err);
     }
   };
 
@@ -178,7 +195,9 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     setBomNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
     setBomUnreadCount(prev => Math.max(0, prev - (notif.isRead ? 0 : 1)));
     setShowNotifications(false);
-    setActivePage('bom');
+    if ((notif.type || '').toLowerCase().startsWith('bom')) {
+      setActivePage('bom');
+    }
   };
 
   const fetchProjects = async () => {
@@ -271,6 +290,18 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const handleProjectSubmit = async (e) => {
     e.preventDefault();
     setMessage('');
+
+    if (projectForm.startDate && projectForm.expectedEndDate) {
+      if (new Date(projectForm.expectedEndDate) < new Date(projectForm.startDate)) {
+        setMessage('⚠️ Error: Expected End Date cannot be earlier than Start Date');
+        return;
+      }
+    }
+
+    if (!projectForm.budget || Number(projectForm.budget) <= 0 || isNaN(Number(projectForm.budget))) {
+      setMessage('⚠️ Error: Budget must be a positive number greater than zero');
+      return;
+    }
 
     const formData = new FormData();
     formData.append('projectName', projectForm.projectName);
@@ -808,6 +839,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     const projId = b.projectId?._id || b.projectId;
     return (b.status === 'Approved' || b.status === 'Rejected') && (myProjectIds.has(projId) || myProjectNames.has(projName));
   });
+  const directorBomsPagination = usePagination(directorReviewedBoms, 8, [directorReviewedBoms.length]);
   const myPendingRequests = requests.filter(r =>
     r.status === 'Pending' && myProjectNames.has(r.projectName || r.project)
   );
@@ -948,6 +980,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                 <DateInput
                   value={projectForm.expectedEndDate}
                   onChange={iso => setProjectForm({ ...projectForm, expectedEndDate: iso })}
+                  min={projectForm.startDate}
                   style={{ width: '100%', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '14px', outline: 'none' }}
                   required
                 />
@@ -959,6 +992,8 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                 <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '700', marginBottom: '6px' }}>BUDGET (LKR) *</label>
                 <input
                   type="number"
+                  min="1"
+                  step="any"
                   placeholder="e.g. 750000000"
                   value={projectForm.budget}
                   onChange={e => setProjectForm({ ...projectForm, budget: e.target.value })}
@@ -1080,7 +1115,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                 </tr>
               </thead>
               <tbody>
-                {projects.map((p, idx) => (
+                {projectsPagination.paginatedData.map((p, idx) => (
                   <tr key={p._id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                     <td style={{ padding: '12px', fontSize: '13px', fontWeight: '700', color: '#0d1b4b' }}>{p.projectId}</td>
                     <td style={{ padding: '12px', fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{p.projectName}</td>
@@ -1146,6 +1181,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               </tbody>
             </table>
           </div>
+          <Pagination pagination={projectsPagination} />
         </div>
       </div>
     );
@@ -1423,8 +1459,9 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                   cursor: 'default',
                   textAlign: 'left'
                 }} onClick={e => e.stopPropagation()}>
-                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px' }}>
-                    BOM Updates
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Project & BOM Updates</span>
+                    <span onClick={handleMarkAllNotificationsRead} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
                   </div>
                   {bomNotifications.length === 0 ? (
                     <div style={{ padding: '16px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
@@ -1522,12 +1559,19 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               {stats.map((s, i) => (
                 <div
                   key={i}
+                  onClick={() => {
+                    setModal(s.type);
+                    setModalSearchTerm('');
+                  }}
+                  title="Click to view detailed information"
                   style={{
                     background: 'white',
                     borderRadius: '8px',
                     padding: '20px',
                     boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                    borderTop: `4px solid ${s.color}`
+                    borderTop: `4px solid ${s.color}`,
+                    cursor: 'pointer',
+                    transition: 'transform 0.15s ease, box-shadow 0.15s ease'
                   }}
                 >
                   <div style={{ fontSize: '24px', fontWeight: '700', color: s.color }}>{s.value}</div>
@@ -1550,7 +1594,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {directorReviewedBoms.map((b, idx) => (
+                    {directorBomsPagination.paginatedData.map((b, idx) => (
                       <tr key={b._id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                         <td style={{ padding: '12px', fontSize: '13px', color: '#334155' }}>{b.bomNumber || '-'}</td>
                         <td style={{ padding: '12px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{b.projectId?.projectName || b.projectId?.name || b.projectName || '-'}</td>
@@ -1593,6 +1637,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                   </tbody>
                 </table>
               </div>
+              <Pagination pagination={directorBomsPagination} />
             </div>
           )}
 
@@ -1665,7 +1710,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <option value="">-- Choose a Project --</option>
                     {projects.map(p => (
                       <option key={p._id} value={p._id}>
-                        {p.projectId || 'Draft'} - {p.projectName || p.name}
+                        {typeof p.projectId === 'object' ? (p.projectId?.projectId || p.projectId?.name || 'Draft') : (p.projectId || 'Draft')} - {p.projectName || p.name}
                       </option>
                     ))}
                   </select>
@@ -1938,6 +1983,16 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </table>
                   </div>
 
+                  <div style={{ marginTop: '16px', marginBottom: '16px' }}>
+                    <button
+                      type="button"
+                      onClick={handleAddMaterialRow}
+                      style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
+                    >
+                      ➕ Add Material Row
+                    </button>
+                  </div>
+
                   {/* Step 7: BOM Summary Box */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px', background: '#f8fafc', padding: '20px', borderRadius: '8px', marginBottom: '24px', border: '1px solid #e2e8f0' }}>
                     <div>
@@ -2031,8 +2086,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                       </tr>
                     </thead>
                     <tbody>
-                      {boms.map((b, idx) => {
-                        console.log('BOM row data:', b);
+                      {bomsPagination.paginatedData.map((b, idx) => {
                         return (
                           <tr key={b._id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                             <td style={{ padding: '12px', fontSize: '13px', color: '#334155' }}>{b.bomNumber || '-'}</td>
@@ -2063,6 +2117,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tbody>
                   </table>
                 </div>
+                <Pagination pagination={bomsPagination} />
               </div>
             </div>
           )}
@@ -2304,7 +2359,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '20px', background: '#f8fafc', padding: '12px', borderRadius: '6px', fontSize: '13px', color: '#1e293b' }}>
-                <div><strong>Project ID:</strong> {viewingProject.projectId || 'N/A'}</div>
+                <div><strong>Project ID:</strong> {typeof viewingProject.projectId === 'object' ? (viewingProject.projectId?.projectId || viewingProject.projectId?.name || 'N/A') : (viewingProject.projectId || 'N/A')}</div>
                 <div><strong>Client Name:</strong> {viewingProject.clientName || 'N/A'}</div>
                 <div><strong>Location:</strong> {viewingProject.location || 'N/A'}</div>
                 <div><strong>Project Status:</strong> {getStatusBadge(viewingProject.status)}</div>

@@ -38,6 +38,14 @@ router.post(
   recordManualPayment
 );
 
+// Same operation under the path used by earlier clients
+router.post(
+  '/manual',
+  protect,
+  authorizeRoles('PurchaseManager', 'Admin'),
+  recordManualPayment
+);
+
 // Payment records list (feeds the Payment report)
 router.get(
   '/',

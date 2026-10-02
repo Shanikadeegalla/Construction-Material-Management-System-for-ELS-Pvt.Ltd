@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import { formatDateTime, formatDayMonth } from '../utils/dateUtils';
 import { API_BASE } from '../config';
+import Pagination, { usePagination } from '../components/Pagination';
 
 const VarianceReport = () => {
   const [reportData, setReportData] = useState([]);
@@ -92,6 +93,9 @@ const VarianceReport = () => {
   const wastageRows = filteredReport
     .filter(item => item.severity === 'Moderate' || item.severity === 'Significant')
     .sort((a, b) => (b.wastageCost || 0) - (a.wastageCost || 0));
+
+  const wastagePagination = usePagination(wastageRows, 8, [selectedProject]);
+  const variancePagination = usePagination(filteredReport, 8, [selectedProject]);
 
   const currentTotalWastageCost = filteredReport.reduce((sum, item) => sum + (item.wastageCost || 0), 0);
 
@@ -427,7 +431,7 @@ const VarianceReport = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {wastageRows.map((item, index) => {
+                    {wastagePagination.paginatedData.map((item, index) => {
                       const badgeStyle = getSeverityBadgeStyle(item.severity);
                       return (
                         <tr key={index} style={{ borderBottom: '1px solid #f1f5f9', background: index % 2 === 0 ? 'white' : '#f8fafc', transition: 'background 0.2s' }}>
@@ -453,6 +457,7 @@ const VarianceReport = () => {
                     })}
                   </tbody>
                 </table>
+                <Pagination pagination={wastagePagination} />
               </div>
             )}
           </div>
@@ -477,7 +482,7 @@ const VarianceReport = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredReport.map((item, index) => {
+                  {variancePagination.paginatedData.map((item, index) => {
                     const statusColor = getVarianceColor(item.variancePct);
                     return (
                       <tr key={index} style={{ borderBottom: '1px solid #f1f5f9', background: index % 2 === 0 ? 'white' : '#f8fafc', transition: 'background 0.2s' }}>
@@ -509,7 +514,7 @@ const VarianceReport = () => {
                       </tr>
                     );
                   })}
-                  {filteredReport.length === 0 && (
+                  {variancePagination.paginatedData.length === 0 && (
                     <tr>
                       <td colSpan="8" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>
                         No planning or usage records found for this view.
@@ -518,6 +523,7 @@ const VarianceReport = () => {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={variancePagination} />
             </div>
           </div>
         </div>

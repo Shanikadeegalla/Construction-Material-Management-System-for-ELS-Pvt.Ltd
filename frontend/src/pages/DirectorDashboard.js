@@ -6,6 +6,7 @@ import { Calendar } from 'lucide-react';
 import { formatDate, formatDateLong, formatDayMonth, formatFullDate, formatShortDate, formatTime, formatDateTime } from '../utils/dateUtils';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import Pagination, { usePagination } from '../components/Pagination';
 import {
   BarChart,
   Bar,
@@ -75,6 +76,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [versionBId, setVersionBId] = useState('');
   const [directorNote, setDirectorNote] = useState('');
 
+  const bomsPagination = usePagination(boms, 8, [boms.length]);
+  const posPagination = usePagination(pos, 8, [pos.length]);
+  const invoicesPagination = usePagination(invoices, 8, [invoices.length]);
+
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
     return {
@@ -99,8 +104,18 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
-        setNotifications(data.data);
-        setUnreadCount(data.data.filter(n => !n.isRead).length);
+        const directorTypes = ['BOM_submitted', 'BOM_SUBMITTED', 'PO_submitted', 'PO_SUBMITTED', 'Invoice_submitted', 'Payment_approval'];
+        const excludedTypes = ['MIN_EXCEEDS_BOM', 'MIN_REQUEST_SUBMITTED', 'SSR_SUBMITTED', 'SSR_TRANSFERRED', 'SSR_REJECTED', 'BOM_STOCK_CHECK_REQUIRED', 'PR_SUBMITTED', 'PR_DECLINED'];
+        
+        const filteredNotifs = (data.data || []).filter(n => {
+          if (excludedTypes.includes(n.type)) return false;
+          if (directorTypes.includes(n.type)) return true;
+          if (n.role === 'Director' || n.targetRole === 'Director') return true;
+          return n.recipientId === user?._id || n.recipientId === user?.id;
+        });
+
+        setNotifications(filteredNotifs);
+        setUnreadCount(filteredNotifs.filter(n => !n.isRead).length);
       }
     } catch (err) {
       console.error('Error fetching notifications:', err);
@@ -1068,13 +1083,13 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                   <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>Notifications</span>
                     <span onClick={async () => {
-                      for (const n of notifications) {
-                        if (!n.isRead) {
-                          await fetch(`${API_BASE}/api/notifications/${n._id}/read`, {
-                            method: 'PUT',
-                            headers: getHeaders()
-                          });
-                        }
+                      try {
+                        await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
+                          method: 'PUT',
+                          headers: getHeaders()
+                        });
+                      } catch (err) {
+                        console.error('Error marking all notifications read:', err);
                       }
                       fetchNotifications();
                     }} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
@@ -1141,12 +1156,19 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                 ].map((stat, i) => (
                   <div
                     key={i}
+                    onClick={() => {
+                      setModal(stat.type);
+                      setModalSearchTerm('');
+                    }}
+                    title="Click to view detailed information"
                     style={{
                       background: 'white',
                       borderRadius: '8px',
                       padding: '20px',
                       boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                      borderTop: `4px solid ${stat.color}`
+                      borderTop: `4px solid ${stat.color}`,
+                      cursor: 'pointer',
+                      transition: 'transform 0.15s ease, box-shadow 0.15s ease'
                     }}
                   >
                     <div style={{ fontSize: '24px', fontWeight: '700', color: stat.color }}>{stat.value}</div>
@@ -1239,12 +1261,12 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <tbody>
                       {[...pos].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5).map((po, i) => {
                         const isPending = po.status === 'Pending';
-                        const projName = po.prId?.projectName || po.prId?.project || '-';
+                        const projName = po.prId?.projectName || (typeof po.prId?.project === 'object' ? (po.prId?.project?.projectName || po.prId?.project?.name) : po.prId?.project) || '-';
                         return (
                           <tr key={po._id || i} style={{ borderBottom: '1px solid #e2e8f0', fontSize: '12px' }}>
                             <td style={{ padding: '8px 12px', fontWeight: '600', color: '#0d1b4b' }}>{po.poNumber || '-'}</td>
                             <td style={{ padding: '8px 12px', color: '#334155' }}>{projName}</td>
-                            <td style={{ padding: '8px 12px', color: '#334155' }}>{po.supplier || '-'}</td>
+                            <td style={{ padding: '8px 12px', color: '#334155' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '-') : (po.supplier || '-')}</td>
                             <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: '600', color: '#0f172a' }}>{Number(po.totalAmount || 0).toLocaleString()}</td>
                             <td style={{ padding: '8px 12px', textAlign: 'center' }}>
                               <span style={{
@@ -1308,7 +1330,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {boms.map((bom, i) => {
+                    {bomsPagination.paginatedData.map((bom, i) => {
                       return (
                         <tr key={bom._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#333' }}>{bom.bomNumber || '-'}</td>
@@ -1356,6 +1378,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={bomsPagination} />
               </div>
             </div>
           )}
@@ -1375,14 +1398,14 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {pos.map((po, i) => {
+                    {posPagination.paginatedData.map((po, i) => {
                       const isPending = po.status === 'Pending';
-                      const projName = po.prId?.projectName || po.prId?.project || '-';
+                      const projName = po.prId?.projectName || (typeof po.prId?.project === 'object' ? (po.prId?.project?.projectName || po.prId?.project?.name) : po.prId?.project) || '-';
                       return (
                         <tr key={po._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#0f172a', fontWeight: '600' }}>{po.poNumber || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{projName}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{po.supplier || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '-') : (po.supplier || '-')}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>{Number(po.totalAmount || 0).toLocaleString()}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{po.createdBy || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#64748b' }}>{formatDate(po.createdAt)}</td>
@@ -1427,6 +1450,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={posPagination} />
               </div>
             </div>
           )}
@@ -1446,7 +1470,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {invoices.map((inv, i) => {
+                    {invoicesPagination.paginatedData.map((inv, i) => {
                       const isPending = inv.status === 'Pending Approval';
                       return (
                         <tr key={inv._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
@@ -1501,6 +1525,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={invoicesPagination} />
               </div>
             </div>
           )}

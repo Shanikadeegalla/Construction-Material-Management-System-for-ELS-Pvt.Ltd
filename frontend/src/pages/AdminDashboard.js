@@ -28,6 +28,7 @@ import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort, for
 import DateInput from '../components/DateInput';
 import { API_BASE } from '../config';
 import ReportsCenter from './ReportsCenter';
+import Pagination, { usePagination } from '../components/Pagination';
 
 // Taxonomy of gate-able actions in the app, grouped by module. This mirrors the
 // backend's Permission collection (role + action -> Full/View/Partial/Approve/None).
@@ -168,6 +169,57 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [materialSearch, setMaterialSearch] = useState('');
   const [editingMaterialId, setEditingMaterialId] = useState(null);
   const [materialForm, setMaterialForm] = useState(emptyMaterialForm);
+
+  const filteredUsersList = React.useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter(u =>
+      (u.name || '').toLowerCase().includes(q) ||
+      (u.email || '').toLowerCase().includes(q) ||
+      (u.role || '').toLowerCase().includes(q)
+    );
+  }, [users, searchTerm]);
+
+  const filteredLogsList = React.useMemo(() => {
+    const q = logSearchQuery.trim().toLowerCase();
+    return auditLogs.filter(log => {
+      const matchText = !q || (
+        (log.userName || log.user?.name || log.userEmail || log.user?.email || '').toLowerCase().includes(q) ||
+        (log.action || '').toLowerCase().includes(q) ||
+        (log.details || '').toLowerCase().includes(q) ||
+        (log.ipAddress || '').toLowerCase().includes(q)
+      );
+      const matchStatus = logStatusFilter === 'All' || log.status === logStatusFilter;
+      const matchModule = logModuleFilter === 'All' || log.module === logModuleFilter;
+      return matchText && matchStatus && matchModule;
+    });
+  }, [auditLogs, logSearchQuery, logStatusFilter, logModuleFilter]);
+
+  const filteredSuppliersList = React.useMemo(() => {
+    const q = supplierSearch.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter(s =>
+      (s.name || '').toLowerCase().includes(q) ||
+      (s.supplierId || '').toLowerCase().includes(q) ||
+      (s.contactPerson || '').toLowerCase().includes(q) ||
+      (s.category || '').toLowerCase().includes(q)
+    );
+  }, [suppliers, supplierSearch]);
+
+  const filteredMaterialsList = React.useMemo(() => {
+    const q = materialSearch.trim().toLowerCase();
+    if (!q) return materialMasterList;
+    return materialMasterList.filter(m =>
+      (m.materialName || '').toLowerCase().includes(q) ||
+      (m.materialCode || '').toLowerCase().includes(q) ||
+      (m.category || '').toLowerCase().includes(q)
+    );
+  }, [materialMasterList, materialSearch]);
+
+  const usersPagination = usePagination(filteredUsersList, 8, [searchTerm]);
+  const logsPagination = usePagination(filteredLogsList, 8, [logSearchQuery, logStatusFilter, logModuleFilter]);
+  const suppliersPagination = usePagination(filteredSuppliersList, 8, [supplierSearch]);
+  const materialsPagination = usePagination(filteredMaterialsList, 8, [materialSearch]);
 
   const fetchMaterialMaster = async () => {
     try {
@@ -872,27 +924,45 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchNotifications = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`${API_BASE}/api/inventory/notifications`, {
+      if (!token) return;
+      const res = await fetch(`${API_BASE}/api/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
       if (data.success) {
-        setNotifications(data.data);
-      }
-
-      const countRes = await fetch(`${API_BASE}/api/notifications/count`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const countData = await countRes.json();
-      if (countData.success) {
-        setUnreadCount(countData.count);
+        setNotifications(data.data || []);
+        setUnreadCount((data.data || []).filter(n => !n.isRead).length);
       }
     } catch (err) {
-      setNotifications([
-        { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
-        { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
-      ]);
-      setUnreadCount(2);
+      console.error('Error fetching notifications:', err);
+    }
+  };
+
+  const handleMarkNotificationRead = async (notif) => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch(`${API_BASE}/api/notifications/${notif._id}/read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error('Error marking notification read:', err);
+    }
+    setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
+    setUnreadCount(prev => Math.max(0, prev - (notif.isRead ? 0 : 1)));
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setUnreadCount(0);
+    } catch (err) {
+      console.error('Error marking all notifications read:', err);
     }
   };
 
@@ -1841,27 +1911,33 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
               {showNotifications && (
                 <div style={{ position: 'absolute', top: '48px', right: '0', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)', width: '320px', maxHeight: '400px', overflowY: 'auto', zIndex: 100, cursor: 'default', padding: '8px' }} onClick={e => e.stopPropagation()}>
                   <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>System Inventory Alerts</span>
-                    <span style={{ fontSize: '11px', background: '#fee2e2', color: '#ef4444', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>Stock alerts</span>
+                    <span>Admin Notifications</span>
+                    <span onClick={handleMarkAllNotificationsRead} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
                   </div>
                   {notifications.length === 0 ? (
                     <div style={{ padding: '24px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
-                      All stock thresholds normal.
+                      No new notifications.
                     </div>
                   ) : (
                     notifications.map((notif, idx) => (
-                      <div key={idx} style={{ padding: '12px', borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9', fontSize: '13px', borderRadius: '8px', transition: 'background 0.2s', ':hover': { background: '#f8fafc' } }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
-                          <span style={{ color: '#0f172a' }}>{notif.materialName}</span>
-                          <span style={{ color: notif.alertLevel === 'Critical' ? '#ef4444' : '#f59e0b', background: notif.alertLevel === 'Critical' ? '#fef2f2' : '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>
-                            {notif.alertLevel}
-                          </span>
+                      <div
+                        key={idx}
+                        onClick={() => handleMarkNotificationRead(notif)}
+                        style={{
+                          padding: '12px',
+                          borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9',
+                          fontSize: '13px',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          background: notif.isRead ? 'white' : '#f8fafc',
+                          transition: 'background 0.2s'
+                        }}
+                      >
+                        <div style={{ color: notif.isRead ? '#475569' : '#0f172a', fontWeight: notif.isRead ? '400' : '600' }}>
+                          {notif.message || notif.materialName}
                         </div>
-                        <div style={{ color: '#475569', fontSize: '12px' }}>
-                          Current: <strong>{notif.currentQty}</strong> | Threshold: {notif.minimumStock}
-                        </div>
-                        <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <span>📍</span> {notif.location}
+                        <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px' }}>
+                          {formatFullDate(notif.createdAt)}
                         </div>
                       </div>
                     ))
@@ -2029,12 +2105,12 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredUsers.length === 0 ? (
+                        {usersPagination.paginatedData.length === 0 ? (
                           <tr>
                             <td colSpan="5" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No users match your search.</td>
                           </tr>
                         ) : (
-                          filteredUsers.map((u, i) => {
+                          usersPagination.paginatedData.map((u, i) => {
                             const rColor = getRoleColor(u.role);
                             return (
                               <tr key={u._id || i} style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#f8fafc', transition: 'background 0.2s' }} className="table-row">
@@ -2059,6 +2135,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         )}
                       </tbody>
                     </table>
+                    <Pagination pagination={usersPagination} />
                   </div>
                 </div>
               )}
@@ -2800,12 +2877,12 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredLogs.length === 0 ? (
+                  {logsPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="5" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No audit logs matching selection.</td>
                     </tr>
                   ) : (
-                    filteredLogs.map((log, i) => (
+                    logsPagination.paginatedData.map((log, i) => (
                       <tr key={i} style={{ borderBottom: '1px solid #f1f5f9', background: i % 2 === 0 ? 'white' : '#f8fafc' }}>
                         <td style={{ padding: '14px 24px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>{log.userName || log.userId?.name || 'System'}</td>
                         <td style={{ padding: '14px 24px', fontSize: '13px', color: '#334155' }}>{log.action}</td>
@@ -2830,7 +2907,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                   )}
                 </tbody>
               </table>
-
+              <Pagination pagination={logsPagination} />
             </div>
           )}
 
@@ -2999,10 +3076,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {suppliers.filter(s => {
-                      const q = supplierSearch.toLowerCase();
-                      return s.supplierId?.toLowerCase().includes(q) || s.name?.toLowerCase().includes(q) || s.contactPerson?.toLowerCase().includes(q);
-                    }).map((s, i) => {
+                    {suppliersPagination.paginatedData.map((s, i) => {
                       return (
                         <tr key={s._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                           <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#0d1b4b' }}>{s.supplierId}</td>
@@ -3037,16 +3111,14 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         </tr>
                       );
                     })}
-                    {suppliers.filter(s => {
-                      const q = supplierSearch.toLowerCase();
-                      return s.supplierId?.toLowerCase().includes(q) || s.contactPerson?.toLowerCase().includes(q);
-                    }).length === 0 && (
+                    {filteredSuppliersList.length === 0 && (
                       <tr>
-                        <td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No suppliers match your search criteria.</td>
+                        <td colSpan="7" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No suppliers match your search criteria.</td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={suppliersPagination} />
               </div>
             </div>
           )}
@@ -3216,10 +3288,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {materialMasterList.filter(m => {
-                      const q = materialSearch.toLowerCase();
-                      return m.materialCode?.toLowerCase().includes(q) || m.materialName?.toLowerCase().includes(q) || m.category?.toLowerCase().includes(q);
-                    }).map((m, i) => (
+                    {materialsPagination.paginatedData.map((m, i) => (
                       <tr key={m._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                         <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#0d1b4b' }}>{m.materialCode}</td>
                         <td style={{ padding: '14px 16px', fontSize: '13px' }}>{m.materialName}</td>
@@ -3251,16 +3320,14 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         </td>
                       </tr>
                     ))}
-                    {materialMasterList.filter(m => {
-                      const q = materialSearch.toLowerCase();
-                      return m.materialCode?.toLowerCase().includes(q) || m.materialName?.toLowerCase().includes(q) || m.category?.toLowerCase().includes(q);
-                    }).length === 0 && (
+                    {filteredMaterialsList.length === 0 && (
                       <tr>
                         <td colSpan="7" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>No materials match your search criteria.</td>
                       </tr>
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={materialsPagination} />
               </div>
             </div>
           )}

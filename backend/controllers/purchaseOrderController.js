@@ -184,8 +184,12 @@ export const createPurchaseOrder = async (req, res) => {
     try {
       const directors = await User.find({ role: 'Director' });
       const msg = `New Purchase Order ${po.poNumber} (${createdBy}) submitted - awaiting approval`;
-      for (const d of directors) {
-        await createNotificationHelper(d._id, msg, 'PO_SUBMITTED', '/director-dashboard');
+      if (directors.length > 0) {
+        for (const d of directors) {
+          await createNotificationHelper(d._id, msg, 'PO_SUBMITTED', '/director-dashboard', 'Director', 'Director');
+        }
+      } else {
+        await createNotificationHelper(null, msg, 'PO_SUBMITTED', '/director-dashboard', 'Director', 'Director');
       }
     } catch (nErr) {
       console.error('Error creating PO submission notifications:', nErr);

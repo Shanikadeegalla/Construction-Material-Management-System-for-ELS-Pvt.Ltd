@@ -333,10 +333,22 @@ export const confirmPaymentSession = async (req, res) => {
 // @access  Private (PurchaseManager / Admin)
 export const recordManualPayment = async (req, res) => {
   try {
-    const { invoiceId, method, reference, bankName, paidAt, notes } = req.body;
+    const { purchaseOrderId, method, bankName, paidAt, notes, chequeNumber, chequeDate } = req.body;
+    const reference = req.body.reference || chequeNumber;
+    let { invoiceId } = req.body;
+
+    // A caller that only knows the Purchase Order pays that PO's approved invoice.
+    if (!invoiceId && purchaseOrderId) {
+      const poInvoice = await Invoice.findOne({ po: purchaseOrderId, status: 'Approved' })
+        || await Invoice.findOne({ po: purchaseOrderId }).sort({ createdAt: -1 });
+      if (!poInvoice) {
+        return res.status(400).json({ success: false, message: 'This Purchase Order has no supplier invoice yet. An invoice must be recorded and approved by the Director before payment.' });
+      }
+      invoiceId = poInvoice._id;
+    }
 
     if (!invoiceId) {
-      return res.status(400).json({ success: false, message: 'invoiceId is required.' });
+      return res.status(400).json({ success: false, message: 'invoiceId or purchaseOrderId is required.' });
     }
     if (!['Cash', 'Cheque'].includes(method)) {
       return res.status(400).json({ success: false, message: 'Payment method must be Cash or Cheque.' });
@@ -380,6 +392,9 @@ export const recordManualPayment = async (req, res) => {
         method,
         reference: reference ? String(reference).trim() : '',
         bankName: method === 'Cheque' && bankName ? String(bankName).trim() : '',
+        chequeNumber: method === 'Cheque' && reference ? String(reference).trim() : '',
+        ...(method === 'Cheque' && chequeDate ? { chequeDate: new Date(chequeDate) } : {}),
+        recordedBy: req.user ? req.user._id : undefined,
         notes: notes || '',
         paidAt: paidDate,
         paidBy: req.user ? req.user._id : undefined,

@@ -56,8 +56,12 @@ export const createInvoice = async (req, res) => {
     try {
       const directors = await User.find({ role: 'Director' });
       const msg = `New invoice ${invoice.invoiceNumber} submitted for payment approval`;
-      for (const d of directors) {
-        await createNotificationHelper(d._id, msg, 'Invoice_submitted', '/director-dashboard');
+      if (directors.length > 0) {
+        for (const d of directors) {
+          await createNotificationHelper(d._id, msg, 'Invoice_submitted', '/director-dashboard', 'Director', 'Director');
+        }
+      } else {
+        await createNotificationHelper(null, msg, 'Invoice_submitted', '/director-dashboard', 'Director', 'Director');
       }
     } catch (nErr) {
       console.error('Error creating invoice submission notifications:', nErr);

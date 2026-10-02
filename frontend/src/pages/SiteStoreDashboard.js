@@ -5,6 +5,7 @@ import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime
 import DateInput from '../components/DateInput';
 import SettingsPage from './SettingsPage';
 import { API_BASE } from '../config';
+import Pagination, { usePagination } from '../components/Pagination';
 
 function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -16,6 +17,8 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
 
   const [view, setView] = useState('dashboard'); // 'dashboard', 'site-inventory', 'request-materials', 'issue-usage'
   const [showNotifications, setShowNotifications] = useState(false);
+  const [userNotifications, setUserNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [materials, setMaterials] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -24,6 +27,16 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   // Site Inventory screen filters
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('All');
+
+  const siteFilteredMaterials = React.useMemo(() => {
+    return materials.filter(m => {
+      const matchesSearch = (m.name || '').toLowerCase().includes(inventorySearchQuery.toLowerCase());
+      const matchesCat = inventoryCategoryFilter === 'All' || m.category === inventoryCategoryFilter;
+      return matchesSearch && matchesCat;
+    });
+  }, [materials, inventorySearchQuery, inventoryCategoryFilter]);
+
+  const siteInventoryPagination = usePagination(siteFilteredMaterials, 8, [inventorySearchQuery, inventoryCategoryFilter]);
 
   // Phase 8 - project selection (drives which project's Site Store inventory/history is shown)
   const [projects, setProjects] = useState([]);
@@ -73,8 +86,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   });
   const [issueSubmitting, setIssueSubmitting] = useState(false);
 
-  // Material Issue & Usage History, fetched from the backend (MaterialUsage
-  // records created by this screen), scoped to the selected project.
   const [issueHistory, setIssueHistory] = useState([]);
   const [expandedHistoryId, setExpandedHistoryId] = useState(null);
 
@@ -92,6 +103,9 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   // overuse warning returned by the last Material Issue submission.
   const [planVsActual, setPlanVsActual] = useState([]);
   const [issueWarning, setIssueWarning] = useState('');
+  const myRequestsPagination = usePagination(myRequests, 8, [myRequests.length]);
+  const issueHistoryPagination = usePagination(issueHistory, 8, [issueHistory.length]);
+  const minsPagination = usePagination(mins, 8, [mins.length]);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -345,6 +359,51 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
+  const fetchUserNotifications = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      if (!token) return;
+      const res = await fetch(`${API_BASE}/api/notifications`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUserNotifications(data.data || []);
+        setUnreadCount((data.data || []).filter(n => !n.isRead).length);
+      }
+    } catch (err) {
+      console.error('Error fetching user notifications:', err);
+    }
+  };
+
+  const handleMarkNotificationRead = async (notif) => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch(`${API_BASE}/api/notifications/${notif._id}/read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error('Error marking notification read:', err);
+    }
+    setUserNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
+    setUnreadCount(prev => Math.max(0, prev - (notif.isRead ? 0 : 1)));
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setUserNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      setUnreadCount(0);
+    } catch (err) {
+      console.error('Error marking all notifications read:', err);
+    }
+  };
+
   useEffect(() => {
     fetchMaterials();
     fetchProjects();
@@ -353,8 +412,8 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     fetchMyRequests();
     fetchIssueHistory();
     fetchTransferNotes();
-    fetchPersistedNotifications();
     fetchPlanVsActual();
+    fetchUserNotifications();
   }, [selectedProjId]);
 
   useEffect(() => {
@@ -366,7 +425,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
       fetchMINs();
       fetchMyRequests();
       fetchTransferNotes();
-      fetchPersistedNotifications();
     }, 10000);
     return () => clearInterval(interval);
   }, [selectedProjId]);
@@ -706,12 +764,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     consumedByMaterial[u.materialName] = (consumedByMaterial[u.materialName] || 0) + Number(u.actualQty || 0);
   });
 
-  const siteFilteredMaterials = materials.filter(m => {
-    const matchesSearch = m.name.toLowerCase().includes(inventorySearchQuery.toLowerCase());
-    const matchesCategory = inventoryCategoryFilter === 'All' || m.category === inventoryCategoryFilter;
-    return matchesSearch && matchesCategory;
-  });
-
   return (
     <div style={styles.dashboardLayout}>
       {/* Navigation Sidebar */}
@@ -785,7 +837,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                 {/* Notification Bell */}
                 <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
                   <span style={{ fontSize: '18px' }}>🔔</span>
-                  {(materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length + unreadNotifications.length) > 0 && (
+                  {unreadCount > 0 && (
                     <span style={{
                       position: 'absolute',
                       top: '2px',
@@ -801,7 +853,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       alignItems: 'center',
                       justifyContent: 'center'
                     }}>
-                      {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length + unreadNotifications.length}
+                      {unreadCount}
                     </span>
                   )}
                   {showNotifications && (
@@ -822,44 +874,31 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       textAlign: 'left'
                     }} onClick={e => e.stopPropagation()}>
                       <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>Notifications</span>
-                        <span style={{ fontSize: '11px', background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>{unreadNotifications.length} unread</span>
+                        <span>Site Store Notifications</span>
+                        <span onClick={handleMarkAllNotificationsRead} style={{ fontSize: '11px', color: '#2563eb', cursor: 'pointer', fontWeight: '600' }}>Mark all as read</span>
                       </div>
-                      {persistedNotifications.length === 0 ? (
-                        <div style={{ padding: '16px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
-                          No notifications yet.
-                        </div>
-                      ) : (
-                        persistedNotifications.slice(0, 15).map(n => (
-                          <div
-                            key={n._id}
-                            onClick={() => { if (!n.isRead) handleMarkNotifRead(n._id); }}
-                            style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9', fontSize: '12.5px', cursor: n.isRead ? 'default' : 'pointer', background: n.isRead ? 'white' : 'rgba(37, 99, 235, 0.06)' }}
-                          >
-                            <div style={{ color: '#0f172a', fontWeight: n.isRead ? '400' : '600' }}>{n.message}</div>
-                            <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '3px' }}>{formatDateTime(n.createdAt)}</div>
-                          </div>
-                        ))
-                      )}
-                      <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>Site Store Stock Alerts</span>
-                        <span style={{ fontSize: '11px', background: '#fee2e2', color: '#ef4444', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>Alerts</span>
-                      </div>
-                      {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length === 0 ? (
+                      {userNotifications.length === 0 ? (
                         <div style={{ padding: '24px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
-                          All site stock levels normal.
+                          No new notifications.
                         </div>
                       ) : (
-                        materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).map((notif, idx) => (
-                          <div key={idx} style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
-                              <span style={{ color: '#0f172a' }}>{notif.materialName || notif.name}</span>
-                              <span style={{ color: '#ef4444', background: '#fef2f2', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>
-                                Low Stock
-                              </span>
+                        userNotifications.map((notif, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => handleMarkNotificationRead(notif)}
+                            style={{
+                              padding: '12px',
+                              borderBottom: idx === userNotifications.length - 1 ? 'none' : '1px solid #f1f5f9',
+                              fontSize: '13px',
+                              cursor: 'pointer',
+                              background: notif.isRead ? 'white' : '#f8fafc'
+                            }}
+                          >
+                            <div style={{ color: notif.isRead ? '#475569' : '#0f172a', fontWeight: notif.isRead ? '400' : '600' }}>
+                              {notif.message}
                             </div>
-                            <div style={{ color: '#475569', fontSize: '12px' }}>
-                              Current Qty: <strong>{notif.quantity} {notif.unit}</strong> (Reorder: {notif.reorderLevel ?? 50})
+                            <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px' }}>
+                              {formatFullDate(notif.createdAt)}
                             </div>
                           </div>
                         ))
@@ -1022,7 +1061,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {mins.map(m => (
+                    {minsPagination.paginatedData.map(m => (
                       <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ ...styles.td, fontWeight: 'bold' }}>{m.minNumber}</td>
                         <td style={styles.td}>
@@ -1055,6 +1094,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tbody>
                 </table>
               )}
+              <Pagination pagination={minsPagination} />
             </div>
           </div>
         )}
@@ -1136,7 +1176,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {siteFilteredMaterials.map(m => {
+                    {siteInventoryPagination.paginatedData.map(m => {
                       const status = inventoryMaterialStatus(m);
                       return (
                         <tr key={m._id} style={{ borderBottom: '1px solid #eee', backgroundColor: status.tier !== 'NORMAL' ? 'rgba(239,68,68,0.08)' : 'white' }}>
@@ -1159,6 +1199,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tbody>
                 </table>
               )}
+              <Pagination pagination={siteInventoryPagination} />
             </div>
 
             {/* In-Transit Material Transfer Notes (Main Store -> this Site Store) */}
@@ -1545,12 +1586,12 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {myRequests.length === 0 ? (
+                  {myRequestsPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="7" style={styles.emptyState}>No material requests submitted yet.</td>
                     </tr>
                   ) : (
-                    myRequests.map(r => {
+                    myRequestsPagination.paginatedData.map(r => {
                       const statusStyle = {
                         Pending: { bg: '#fff3e0', color: '#b7791f' },
                         Processing: { bg: '#e3f2fd', color: '#1565c0' },
@@ -1598,6 +1639,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={myRequestsPagination} />
             </div>
           </div>
         )}
@@ -1799,12 +1841,12 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {issueHistory.length === 0 ? (
+                  {issueHistoryPagination.paginatedData.length === 0 ? (
                     <tr>
                       <td colSpan="9" style={{ padding: '24px', textAlign: 'center', color: '#999' }}>No material issue & usage records found.</td>
                     </tr>
                   ) : (
-                    issueHistory.map((item, i) => (
+                    issueHistoryPagination.paginatedData.map((item, i) => (
                       <React.Fragment key={item._id || i}>
                         <tr style={{ borderBottom: '1px solid #eee' }}>
                           <td style={styles.tdBold}>{item.minNumber || '-'}</td>
@@ -1843,6 +1885,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={issueHistoryPagination} />
             </div>
           </div>
         )}

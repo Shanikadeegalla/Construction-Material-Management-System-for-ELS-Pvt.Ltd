@@ -43,13 +43,24 @@ const paymentSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  chequeNumber: {
+    type: String,
+    default: ''
+  },
+  chequeDate: {
+    type: Date
+  },
+  recordedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
   notes: {
     type: String,
     default: ''
   },
   status: {
     type: String,
-    enum: ['pending', 'paid', 'failed'],
+    enum: ['pending', 'paid', 'completed', 'failed'],
     default: 'pending'
   },
   paidAt: {

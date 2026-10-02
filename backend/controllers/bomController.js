@@ -202,8 +202,12 @@ export const createBOM = async (req, res) => {
           const pmName = req.user ? req.user.name : 'Project Manager';
           const directors = await User.find({ role: 'Director' });
           const msg = `New BOM ${draftBom.version} submitted for ${projectName} by ${pmName} - awaiting approval`;
-          for (const d of directors) {
-            await createNotificationHelper(d._id, msg, 'BOM_SUBMITTED', '/director-dashboard');
+          if (directors.length > 0) {
+            for (const d of directors) {
+              await createNotificationHelper(d._id, msg, 'BOM_SUBMITTED', '/director-dashboard', 'Director', 'Director');
+            }
+          } else {
+            await createNotificationHelper(null, msg, 'BOM_SUBMITTED', '/director-dashboard', 'Director', 'Director');
           }
         } catch (nErr) {
           console.error('Error creating submission notifications:', nErr);
@@ -240,8 +244,12 @@ export const createBOM = async (req, res) => {
           const pmName = req.user ? req.user.name : 'Project Manager';
           const directors = await User.find({ role: 'Director' });
           const msg = `New BOM ${bom.version} submitted for ${projectName} by ${pmName} - awaiting approval`;
-          for (const d of directors) {
-            await createNotificationHelper(d._id, msg, 'BOM_SUBMITTED', '/director-dashboard');
+          if (directors.length > 0) {
+            for (const d of directors) {
+              await createNotificationHelper(d._id, msg, 'BOM_SUBMITTED', '/director-dashboard', 'Director', 'Director');
+            }
+          } else {
+            await createNotificationHelper(null, msg, 'BOM_SUBMITTED', '/director-dashboard', 'Director', 'Director');
           }
         } catch (nErr) {
           console.error('Error creating submission notifications:', nErr);
