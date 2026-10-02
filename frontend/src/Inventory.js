@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE } from './config';
 
 function Inventory() {
   const [materials, setMaterials] = useState([]);
@@ -15,7 +16,7 @@ function Inventory() {
 
   const fetchMaterials = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/inventory');
+      const res = await fetch(`${API_BASE}/api/inventory`);
       const data = await res.json();
       setMaterials(data);
     } catch (err) {
@@ -26,7 +27,7 @@ function Inventory() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://localhost:5000/api/inventory/add', {
+      const res = await fetch(`${API_BASE}/api/inventory/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)

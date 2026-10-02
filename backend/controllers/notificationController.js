@@ -1,4 +1,5 @@
 import Notification from '../models/Notification.js';
+import User from '../models/userModel.js';
 
 // @desc    Get user notifications
 // @route   GET /api/notifications
@@ -65,5 +66,21 @@ export const createNotificationHelper = async (recipientId, message, type = 'inf
   } catch (err) {
     console.error('Error creating notification:', err);
     return null;
+  }
+};
+
+// Sends the same notification to every active user holding one of the given
+// roles. Never throws - a failed notification must not fail the business
+// transaction that triggered it.
+export const notifyRoles = async (roles, message, type = 'info', link = '') => {
+  try {
+    const recipients = await User.find({ role: { $in: roles }, status: { $ne: false } }).select('_id');
+    for (const r of recipients) {
+      await createNotificationHelper(r._id, message, type, link);
+    }
+    return recipients.length;
+  } catch (err) {
+    console.error('Error notifying roles:', err);
+    return 0;
   }
 };

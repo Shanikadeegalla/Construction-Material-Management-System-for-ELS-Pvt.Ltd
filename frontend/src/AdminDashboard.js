@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { formatShortDate } from './utils/dateUtils';
+import { API_BASE } from './config';
 
 const AdminDashboard = ({ user, onLogout }) => {
   const [activePage, setActivePage] = useState('dashboard');
@@ -43,7 +44,7 @@ const AdminDashboard = ({ user, onLogout }) => {
   const fetchUsers = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/users', {
+      const res = await fetch(`${API_BASE}/api/users`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -61,7 +62,7 @@ const AdminDashboard = ({ user, onLogout }) => {
   const handleAddUser = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://localhost:5000/api/auth/register', {
+      const res = await fetch(`${API_BASE}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newUser)

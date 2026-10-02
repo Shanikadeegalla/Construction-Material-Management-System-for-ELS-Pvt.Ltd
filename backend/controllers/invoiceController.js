@@ -1,6 +1,7 @@
 import Invoice from '../models/Invoice.js';
 import User from '../models/userModel.js';
-import { createNotificationHelper } from './notificationController.js';
+import PurchaseOrder from '../models/PurchaseOrder.js';
+import { createNotificationHelper, notifyRoles } from './notificationController.js';
 
 const generateNextInvoiceNumber = async () => {
   let next = (await Invoice.countDocuments()) + 1;
@@ -21,6 +22,18 @@ export const createInvoice = async (req, res) => {
 
     if (!supplier || !po || !amount) {
       return res.status(400).json({ success: false, message: 'Supplier, purchase order and amount are required.' });
+    }
+    if (!(Number(amount) > 0)) {
+      return res.status(400).json({ success: false, message: 'Invoice amount must be greater than 0.' });
+    }
+
+    // An invoice is only payable for goods that have actually arrived.
+    const poDoc = await PurchaseOrder.findById(po);
+    if (!poDoc) {
+      return res.status(404).json({ success: false, message: 'Purchase Order not found.' });
+    }
+    if (!grn && poDoc.status !== 'Delivered') {
+      return res.status(400).json({ success: false, message: 'An invoice can only be recorded against a delivered Purchase Order or a GRN.' });
     }
 
     const invoiceNumber = await generateNextInvoiceNumber();
@@ -96,15 +109,11 @@ export const getInvoiceById = async (req, res) => {
   }
 };
 
+// The Purchase Manager acts on the decision (pays an approved invoice), the
+// Main Store Officer who submitted the invoice is kept informed.
 const notifyInvoiceSubmitters = async (invoice, msg, type) => {
-  try {
-    const recipients = await User.find({ role: { $in: ['MainStoreOfficer', 'PurchaseManager'] } });
-    for (const r of recipients) {
-      await createNotificationHelper(r._id, msg, type, '/main-store-dashboard');
-    }
-  } catch (nErr) {
-    console.error('Error creating invoice payment notifications:', nErr);
-  }
+  await notifyRoles(['PurchaseManager'], msg, type, '/purchase-orders');
+  await notifyRoles(['MainStoreOfficer'], msg, type, '/main-store-dashboard');
 };
 
 // @desc    Approve an invoice for payment (Director sign-off)
@@ -115,19 +124,25 @@ export const approveInvoicePayment = async (req, res) => {
     const approvedBy = req.user ? req.user.name : 'Director';
     const { note } = req.body;
 
-    const invoice = await Invoice.findByIdAndUpdate(
-      req.params.id,
+    // Only an invoice still waiting on the Director can be approved - this
+    // stops an already Paid/Rejected invoice being reopened and paid twice.
+    const invoice = await Invoice.findOneAndUpdate(
+      { _id: req.params.id, status: 'Pending Approval' },
       { status: 'Approved', approvedBy, approvedAt: new Date(), rejectionReason: note || '' },
       { new: true }
     );
 
     if (!invoice) {
-      return res.status(404).json({ success: false, message: 'Invoice not found.' });
+      const exists = await Invoice.exists({ _id: req.params.id });
+      if (!exists) {
+        return res.status(404).json({ success: false, message: 'Invoice not found.' });
+      }
+      return res.status(400).json({ success: false, message: 'Only invoices pending approval can be approved.' });
     }
 
     await notifyInvoiceSubmitters(
       invoice,
-      `Invoice ${invoice.invoiceNumber} approved for payment by Director${approvedBy ? ` (${approvedBy})` : ''}`,
+      `Invoice ${invoice.invoiceNumber} approved for payment by Director${approvedBy ? ` (${approvedBy})` : ''} - ready to be paid`,
       'Invoice_approved'
     );
 
@@ -145,14 +160,18 @@ export const rejectInvoicePayment = async (req, res) => {
     const approvedBy = req.user ? req.user.name : 'Director';
     const { rejectionReason } = req.body;
 
-    const invoice = await Invoice.findByIdAndUpdate(
-      req.params.id,
+    const invoice = await Invoice.findOneAndUpdate(
+      { _id: req.params.id, status: 'Pending Approval' },
       { status: 'Rejected', approvedBy, rejectionReason: rejectionReason || 'No reason provided' },
       { new: true }
     );
 
     if (!invoice) {
-      return res.status(404).json({ success: false, message: 'Invoice not found.' });
+      const exists = await Invoice.exists({ _id: req.params.id });
+      if (!exists) {
+        return res.status(404).json({ success: false, message: 'Invoice not found.' });
+      }
+      return res.status(400).json({ success: false, message: 'Only invoices pending approval can be rejected.' });
     }
 
     await notifyInvoiceSubmitters(
@@ -180,8 +199,12 @@ export const markInvoicePaid = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Only approved invoices can be marked as paid.' });
     }
 
+    // Kept for backwards compatibility; payments are normally recorded through
+    // POST /api/payments/record (Cash/Cheque) or Stripe checkout, both of
+    // which also create the Payment record this shortcut does not.
     invoice.status = 'Paid';
     invoice.paidAt = new Date();
+    invoice.paymentMethod = req.body.paymentMethod || 'Cash';
     await invoice.save();
 
     res.status(200).json({ success: true, message: 'Invoice marked as paid!', data: invoice });

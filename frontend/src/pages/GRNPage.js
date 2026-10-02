@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { formatShortDate } from '../utils/dateUtils';
+import { API_BASE } from '../config';
 
 function GRNPage({ user }) {
   const [grns, setGrns] = useState([]);
@@ -17,7 +18,7 @@ function GRNPage({ user }) {
     { material: '', expectedQty: '', receivedQty: '', condition: 'Good' }
   ]);
 
-  const API_INVENTORY_URL = 'http://localhost:5000/api/inventory';
+  const API_INVENTORY_URL = `${API_BASE}/api/inventory`;
 
   // Fetch GRNs and Materials
   const fetchData = async () => {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE } from '../config';
 
 function SupplierManagement() {
   const [suppliers, setSuppliers] = useState([]);
@@ -29,7 +30,7 @@ function SupplierManagement() {
     status: 'Active'
   });
 
-  const API_SUPPLIER_URL = 'http://localhost:5000/api/suppliers';
+  const API_SUPPLIER_URL = `${API_BASE}/api/suppliers`;
 
   // Fetch suppliers
   const fetchSuppliers = async () => {

@@ -1,0 +1,231 @@
+// End-to-end check of FR4-FR6 against a throwaway database. Run with cwd = backend.
+import { pathToFileURL } from 'url';
+import path from 'path';
+import fs from 'fs';
+
+const TEST_DB = 'ConstructionDB_e2e_tmp';
+const envText = fs.readFileSync('.env', 'utf8');
+const uri = envText.match(/^MONGO_URI=(.*)$/m)[1].trim();
+const m = uri.match(/^(mongodb(?:\+srv)?:\/\/[^/]+)\/([^?]*)(\?.*)?$/);
+if (!m) throw new Error('Could not parse MONGO_URI');
+if (m[2] === TEST_DB) throw new Error('refusing: already test db');
+process.env.MONGO_URI = `${m[1]}/${TEST_DB}${m[3] || ''}`;
+process.env.PORT = '5077';
+process.env.SMTP_USER = '';
+process.env.SMTP_PASS = '';
+process.env.NODE_ENV = 'test';
+
+const imp = (rel) => import(pathToFileURL(path.resolve(rel)).href);
+const mongoose = (await imp('node_modules/mongoose/index.js')).default;
+await imp('server.js');
+const User = (await imp('models/userModel.js')).default;
+const Project = (await imp('models/Project.js')).default;
+const Supplier = (await imp('models/Supplier.js')).default;
+const ItemMaster = (await imp('models/ItemMaster.js')).default;
+const Permission = (await imp('models/Permission.js')).default;
+const Notification = (await imp('models/Notification.js')).default;
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+while (mongoose.connection.readyState !== 1) await sleep(300);
+if (mongoose.connection.name !== TEST_DB) throw new Error('wrong db: ' + mongoose.connection.name);
+console.log('connected to', mongoose.connection.name);
+
+let pass = 0, fail = 0;
+const check = (name, cond, extra = '') => {
+  if (cond) { pass++; console.log('  PASS', name); }
+  else { fail++; console.log('  FAIL', name, extra); }
+};
+
+try {
+  // wait for seeding (roles, permissions, item master) to settle
+  let prev = -1;
+  for (let i = 0; i < 120; i++) {
+    const c = (await Permission.countDocuments()) + (await ItemMaster.countDocuments());
+    if (c > 0 && c === prev) break;
+    prev = c; await sleep(2500);
+  }
+  console.log('seeded: permissions', await Permission.countDocuments(), 'items', await ItemMaster.countDocuments());
+
+  const base = 'http://localhost:5077/api';
+  const roles = { dir: 'Director', pm: 'ProjectManager', buy: 'PurchaseManager', main: 'MainStoreOfficer', site: 'SiteStoreOfficer' };
+  const users = {}, tokens = {};
+  for (const [k, role] of Object.entries(roles)) {
+    users[k] = await User.create({ name: `E2E ${role}`, email: `e2e_${k}@test.lk`, password: 'Test@12345', role, employeeId: `E2E-${k}` });
+    const r = await fetch(`${base}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `e2e_${k}@test.lk`, password: 'Test@12345' }) });
+    const d = await r.json();
+    tokens[k] = d.data?.token;
+    if (!tokens[k]) throw new Error('login failed for ' + k + ': ' + JSON.stringify(d));
+  }
+  const api = async (who, method, url, body) => {
+    const res = await fetch(`${base}${url}`, { method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens[who]}` }, body: body ? JSON.stringify(body) : undefined });
+    const ct = res.headers.get('content-type') || '';
+    const data = ct.includes('json') ? await res.json() : { _binary: (await res.arrayBuffer()).byteLength, _type: ct };
+    return { status: res.status, data };
+  };
+  const notifs = async (k, type) => Notification.find({ recipientId: users[k]._id, ...(type ? { type } : {}) });
+
+  const project = await Project.create({ projectId: 'PRJ-E2E-001', projectName: 'E2E Tower', clientName: 'Client', location: 'Colombo', startDate: new Date(), expectedEndDate: new Date(Date.now() + 9e9), budget: 5000000, createdBy: users.pm._id, status: 'Active' });
+  const supplier = await Supplier.create({ name: 'E2E Supplier', phone: '0711234567', category: 'Other', supplierId: 'SUP-E2E-1' }).catch(async () => Supplier.create({ name: 'E2E Supplier', phone: '0711234567', category: 'Other' }));
+  const [im1, im2] = await ItemMaster.find({ status: 'Active' }).limit(2);
+  const R = im1.reorderLevel;
+  const P1 = R + 50, P2 = 10;
+  console.log(`materials: ${im1.materialName} (reorder ${R}, min ${im1.minimumStock}), ${im2.materialName}`);
+
+  console.log('\n[BOM -> approve -> Main Store notified]');
+  let r = await api('pm', 'POST', '/bom', { projectId: project._id, status: 'Submitted', materials: [{ materialId: im1._id, plannedQty: P1 }, { materialId: im2._id, plannedQty: P2 }] });
+  check('BOM submitted', r.status < 300, JSON.stringify(r.data));
+  const bomId = r.data.data._id;
+  r = await api('dir', 'PUT', `/bom/${bomId}/approve`, {});
+  check('BOM approved', r.status === 200, JSON.stringify(r.data));
+  check('Main Store notified of approved BOM', (await notifs('main', 'BOM_STOCK_CHECK_REQUIRED')).length === 1);
+  r = await api('main', 'GET', `/bom/${bomId}/stock-check`);
+  check('BOM stock visibility shows shortage', r.data.data?.[0]?.shortage === P1, JSON.stringify(r.data.data?.[0]));
+
+  console.log('\n[PR -> PO -> Director approval]');
+  r = await api('main', 'POST', '/purchase-requests/from-bom', { bomId, materials: [{ materialId: im1._id, quantity: P1 }, { materialId: im2._id, quantity: P2 }] });
+  check('PR created from BOM shortage', r.status === 201, JSON.stringify(r.data));
+  const pr = r.data.data;
+  check('Purchase Manager notified of PR', (await notifs('buy', 'PR_SUBMITTED')).length === 1);
+  const items = pr.materials.map(x => ({ materialName: x.materialName, quantity: x.quantity, unit: x.unit, unitPrice: 100 }));
+  const total = items.reduce((s, i) => s + i.quantity * 100, 0);
+  r = await api('buy', 'POST', '/purchase-orders', { prId: pr._id, supplier: String(supplier._id), items, totalAmount: total });
+  check('PO created', r.status === 201, JSON.stringify(r.data));
+  const po = r.data.data;
+  check('Director notified of PO', (await notifs('dir', 'PO_SUBMITTED')).length === 1);
+  r = await api('dir', 'PUT', `/purchase-orders/${po._id}/approve`, {});
+  check('PO approved', r.status === 200);
+  check('Purchase Manager notified PO approved', (await notifs('buy', 'PO_approved')).length === 1);
+  check('Main Store notified PO approved', (await notifs('main', 'PO_approved')).length === 1);
+  r = await api('buy', 'PUT', `/purchase-orders/${po._id}/status`, { status: 'Sent' });
+  check('PO marked Sent', r.status === 200, JSON.stringify(r.data));
+
+  console.log('\n[GRN -> invoice -> Director approval -> payment]');
+  r = await api('main', 'POST', '/invoices', { supplier: supplier._id, po: po._id, amount: total });
+  check('Invoice blocked before delivery', r.status === 400, JSON.stringify(r.data));
+  r = await api('main', 'POST', '/inventory/grn', { poReference: po.poNumber, supplier: 'E2E Supplier', receivedBy: 'E2E Main', items: items.map(i => ({ materialName: i.materialName, expectedQty: i.quantity, receivedQty: i.quantity })) });
+  check('GRN recorded', r.status === 201, JSON.stringify(r.data).slice(0, 300));
+  const grn = r.data.grn;
+  r = await api('main', 'GET', '/inventory?location=MainStore');
+  const mainMat1 = r.data.find(x => x.name === im1.materialName);
+  check('Main Store stock increased by GRN', mainMat1?.quantity === P1, JSON.stringify(mainMat1));
+  r = await api('main', 'POST', '/invoices', { supplier: supplier._id, po: po._id, grn: grn._id, amount: total });
+  check('Invoice recorded', r.status === 201, JSON.stringify(r.data));
+  const inv = r.data.data;
+  check('Director notified of invoice', (await notifs('dir', 'Invoice_submitted')).length === 1);
+  r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cash' });
+  check('Payment blocked before Director approval', r.status === 400, JSON.stringify(r.data));
+  r = await api('dir', 'PUT', `/invoices/${inv._id}/approve-payment`, {});
+  check('Invoice approved by Director', r.status === 200);
+  check('Purchase Manager notified invoice approved', (await notifs('buy', 'Invoice_approved')).length === 1);
+  r = await api('dir', 'PUT', `/invoices/${inv._id}/approve-payment`, {});
+  check('Second approval rejected', r.status === 400);
+  r = await api('main', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cash' });
+  check('Main Store cannot record payment', r.status === 403, String(r.status));
+  r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cheque' });
+  check('Cheque without number rejected', r.status === 400);
+  r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cheque', reference: '004512', bankName: 'Commercial Bank' });
+  check('Cheque payment recorded', r.status === 201, JSON.stringify(r.data));
+  r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cash' });
+  check('Double payment rejected', r.status === 400);
+  r = await api('buy', 'GET', '/invoices');
+  const paidInv = r.data.data.find(x => x._id === inv._id);
+  check('Invoice is Paid via Cheque', paidInv.status === 'Paid' && paidInv.paymentMethod === 'Cheque', JSON.stringify(paidInv));
+  r = await api('dir', 'PUT', `/invoices/${inv._id}/reject-payment`, { rejectionReason: 'x' });
+  check('Paid invoice cannot be rejected', r.status === 400);
+  check('Director notified of payment', (await notifs('dir', 'PAYMENT_RECORDED')).length === 1);
+  r = await api('buy', 'GET', `/payments/${po._id}/receipt`);
+  check('Receipt shows cheque details', r.data.data?.method === 'Cheque' && r.data.data?.reference === '004512', JSON.stringify(r.data));
+  r = await api('buy', 'GET', `/payments/${po._id}/receipt/download`);
+  check('Receipt PDF downloads', r.status === 200 && r.data._binary > 1000, JSON.stringify(r.data));
+  r = await api('buy', 'GET', `/payments/${new mongoose.Types.ObjectId()}/receipt`);
+  check('No fake receipt for unpaid PO', r.status === 404);
+  r = await api('buy', 'GET', '/payments/report');
+  check('Payment report PDF', r.status === 200 && r.data._binary > 1000);
+  r = await api('dir', 'GET', '/payments');
+  check('Payments list', r.data.count === 1 && r.data.data[0].status === 'paid', JSON.stringify(r.data).slice(0, 200));
+
+  console.log('\n[Site request -> MTN in transit -> receipt]');
+  const sid = String(project._id);
+  r = await api('site', 'POST', '/material-requests', { siteStoreId: sid, requiredDate: new Date(), materials: [{ materialName: im1.materialName, quantity: 60 }] });
+  check('Site Store request created', r.status === 201, JSON.stringify(r.data));
+  const ssr = r.data.data;
+  check('Main Store notified of site request', (await notifs('main', 'SSR_SUBMITTED')).length === 1);
+  r = await api('main', 'POST', '/material-transfer-notes', { sourceRequestId: ssr._id, transferDate: new Date(), materials: [{ materialName: im1.materialName, quantity: 60, unit: im1.unit }] });
+  check('MTN issued In Transit', r.status === 201 && r.data.data.status === 'In Transit', JSON.stringify(r.data));
+  const mtn = r.data.data;
+  r = await api('main', 'GET', '/inventory?location=MainStore');
+  check('Main Store stock deducted on issue', r.data.find(x => x.name === im1.materialName).quantity === P1 - 60);
+  r = await api('site', 'GET', `/site/inventory?projectId=${sid}`);
+  check('Site stock NOT increased before receipt', r.data.length === 0, JSON.stringify(r.data));
+  check('Requester notified of transfer', (await notifs('site', 'SSR_TRANSFERRED')).length === 1);
+  check('Low stock -> Purchase Manager', (await notifs('buy', 'LOW_STOCK')).length === 1, String((await notifs('buy', 'LOW_STOCK')).length));
+  r = await api('main', 'POST', `/material-transfer-notes/${mtn._id}/receive`);
+  check('Main Store cannot confirm site receipt', r.status === 403, String(r.status));
+  r = await api('site', 'GET', `/material-transfer-notes?siteStoreId=${sid}`);
+  check('Site Store sees its in-transit MTN', r.data.data.length === 1 && r.data.data[0].status === 'In Transit');
+  r = await api('site', 'POST', `/material-transfer-notes/${mtn._id}/receive`);
+  check('Site Store confirms receipt', r.status === 200 && r.data.data.status === 'Received', JSON.stringify(r.data));
+  r = await api('site', 'POST', `/material-transfer-notes/${mtn._id}/receive`);
+  check('Double receipt rejected', r.status === 400);
+  r = await api('site', 'GET', `/site/inventory?projectId=${sid}`);
+  check('Site inventory updated on receipt', r.data.length === 1 && r.data[0].quantity === 60, JSON.stringify(r.data));
+  const siteMat1 = r.data[0];
+  check('Main Store notified of receipt', (await notifs('main', 'MTN_RECEIVED')).length === 1);
+
+  console.log('\n[Ad hoc transfer + adjustment]');
+  r = await api('main', 'GET', '/inventory?location=MainStore');
+  const mainMat2 = r.data.find(x => x.name === im2.materialName);
+  r = await api('main', 'POST', '/inventory/adjustments', { materialId: mainMat2._id, physicalCount: 40, reason: 'Physical count' });
+  check('Stock adjustment', r.status === 201 && r.data.material.quantity === 40, JSON.stringify(r.data).slice(0, 200));
+  r = await api('main', 'POST', '/material-transfer-notes', { siteStoreId: sid, transferDate: new Date(), materials: [{ materialName: im2.materialName, quantity: 999, unit: im2.unit }] });
+  check('Transfer above stock rejected', r.status === 400);
+  r = await api('main', 'POST', '/material-transfer-notes', { siteStoreId: sid, transferDate: new Date(), materials: [{ materialName: im2.materialName, quantity: 30, unit: im2.unit }] });
+  check('Ad hoc MTN issued', r.status === 201, JSON.stringify(r.data));
+  check('Site Store notified of ad hoc transfer', (await notifs('site', 'MTN_ISSUED')).length === 1);
+  r = await api('site', 'POST', `/material-transfer-notes/${r.data.data._id}/receive`);
+  check('Ad hoc MTN received', r.status === 200);
+  r = await api('site', 'GET', `/site/inventory?projectId=${sid}`);
+  const siteMat2 = r.data.find(x => x.name === im2.materialName);
+  check('Second material at site', siteMat2?.quantity === 30, JSON.stringify(r.data));
+
+  console.log('\n[MIN issue to project, planned vs actual, overuse]');
+  r = await api('site', 'POST', '/site/material-usage', { projectId: sid, materialId: siteMat1._id, quantity: 25, activity: 'Slab concreting' });
+  check('MIN issue recorded', r.status === 201 && /^MIN-/.test(r.data.data.minNumber), JSON.stringify(r.data));
+  check('Within plan: no warning', r.data.warning === '' && r.data.summary.plannedQty === P1 && r.data.summary.cumulativeActual === 25, JSON.stringify(r.data.summary));
+  r = await api('site', 'POST', '/site/material-usage', { projectId: sid, materialId: siteMat1._id, quantity: 9999, activity: 'x' });
+  check('Issue above site stock rejected', r.status === 400);
+  r = await api('main', 'POST', '/site/material-usage', { projectId: sid, materialId: siteMat1._id, quantity: 1, activity: 'x' });
+  check('Main Store cannot issue from site', r.status === 403, String(r.status));
+  r = await api('site', 'POST', '/site/material-usage', { projectId: sid, materialId: siteMat2._id, quantity: 8, activity: 'Plastering' });
+  check('Usage 8/10 no warning', r.data.warning === '', r.data.warning);
+  r = await api('site', 'POST', '/site/material-usage', { projectId: sid, materialId: siteMat2._id, quantity: 7, activity: 'Plastering' });
+  check('Usage 15/10 flags overuse of 5', r.data.summary?.overuseQty === 5 && r.data.warning.length > 0, JSON.stringify(r.data.summary));
+  check('PM notified of overuse', (await notifs('pm', 'USAGE_EXCEEDS_BOM')).length === 1);
+  r = await api('site', 'GET', `/site/inventory?projectId=${sid}`);
+  check('Site stock reduced by usage', r.data.find(x => x.name === im1.materialName).quantity === 35 && r.data.find(x => x.name === im2.materialName).quantity === 15, JSON.stringify(r.data.map(x => [x.name, x.quantity])));
+
+  console.log('\n[Reports]');
+  r = await api('dir', 'GET', '/material-usage/variance');
+  const v1 = r.data.report.find(x => x.materialName === im1.materialName), v2 = r.data.report.find(x => x.materialName === im2.materialName);
+  check('BOM vs Actual: within plan row', v1 && v1.plannedQty === P1 && v1.actualQty === 25 && v1.status === 'Within Plan', JSON.stringify(v1));
+  check('BOM vs Actual: overused row', v2 && v2.varianceQty === 5 && v2.variancePct === 50 && v2.status === 'Overused' && v2.severity === 'Significant', JSON.stringify(v2));
+  r = await api('dir', 'GET', `/material-usage?projectId=${sid}`);
+  check('Usage history (3 records)', r.data.count === 3, String(r.data.count));
+  r = await api('main', 'GET', '/inventory/stock-ledger');
+  const types = new Set(r.data.data.map(x => x.type));
+  check('Stock ledger has all movement types', ['GRN Receipt', 'MTN Transfer Out', 'MTN Transfer In', 'Usage', 'Adjustment'].every(t => types.has(t)), [...types].join(','));
+  r = await api('buy', 'GET', '/inventory/notifications');
+  check('Low-stock warnings list', r.data.success === true, JSON.stringify(r.data).slice(0, 200));
+  r = await api('buy', 'GET', '/notifications');
+  check('Purchase Manager notification feed', r.data.count >= 4, String(r.data.count));
+} catch (err) {
+  fail++;
+  console.log('ERROR', err.stack || err);
+} finally {
+  if (mongoose.connection.name === TEST_DB) {
+    await mongoose.connection.dropDatabase();
+    console.log('\ndropped', TEST_DB);
+  }
+  console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+}

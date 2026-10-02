@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { formatDate } from '../utils/dateUtils';
+import { API_BASE } from '../config';
 
-const API_BASE = 'http://localhost:5000';
 
 const styles = {
   tabButton: (active) => ({

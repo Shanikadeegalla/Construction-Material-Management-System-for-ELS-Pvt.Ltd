@@ -64,6 +64,14 @@ const connectDB = async () => {
     const conn = await mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/ConstructionDB');
     console.log(`MongoDB Connected: ${conn.connection.host}`);
 
+    // The role/permission migrations and seeding below are idempotent
+    // start-up chores. A serverless deployment cold-starts constantly, so
+    // they are skipped there (set RUN_STARTUP_TASKS=true for one deploy if a
+    // fresh database needs seeding).
+    if (process.env.VERCEL && process.env.RUN_STARTUP_TASKS !== 'true') {
+      return;
+    }
+
     try {
       await fixStaleRoleNames();
     } catch (err) {

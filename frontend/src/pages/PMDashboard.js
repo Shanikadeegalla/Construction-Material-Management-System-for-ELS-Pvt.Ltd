@@ -3,6 +3,7 @@ import SettingsPage from './SettingsPage';
 import { Calendar } from 'lucide-react';
 import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
+import { API_BASE } from '../config';
 
 const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -78,7 +79,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const fetchRequests = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/purchase-requests', {
+      const res = await fetch(`${API_BASE}/api/purchase-requests`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -95,7 +96,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const fetchBoms = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/bom', {
+      const res = await fetch(`${API_BASE}/api/bom`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -114,7 +115,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchNotifications = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/inventory/notifications', {
+      const res = await fetch(`${API_BASE}/api/inventory/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -127,7 +128,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       }
       setNotifications(notifList);
 
-      const countRes = await fetch('http://localhost:5000/api/notifications/count', {
+      const countRes = await fetch(`${API_BASE}/api/notifications/count`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const countData = await countRes.json();
@@ -150,7 +151,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchBomNotifications = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/notifications', {
+      const res = await fetch(`${API_BASE}/api/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -167,7 +168,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const handleMarkNotificationRead = async (notif) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+      await fetch(`${API_BASE}/api/notifications/${notif._id}/read`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -182,7 +183,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const fetchProjects = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/projects', {
+      const res = await fetch(`${API_BASE}/api/projects`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -205,7 +206,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     setNextProjectIdLoading(true);
     try {
       const query = startDate ? `?startDate=${encodeURIComponent(startDate)}` : '';
-      const res = await fetch(`http://localhost:5000/api/projects/next-id${query}`, {
+      const res = await fetch(`${API_BASE}/api/projects/next-id${query}`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -228,7 +229,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const fetchTransfers = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/inventory/transfers', {
+      const res = await fetch(`${API_BASE}/api/inventory/transfers`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -285,11 +286,11 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      let url = 'http://localhost:5000/api/projects';
+      let url = `${API_BASE}/api/projects`;
       let method = 'POST';
 
       if (editingProjectId) {
-        url = `http://localhost:5000/api/projects/${editingProjectId}`;
+        url = `${API_BASE}/api/projects/${editingProjectId}`;
         method = 'PUT';
       }
 
@@ -364,7 +365,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchMaterialMaster = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/item-master?status=Active', {
+      const res = await fetch(`${API_BASE}/api/item-master?status=Active`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -381,7 +382,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/versions/${projId}`, {
+      const res = await fetch(`${API_BASE}/api/bom/versions/${projId}`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -427,7 +428,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/bom/versions/${projId}`, {
+      const res = await fetch(`${API_BASE}/api/bom/versions/${projId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -491,7 +492,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (!projId) return;
 
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/versions/${projId}`, {
+      const res = await fetch(`${API_BASE}/api/bom/versions/${projId}`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -626,9 +627,15 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     setSuggestions(getMatchingMaterials('', category));
   };
 
-  const handleAddMaterialRow = () => {
-    setBomMaterials([...bomMaterials, { ...emptyBomMaterialRow }]);
-  };
+  // Keeps one blank row at the bottom of the table: as soon as the last row has a
+  // material picked from the master list, a fresh empty row is appended below it.
+  // The trailing blank row is ignored on submit and in the summary.
+  useEffect(() => {
+    const last = bomMaterials[bomMaterials.length - 1];
+    if (last && last.name.trim() && (last.materialId || last.unit)) {
+      setBomMaterials(prev => [...prev, { ...emptyBomMaterialRow }]);
+    }
+  }, [bomMaterials]);
 
   const handleRemoveMaterialRow = (idx) => {
     if (bomMaterials.length === 1) return;
@@ -691,7 +698,9 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       return;
     }
 
-    const invalid = bomMaterials.some(m => !m.name.trim() || m.plannedQty <= 0);
+    // Drop untouched rows (the auto-added blank row at the bottom) before validating.
+    const filledMaterials = bomMaterials.filter(m => m.name.trim());
+    const invalid = filledMaterials.length === 0 || filledMaterials.some(m => m.plannedQty <= 0);
     if (invalid) {
       setMessage('⚠️ Please provide valid names and positive quantities for all materials.');
       return;
@@ -701,7 +710,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     // directly from the dropdown (materialId set) or matching one by name
     // (covers reloading an existing draft BOM). Free-typed names that don't
     // exist in the master list must never reach the backend.
-    const unmatched = bomMaterials.some(m => {
+    const unmatched = filledMaterials.some(m => {
       if (m.materialId) return false;
       return !materialMaster.some(mm => mm.materialName.toLowerCase().trim() === m.name.toLowerCase().trim());
     });
@@ -711,13 +720,13 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
 
     try {
-      const res = await fetch('http://localhost:5000/api/bom', {
+      const res = await fetch(`${API_BASE}/api/bom`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
           projectId: bomProjectId,
           status: status,
-          materials: bomMaterials.map(m => ({
+          materials: filledMaterials.map(m => ({
             materialId: m.materialId || (materialMaster.find(mm => mm.materialName.toLowerCase().trim() === m.name.toLowerCase().trim())?._id || null),
             name: m.name,
             unit: m.unit,
@@ -757,7 +766,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
         version: 'v1.0',
         createdBy: user?.name || 'Project Manager',
         status: 'Submitted',
-        materials: bomMaterials,
+        materials: filledMaterials,
         createdAt: new Date().toISOString()
       };
       setBoms(prev => [newMockBom, ...prev]);
@@ -1804,7 +1813,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                                     }
                                   }}
                                   style={{ width: '100%', padding: '8px 28px 8px 8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px' }}
-                                  required
+                                  required={idx === 0}
                                 />
                                 <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: '#94a3b8', pointerEvents: 'none' }}>▼</span>
                               </div>
@@ -1934,7 +1943,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div>
                       <h4 style={{ color: '#0d1b4b', margin: '0 0 12px', fontSize: '14px', fontWeight: '700', borderBottom: '1px solid #cbd5e1', paddingBottom: '6px' }}>💰 ESTIMATED SUMMARY</h4>
                       <div style={{ fontSize: '13px', marginBottom: '8px', color: '#475569' }}>
-                        Total Material Items: <strong style={{ color: '#0d1b4b' }}>{bomMaterials.length}</strong>
+                        Total Material Items: <strong style={{ color: '#0d1b4b' }}>{bomMaterials.filter(m => m.name).length}</strong>
                       </div>
                       <div style={{ fontSize: '14px', color: '#2e7d32', fontWeight: '700' }}>
                         Total Cost: LKR {bomMaterials.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0).toLocaleString()}
@@ -1982,14 +1991,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <button
-                      type="button"
-                      onClick={handleAddMaterialRow}
-                      style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
-                    >
-                      ➕ Add Material Row
-                    </button>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
                     <div style={{ display: 'flex', gap: '10px' }}>
                       <button
                         type="button"
@@ -2253,7 +2255,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           docs && docs.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {docs.map((doc, i) => {
-                const url = `http://localhost:5000${doc.filePath}`;
+                const url = `${API_BASE}${doc.filePath}`;
                 const isPdf = doc.filePath.toLowerCase().endsWith('.pdf');
                 const isImage = /\.(jpe?g|png)$/i.test(doc.filePath);
                 const icon = isPdf ? '📄' : isImage ? '🖼️' : '📎';

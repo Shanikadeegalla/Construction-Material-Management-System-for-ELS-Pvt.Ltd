@@ -3,8 +3,10 @@ import { Calendar } from 'lucide-react';
 import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
 import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
+import SettingsPage from './SettingsPage';
+import { API_BASE } from '../config';
 
-function SiteStoreDashboard({ user, onLogout }) {
+function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -76,6 +78,21 @@ function SiteStoreDashboard({ user, onLogout }) {
   const [issueHistory, setIssueHistory] = useState([]);
   const [expandedHistoryId, setExpandedHistoryId] = useState(null);
 
+  // Material Transfer Notes issued by Main Store to the selected Site Store.
+  // "In Transit" ones are waiting for this officer to confirm receipt - site
+  // inventory only increases once that happens.
+  const [transferNotes, setTransferNotes] = useState([]);
+  const [receivingMtnId, setReceivingMtnId] = useState(null);
+
+  // Persisted notifications addressed to this officer (request transferred /
+  // rejected, incoming transfers, low stock).
+  const [persistedNotifications, setPersistedNotifications] = useState([]);
+
+  // Planned (approved BOM) vs actual usage for the selected project, plus the
+  // overuse warning returned by the last Material Issue submission.
+  const [planVsActual, setPlanVsActual] = useState([]);
+  const [issueWarning, setIssueWarning] = useState('');
+
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
     return {
@@ -90,8 +107,8 @@ function SiteStoreDashboard({ user, onLogout }) {
     setError('');
     try {
       const url = selectedProjId 
-        ? `http://localhost:5000/api/site/inventory?projectId=${selectedProjId}` 
-        : 'http://localhost:5000/api/site/inventory';
+        ? `${API_BASE}/api/site/inventory?projectId=${selectedProjId}` 
+        : `${API_BASE}/api/site/inventory`;
       const res = await fetch(url, {
         headers: getHeaders()
       });
@@ -127,7 +144,7 @@ function SiteStoreDashboard({ user, onLogout }) {
   const fetchMINs = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/min', {
+      const res = await fetch(`${API_BASE}/api/min`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -154,7 +171,7 @@ function SiteStoreDashboard({ user, onLogout }) {
   const fetchItemMasters = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/item-master', {
+      const res = await fetch(`${API_BASE}/api/item-master`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -169,7 +186,7 @@ function SiteStoreDashboard({ user, onLogout }) {
   const fetchMyRequests = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/material-requests/my-requests', {
+      const res = await fetch(`${API_BASE}/api/material-requests/my-requests`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -186,7 +203,7 @@ function SiteStoreDashboard({ user, onLogout }) {
   const fetchIssueHistory = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/material-usage', {
+      const res = await fetch(`${API_BASE}/api/material-usage`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -201,10 +218,87 @@ function SiteStoreDashboard({ user, onLogout }) {
     }
   };
 
+  const authHeaders = () => {
+    const token = JSON.parse(localStorage.getItem('user'))?.token;
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  };
+
+  const fetchTransferNotes = async () => {
+    try {
+      const query = selectedProjId ? `?siteStoreId=${selectedProjId}` : '';
+      const res = await fetch(`${API_BASE}/api/material-transfer-notes${query}`, { headers: authHeaders() });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setTransferNotes(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching Material Transfer Notes:', err);
+    }
+  };
+
+  const fetchPersistedNotifications = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/notifications`, { headers: authHeaders() });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setPersistedNotifications(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching notifications:', err);
+    }
+  };
+
+  const handleMarkNotifRead = async (id) => {
+    try {
+      await fetch(`${API_BASE}/api/notifications/${id}/read`, { method: 'PUT', headers: authHeaders() });
+    } catch (err) {
+      console.error('Error marking notification as read:', err);
+    }
+    setPersistedNotifications(prev => prev.map(n => n._id === id ? { ...n, isRead: true } : n));
+  };
+
+  // BOM planned vs actual usage rows for the selected project.
+  const fetchPlanVsActual = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/material-usage/variance`, { headers: authHeaders() });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.report)) {
+        setPlanVsActual(data.report);
+      }
+    } catch (err) {
+      console.error('Error fetching planned vs actual usage:', err);
+    }
+  };
+
+  // Site Store confirms a Main Store transfer has physically arrived - this is
+  // the step that adds the delivered quantities to site inventory.
+  const handleConfirmMtnReceipt = async (mtn) => {
+    setError(''); setSuccess('');
+    setReceivingMtnId(mtn._id);
+    try {
+      const res = await fetch(`${API_BASE}/api/material-transfer-notes/${mtn._id}/receive`, {
+        method: 'POST',
+        headers: authHeaders()
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSuccess(`✅ ${mtn.mtnNumber} received. Site inventory updated.`);
+        fetchMaterials();
+        fetchTransferNotes();
+      } else {
+        setError(data.message || 'Failed to confirm receipt.');
+      }
+    } catch (err) {
+      setError('Connection error occurred.');
+    } finally {
+      setReceivingMtnId(null);
+    }
+  };
+
   const fetchProjects = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/projects', {
+      const res = await fetch(`${API_BASE}/api/projects`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -231,7 +325,7 @@ function SiteStoreDashboard({ user, onLogout }) {
     setError(''); setSuccess('');
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/min/${minId}/confirm-receipt`, {
+      const res = await fetch(`${API_BASE}/api/min/${minId}/confirm-receipt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -258,6 +352,9 @@ function SiteStoreDashboard({ user, onLogout }) {
     fetchItemMasters();
     fetchMyRequests();
     fetchIssueHistory();
+    fetchTransferNotes();
+    fetchPersistedNotifications();
+    fetchPlanVsActual();
   }, [selectedProjId]);
 
   useEffect(() => {
@@ -268,6 +365,8 @@ function SiteStoreDashboard({ user, onLogout }) {
       fetchMaterials();
       fetchMINs();
       fetchMyRequests();
+      fetchTransferNotes();
+      fetchPersistedNotifications();
     }, 10000);
     return () => clearInterval(interval);
   }, [selectedProjId]);
@@ -305,8 +404,9 @@ function SiteStoreDashboard({ user, onLogout }) {
     }
 
     setIssueSubmitting(true);
+    setIssueWarning('');
     try {
-      const res = await fetch('http://localhost:5000/api/site/material-usage', {
+      const res = await fetch(`${API_BASE}/api/site/material-usage`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
@@ -318,10 +418,20 @@ function SiteStoreDashboard({ user, onLogout }) {
           date
         })
       });
-      const data = await res.json();
+      let data = await res.json();
+      if (data && data.ciphertext) {
+        try {
+          const decrypted = decryptTransit(data.ciphertext);
+          data = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
+        } catch (e) {
+          // leave as-is; handled as a failure below
+        }
+      }
 
       if (res.ok && data.success) {
         setSuccess(`✅ ${data.message || 'Material issued and usage recorded successfully.'}`);
+        setIssueWarning(data.warning || '');
+        fetchPlanVsActual();
         setIssueForm(prev => ({
           ...prev,
           materialId: '',
@@ -424,6 +534,16 @@ function SiteStoreDashboard({ user, onLogout }) {
     setRequestSuggestions(getMatchingRequestMaterials(val, updated[idx].category));
   };
 
+  // Keeps one blank row at the bottom of the table: as soon as the last row has a
+  // material picked from the catalog, a fresh empty row is appended below it.
+  // The trailing blank row is ignored on submit.
+  useEffect(() => {
+    const last = requestForm.items[requestForm.items.length - 1];
+    if (last && last.materialName.trim() && last.unit) {
+      setRequestForm(prev => ({ ...prev, items: [...prev.items, { ...emptyRequestItemRow }] }));
+    }
+  }, [requestForm.items]);
+
   const handleRequestMaterialsSubmit = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -438,7 +558,9 @@ function SiteStoreDashboard({ user, onLogout }) {
       return;
     }
 
-    const invalid = requestForm.items.some(item => !item.materialName || !item.quantity || Number(item.quantity) <= 0);
+    // Drop untouched rows (the auto-added blank row at the bottom) before validating.
+    const filledItems = requestForm.items.filter(item => item.materialName.trim() || item.quantity);
+    const invalid = filledItems.length === 0 || filledItems.some(item => !item.materialName || !item.quantity || Number(item.quantity) <= 0);
     if (invalid) {
       setError('Please select a material and enter a valid request quantity for all rows.');
       return;
@@ -446,13 +568,13 @@ function SiteStoreDashboard({ user, onLogout }) {
 
     // A material must actually be picked from the Item Master catalog (not
     // just typed) - a picked row always has its Unit auto-filled.
-    const unresolved = requestForm.items.some(item => !item.unit);
+    const unresolved = filledItems.some(item => !item.unit);
     if (unresolved) {
       setError('Please choose each material from the suggestion list so its category/unit can be confirmed.');
       return;
     }
 
-    const names = requestForm.items.map(item => item.materialName.trim().toLowerCase());
+    const names = filledItems.map(item => item.materialName.trim().toLowerCase());
     const hasDuplicates = new Set(names).size !== names.length;
     if (hasDuplicates) {
       setError('Each material can only appear once per request. Please remove the duplicate row.');
@@ -465,7 +587,7 @@ function SiteStoreDashboard({ user, onLogout }) {
         siteStoreId: selectedProjId,
         requiredDate: requestForm.requiredDate,
         notes: requestForm.notes,
-        materials: requestForm.items.map(item => ({
+        materials: filledItems.map(item => ({
           materialName: item.materialName,
           quantity: item.quantity,
           unit: item.unit
@@ -474,7 +596,7 @@ function SiteStoreDashboard({ user, onLogout }) {
 
       const ciphertext = encryptTransit(JSON.stringify(payload));
 
-      const res = await fetch('http://localhost:5000/api/material-requests', {
+      const res = await fetch(`${API_BASE}/api/material-requests`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ ciphertext })
@@ -503,7 +625,7 @@ function SiteStoreDashboard({ user, onLogout }) {
   const handleCancelRequest = async (id) => {
     setError(''); setSuccess('');
     try {
-      const res = await fetch(`http://localhost:5000/api/material-requests/${id}/cancel`, {
+      const res = await fetch(`${API_BASE}/api/material-requests/${id}/cancel`, {
         method: 'PUT',
         headers: getHeaders()
       });
@@ -548,17 +670,33 @@ function SiteStoreDashboard({ user, onLogout }) {
   const sitePreOrderItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'PRE_ORDER').length;
   const siteCriticalItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'CRITICAL').length;
   const now = new Date();
-  const receivedThisMonthCount = mins.filter(m => {
-    if (m.status !== 'Received' || !m.receivedAt) return false;
-    const d = new Date(m.receivedAt);
+  const inTransitTransfers = transferNotes.filter(t => t.status === 'In Transit');
+  // 'Transferred' is the legacy status of notes created before the receipt
+  // step existed - their stock is already at site, so they count as received.
+  const receivedTransfers = transferNotes.filter(t => t.status === 'Received' || t.status === 'Transferred');
+  const isThisMonth = (dateValue) => {
+    if (!dateValue) return false;
+    const d = new Date(dateValue);
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  }).length;
+  };
+  const receivedThisMonthCount =
+    mins.filter(m => m.status === 'Received' && isThisMonth(m.receivedAt)).length +
+    receivedTransfers.filter(t => isThisMonth(t.receivedAt || t.transferDate)).length;
+  const unreadNotifications = persistedNotifications.filter(n => !n.isRead);
+  const selectedProjectName = (projects.find(p => p._id === selectedProjId) || {}).projectName || issueForm.projectName;
+  const projectPlanRows = planVsActual.filter(r => selectedProjectName && r.projectName === selectedProjectName);
 
   // Total quantity historically confirmed as received at site, per material name
   const issuedToSiteByMaterial = {};
   mins.filter(m => m.status === 'Received').forEach(m => {
     (m.materials || []).forEach(mat => {
       issuedToSiteByMaterial[mat.materialName] = (issuedToSiteByMaterial[mat.materialName] || 0) + Number(mat.quantity || 0);
+    });
+  });
+
+  receivedTransfers.forEach(t => {
+    (t.materials || []).forEach(mat => {
+      issuedToSiteByMaterial[mat.materialName] = (issuedToSiteByMaterial[mat.materialName] || 0) + Number(mat.transferQty || 0);
     });
   });
 
@@ -611,6 +749,7 @@ function SiteStoreDashboard({ user, onLogout }) {
             { id: 'site-inventory', label: 'Site Inventory', icon: '🏗️' },
             { id: 'request-materials', label: 'Request Materials', icon: '📦' },
             { id: 'issue-usage', label: 'Material Issue & Usage', icon: '🔧' },
+            { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
             <button
               key={item.id}
@@ -646,7 +785,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                 {/* Notification Bell */}
                 <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
                   <span style={{ fontSize: '18px' }}>🔔</span>
-                  {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length > 0 && (
+                  {(materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length + unreadNotifications.length) > 0 && (
                     <span style={{
                       position: 'absolute',
                       top: '2px',
@@ -662,7 +801,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                       alignItems: 'center',
                       justifyContent: 'center'
                     }}>
-                      {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length}
+                      {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).length + unreadNotifications.length}
                     </span>
                   )}
                   {showNotifications && (
@@ -682,6 +821,26 @@ function SiteStoreDashboard({ user, onLogout }) {
                       padding: '8px',
                       textAlign: 'left'
                     }} onClick={e => e.stopPropagation()}>
+                      <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Notifications</span>
+                        <span style={{ fontSize: '11px', background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>{unreadNotifications.length} unread</span>
+                      </div>
+                      {persistedNotifications.length === 0 ? (
+                        <div style={{ padding: '16px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
+                          No notifications yet.
+                        </div>
+                      ) : (
+                        persistedNotifications.slice(0, 15).map(n => (
+                          <div
+                            key={n._id}
+                            onClick={() => { if (!n.isRead) handleMarkNotifRead(n._id); }}
+                            style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9', fontSize: '12.5px', cursor: n.isRead ? 'default' : 'pointer', background: n.isRead ? 'white' : 'rgba(37, 99, 235, 0.06)' }}
+                          >
+                            <div style={{ color: '#0f172a', fontWeight: n.isRead ? '400' : '600' }}>{n.message}</div>
+                            <div style={{ color: '#94a3b8', fontSize: '11px', marginTop: '3px' }}>{formatDateTime(n.createdAt)}</div>
+                          </div>
+                        ))
+                      )}
                       <div style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', fontWeight: '700', color: '#0d1b4b', fontSize: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span>Site Store Stock Alerts</span>
                         <span style={{ fontSize: '11px', background: '#fee2e2', color: '#ef4444', padding: '2px 8px', borderRadius: '9999px', fontWeight: '600' }}>Alerts</span>
@@ -788,12 +947,23 @@ function SiteStoreDashboard({ user, onLogout }) {
               </div>
             </div>
 
+            {inTransitTransfers.length > 0 && (
+              <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '14px 16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
+                <div style={{ color: '#1e3a8a', fontSize: '13px', fontWeight: '600' }}>
+                  🚚 {inTransitTransfers.length} transfer{inTransitTransfers.length === 1 ? '' : 's'} from Main Store awaiting your receipt confirmation.
+                </div>
+                <button onClick={() => { setView('site-inventory'); setError(''); setSuccess(''); }} style={{ background: '#2563eb', color: 'white', border: 'none', padding: '7px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                  Review &amp; Confirm
+                </button>
+              </div>
+            )}
+
             {/* Received Info Section */}
             <div style={styles.infoBox}>
               <h3 style={styles.infoBoxTitle}>ℹ️ Local Store Operations Info</h3>
               <p style={styles.infoBoxText}>
                 This panel displays materials currently checked-out and stored at the local construction site. 
-                Stock level increments automatically when issued from the Main Store.
+                Stock level increases once you confirm receipt of a transfer issued by the Main Store (Site Inventory → In-Transit Transfers).
               </p>
             </div>
 
@@ -991,10 +1161,96 @@ function SiteStoreDashboard({ user, onLogout }) {
               )}
             </div>
 
-            {/* In-Transit Material Issuance Notes Section */}
+            {/* In-Transit Material Transfer Notes (Main Store -> this Site Store) */}
             <div style={{ ...styles.tableContainer, marginTop: '30px' }}>
               <div style={{ padding: '16px 20px', color: 'white', margin: 0, borderBottom: '1px solid #eee', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ margin: 0, fontSize: '15px', color: 'white' }}>🚚 In-Transit Shipments (Awaiting Receipt)</h3>
+                <h3 style={{ margin: 0, fontSize: '15px', color: 'white' }}>🚚 In-Transit Transfers from Main Store (Awaiting Receipt)</h3>
+              </div>
+              {inTransitTransfers.length === 0 ? (
+                <div style={styles.emptyState}>No Material Transfer Notes currently in transit.</div>
+              ) : (
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.tableHeaderRow}>
+                      <th style={styles.th}>MTN No.</th>
+                      <th style={styles.th}>Site Store</th>
+                      <th style={styles.th}>Request No.</th>
+                      <th style={styles.th}>Materials</th>
+                      <th style={styles.th}>Issued By</th>
+                      <th style={styles.th}>Transfer Date</th>
+                      <th style={styles.th}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inTransitTransfers.map(t => (
+                      <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={styles.tdBold}>{t.mtnNumber}</td>
+                        <td style={styles.td}>{t.siteStoreName}</td>
+                        <td style={styles.td}>{t.requestNo || '-'}</td>
+                        <td style={styles.td}>
+                          {(t.materials || []).map((mat, i) => (
+                            <div key={i}>{mat.materialName} ({mat.transferQty} {mat.unit})</div>
+                          ))}
+                        </td>
+                        <td style={styles.td}>{t.createdBy}</td>
+                        <td style={styles.td}>{formatDate(t.transferDate)}</td>
+                        <td style={styles.td}>
+                          <button
+                            onClick={() => handleConfirmMtnReceipt(t)}
+                            disabled={receivingMtnId === t._id}
+                            style={{ background: receivingMtnId === t._id ? '#94a3b8' : '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: receivingMtnId === t._id ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                          >
+                            {receivingMtnId === t._id ? 'Confirming…' : 'Confirm Receipt'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Received Material Transfer Notes history */}
+            <div style={{ ...styles.tableContainer, marginTop: '24px' }}>
+              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>📦 Received Transfers History</h3>
+              {receivedTransfers.length === 0 ? (
+                <div style={styles.emptyState}>No transfers received yet.</div>
+              ) : (
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.tableHeaderRow}>
+                      <th style={styles.th}>MTN No.</th>
+                      <th style={styles.th}>Site Store</th>
+                      <th style={styles.th}>Materials Received</th>
+                      <th style={styles.th}>Transfer Date</th>
+                      <th style={styles.th}>Received By</th>
+                      <th style={styles.th}>Received On</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {receivedTransfers.map(t => (
+                      <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={styles.tdBold}>{t.mtnNumber}</td>
+                        <td style={styles.td}>{t.siteStoreName}</td>
+                        <td style={styles.td}>
+                          {(t.materials || []).map((mat, i) => (
+                            <div key={i}>{mat.materialName} ({mat.transferQty} {mat.unit})</div>
+                          ))}
+                        </td>
+                        <td style={styles.td}>{formatDate(t.transferDate)}</td>
+                        <td style={styles.td}>{t.receivedBy || '-'}</td>
+                        <td style={styles.td}>{t.receivedAt ? formatDate(t.receivedAt) : '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* In-Transit Material Issuance Notes Section */}
+            <div style={{ ...styles.tableContainer, marginTop: '30px', display: mins.some(m => m.status === 'Issued') ? 'block' : 'none' }}>
+              <div style={{ padding: '16px 20px', color: 'white', margin: 0, borderBottom: '1px solid #eee', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ margin: 0, fontSize: '15px', color: 'white' }}>🚚 In-Transit Issuance Notes (Awaiting Receipt)</h3>
               </div>
               {mins.filter(m => m.status === 'Issued').length === 0 ? (
                 <div style={styles.emptyState}>No shipments currently in-transit.</div>
@@ -1136,7 +1392,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                                     }
                                   }}
                                   style={{ width: '100%', padding: '8px 28px 8px 8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px' }}
-                                  required
+                                  required={idx === 0 || !!item.quantity}
                                 />
                                 <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: '#94a3b8', pointerEvents: 'none' }}>▼</span>
                               </div>
@@ -1237,7 +1493,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                                   setRequestForm({ ...requestForm, items: updated });
                                 }}
                                 style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px' }}
-                                required
+                                required={idx === 0 || !!item.materialName}
                               />
                             </td>
                             {/* Remove button */}
@@ -1257,15 +1513,8 @@ function SiteStoreDashboard({ user, onLogout }) {
                     </tbody>
                   </table>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setRequestForm({ ...requestForm, items: [...requestForm.items, { ...emptyRequestItemRow }] })}
-                  style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px', marginBottom: '16px' }}
-                >
-                  ➕ Add Material Row
-                </button>
 
-                <div style={{ marginBottom: '16px' }}>
+                <div style={{ marginTop: '16px', marginBottom: '16px' }}>
                   <label style={styles.fieldLabel}>Notes</label>
                   <textarea
                     placeholder="Enter extra instructions or remarks..."
@@ -1476,6 +1725,63 @@ function SiteStoreDashboard({ user, onLogout }) {
               </form>
             </div>
 
+            {issueWarning && (
+              <div style={{ background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: '8px', padding: '12px 16px', marginBottom: '20px', fontSize: '13px', fontWeight: '600', textAlign: 'left' }}>
+                ⚠️ Overuse warning: {issueWarning} The Project Manager and Director have been notified.
+              </div>
+            )}
+
+            {/* Planned (approved BOM) vs Actual usage for the selected project */}
+            <div style={{ ...styles.tableContainer, marginBottom: '24px' }}>
+              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>
+                📐 Planned vs Actual Usage {selectedProjectName ? `— ${selectedProjectName}` : ''}
+              </h3>
+              {!selectedProjId ? (
+                <div style={styles.emptyState}>Select a project to compare its approved BOM plan with actual usage.</div>
+              ) : projectPlanRows.length === 0 ? (
+                <div style={styles.emptyState}>No approved BOM or usage recorded for this project yet.</div>
+              ) : (
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.tableHeaderRow}>
+                      <th style={styles.th}>Material</th>
+                      <th style={styles.th}>Unit</th>
+                      <th style={styles.th}>Planned (BOM)</th>
+                      <th style={styles.th}>Actual Used</th>
+                      <th style={styles.th}>Remaining</th>
+                      <th style={styles.th}>Variance</th>
+                      <th style={styles.th}>Variance %</th>
+                      <th style={styles.th}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {projectPlanRows.map((r, i) => {
+                      const over = r.varianceQty > 0;
+                      const badge = over || r.status === 'Unplanned'
+                        ? { bg: '#ffebee', color: '#c62828' }
+                        : r.status === 'Not Started' ? { bg: '#f1f5f9', color: '#475569' } : { bg: '#e8f5e9', color: '#2e7d32' };
+                      return (
+                        <tr key={i} style={{ borderBottom: '1px solid #eee', backgroundColor: over ? 'rgba(239,68,68,0.06)' : 'white' }}>
+                          <td style={styles.tdBold}>{r.materialName}</td>
+                          <td style={styles.td}>{r.unit}</td>
+                          <td style={styles.td}>{r.plannedQty}</td>
+                          <td style={styles.td}>{r.actualQty}</td>
+                          <td style={styles.td}>{r.remainingQty ?? Math.max(r.plannedQty - r.actualQty, 0)}</td>
+                          <td style={{ ...styles.td, color: over ? '#c62828' : '#2e7d32', fontWeight: 'bold' }}>{r.varianceQty > 0 ? '+' : ''}{r.varianceQty}</td>
+                          <td style={styles.td}>{r.variancePct > 0 ? '+' : ''}{r.variancePct}%</td>
+                          <td style={styles.td}>
+                            <span style={{ background: badge.bg, color: badge.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                              {r.status || (over ? 'Overused' : 'Within Plan')}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
             <div style={styles.tableContainer}>
               <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>Material Issue & Usage History</h3>
               <table style={styles.table}>
@@ -1526,7 +1832,7 @@ function SiteStoreDashboard({ user, onLogout }) {
                               {item.plannedQty > 0 && (
                                 <>
                                   <strong>BOM Planned Qty:</strong> {item.plannedQty} {item.unit} &nbsp;|&nbsp;
-                                  <strong>Variance:</strong> {item.variance > 0 ? '+' : ''}{item.variance} {item.unit}
+                                  <strong>Cumulative variance after this issue:</strong> {item.variance > 0 ? '+' : ''}{item.variance} {item.unit}
                                 </>
                               )}
                             </td>
@@ -1540,6 +1846,8 @@ function SiteStoreDashboard({ user, onLogout }) {
             </div>
           </div>
         )}
+
+        {view === 'settings' && <SettingsPage user={user} onLogout={onLogout} onUserUpdate={onUserUpdate} />}
 
         {/* Footer */}
         <div style={{ textAlign: 'center', padding: '20px 0 8px', marginTop: '16px', fontSize: '12px', color: '#94a3b8' }}>

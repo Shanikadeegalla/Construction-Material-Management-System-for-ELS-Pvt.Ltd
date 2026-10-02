@@ -6,6 +6,8 @@ import {
   generatePaymentReport,
   getPaymentReceipt,
   downloadPaymentReceipt,
+  recordManualPayment,
+  getPayments,
   handleWebhook
 } from '../controllers/paymentController.js';
 import { protect, authorizeRoles } from '../middleware/authMiddleware.js';
@@ -28,11 +30,27 @@ router.post(
   confirmPaymentSession
 );
 
-// Protected PDF payment report generation (Purchase Manager & Admin only)
+// Purchase Manager records an offline Cash / Cheque payment for a Director-approved invoice
+router.post(
+  '/record',
+  protect,
+  authorizeRoles('PurchaseManager', 'Admin'),
+  recordManualPayment
+);
+
+// Payment records list (feeds the Payment report)
+router.get(
+  '/',
+  protect,
+  authorizeRoles('PurchaseManager', 'Director', 'Admin'),
+  getPayments
+);
+
+// Protected PDF payment report generation
 router.get(
   '/report',
   protect,
-  authorizeRoles('PurchaseManager', 'Admin'),
+  authorizeRoles('PurchaseManager', 'Director', 'Admin'),
   generatePaymentReport
 );
 

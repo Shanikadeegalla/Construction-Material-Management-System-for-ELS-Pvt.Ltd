@@ -5,7 +5,9 @@ import SupplierProfile from '../components/SupplierProfile';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
 import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
-import { createCheckoutSession, downloadPaymentReport } from '../services/paymentService';
+import { downloadPaymentReport, downloadPaymentReceipt } from '../services/paymentService';
+import ReportsCenter from './ReportsCenter';
+import { API_BASE } from '../config';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
@@ -33,8 +35,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [poSearchTerm, setPoSearchTerm] = useState('');
   const [payingInvoiceId, setPayingInvoiceId] = useState(null);
-  const [payingPoId, setPayingPoId] = useState(null);
   const [downloadingReport, setDownloadingReport] = useState(false);
+
+  // Offline (Cash / Cheque) payment being recorded against an approved invoice.
+  const emptyManualPay = { method: 'Cash', reference: '', bankName: '', paidAt: new Date().toISOString().substring(0, 10), notes: '' };
+  const [manualPayInvoice, setManualPayInvoice] = useState(null);
+  const [manualPayForm, setManualPayForm] = useState(emptyManualPay);
+  const [recordingPayment, setRecordingPayment] = useState(false);
+  const [manualPayError, setManualPayError] = useState('');
 
   const handleDownloadReport = async () => {
     try {
@@ -112,7 +120,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       const headers = getHeaders();
 
       // Fetch POs
-      const poRes = await fetch('http://localhost:5000/api/purchase-orders', { headers });
+      const poRes = await fetch(`${API_BASE}/api/purchase-orders`, { headers });
       const poData = await poRes.json();
       let orderList = poData.success ? poData.data : [];
       if (!orderList || orderList.length === 0) {
@@ -125,7 +133,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       setOrders(orderList);
 
       // Fetch Suppliers
-      const supRes = await fetch('http://localhost:5000/api/suppliers', { headers });
+      const supRes = await fetch(`${API_BASE}/api/suppliers`, { headers });
       const supData = await supRes.json();
       let rawSuppliers = supData.success ? supData.data : (Array.isArray(supData) ? supData : []);
       if (!rawSuppliers || rawSuppliers.length === 0) {
@@ -138,12 +146,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       setSuppliers(rawSuppliers);
 
       // Fetch Pending PRs (not yet converted into a PO)
-      const prRes = await fetch('http://localhost:5000/api/purchase-requests?status=Pending', { headers });
+      const prRes = await fetch(`${API_BASE}/api/purchase-requests?status=Pending`, { headers });
       const prData = await prRes.json();
       if (prData.success) setPendingPRs(prData.data);
 
       // Fetch ALL PRs
-      const allPrRes = await fetch('http://localhost:5000/api/purchase-requests', { headers });
+      const allPrRes = await fetch(`${API_BASE}/api/purchase-requests`, { headers });
       const allPrData = await allPrRes.json();
       let prList = allPrData.success ? allPrData.data : [];
       if (!prList || prList.length === 0) {
@@ -157,7 +165,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       setPurchaseRequests(prList);
 
       // Fetch Invoices / Payments
-      const invRes = await fetch('http://localhost:5000/api/invoices', { headers });
+      const invRes = await fetch(`${API_BASE}/api/invoices`, { headers });
       const invData = await invRes.json();
       setInvoices(invData.success ? invData.data : []);
 
@@ -186,7 +194,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     if (!hasSession()) return;
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/inventory/notifications', {
+      const res = await fetch(`${API_BASE}/api/inventory/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -194,7 +202,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         setNotifications(data.data);
       }
 
-      const countRes = await fetch('http://localhost:5000/api/notifications/count', {
+      const countRes = await fetch(`${API_BASE}/api/notifications/count`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const countData = await countRes.json();
@@ -215,7 +223,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const fetchPrNotifications = async () => {
     if (!hasSession()) return;
     try {
-      const res = await fetch('http://localhost:5000/api/notifications', { headers: getHeaders() });
+      const res = await fetch(`${API_BASE}/api/notifications`, { headers: getHeaders() });
       const data = await res.json();
       if (data.success) {
         setPrNotifications(data.data || []);
@@ -228,7 +236,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
   const handleMarkNotificationRead = async (notif) => {
     try {
-      await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+      await fetch(`${API_BASE}/api/notifications/${notif._id}/read`, {
         method: 'PUT',
         headers: getHeaders()
       });
@@ -254,53 +262,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     return () => clearInterval(interval);
   }, []);
 
-  // Handle the redirect back from Stripe Checkout (success or cancel)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const paymentResult = params.get('payment');
-    const sessionId = params.get('session_id');
-    if (!paymentResult) return;
-
-    const cleanUrl = () => {
-      window.history.replaceState({}, '', window.location.pathname);
-    };
-
-    if (paymentResult === 'success' && sessionId && hasSession()) {
-      (async () => {
-        try {
-          const res = await fetch('http://localhost:5000/api/payments/verify-session', {
-            method: 'POST',
-            headers: getHeaders(),
-            body: JSON.stringify({ sessionId })
-          });
-          const data = await res.json();
-          if (data.success && data.paid) {
-            setActivePage('payment');
-            setMessage(`✅ Payment received for invoice ${data.data?.invoiceNumber || ''}!`);
-            fetchData();
-          } else {
-            setActivePage('payment');
-            setError('Payment could not be confirmed yet. Please refresh in a moment.');
-          }
-        } catch (err) {
-          setError('Could not confirm payment status with the server.');
-        } finally {
-          cleanUrl();
-        }
-      })();
-    } else if (paymentResult === 'cancelled') {
-      setActivePage('payment');
-      setError('Payment was cancelled.');
-      cleanUrl();
-    }
-  }, []);
-
   const handlePayInvoice = async (invoiceId) => {
     if (!hasSession()) return;
     setError(''); setMessage('');
     setPayingInvoiceId(invoiceId);
     try {
-      const res = await fetch('http://localhost:5000/api/payments/create-checkout-session', {
+      const res = await fetch(`${API_BASE}/api/payments/create-checkout-session`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ invoiceId })
@@ -321,6 +288,53 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     } catch (err) {
       setError('Could not connect to the payment server.');
       setPayingInvoiceId(null);
+    }
+  };
+
+  const openManualPay = (invoice) => {
+    setManualPayInvoice(invoice);
+    setManualPayForm(emptyManualPay);
+    setManualPayError('');
+  };
+
+  // Records a Cash / Cheque payment for a Director-approved invoice.
+  const handleRecordPayment = async (e) => {
+    e.preventDefault();
+    if (!manualPayInvoice) return;
+    setManualPayError('');
+    if (manualPayForm.method === 'Cheque' && !manualPayForm.reference.trim()) {
+      setManualPayError('Cheque number is required for cheque payments.');
+      return;
+    }
+    setRecordingPayment(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/payments/record`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ invoiceId: manualPayInvoice._id, ...manualPayForm })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMessage(`✅ ${data.message}`);
+        setError('');
+        setManualPayInvoice(null);
+        fetchData();
+      } else {
+        setManualPayError(data.message || 'Failed to record the payment.');
+      }
+    } catch (err) {
+      setManualPayError('Could not connect to the payment server.');
+    } finally {
+      setRecordingPayment(false);
+    }
+  };
+
+  const handleDownloadReceipt = async (invoice) => {
+    setError('');
+    try {
+      await downloadPaymentReceipt(invoice.po?._id || invoice.po);
+    } catch (err) {
+      setError(err.message || 'Failed to download the payment receipt.');
     }
   };
 
@@ -353,7 +367,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     e.preventDefault();
     setError(''); setMessage('');
     try {
-      const res = await fetch('http://localhost:5000/api/purchase-orders', {
+      const res = await fetch(`${API_BASE}/api/purchase-orders`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ ...form, totalAmount: calcTotal() })
@@ -383,7 +397,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const handleUpdateStatus = async (id, status) => {
     setError(''); setMessage('');
     try {
-      const res = await fetch(`http://localhost:5000/api/purchase-orders/${id}/status`, {
+      const res = await fetch(`${API_BASE}/api/purchase-orders/${id}/status`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ status })
@@ -393,12 +407,37 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         setMessage(`✅ PO status updated to ${status}!`);
         fetchData();
       } else {
-        setError('Failed to update status.');
+        setError(data.message || 'Failed to update status.');
       }
     } catch {
       setMessage(`✅ PO status updated to ${status}! (Demo Mode)`);
       setOrders(prev => prev.map(o => o._id === id ? { ...o, status } : o));
     }
+  };
+
+  // Statuses the Purchase Manager can move a PO to. Approved/Rejected are Director-only,
+  // Sent needs an Approved PO and Delivered needs a Sent PO (mirrors the backend rules).
+  const getPoStatusOptions = (current) => {
+    const options = [current, 'Pending'];
+    if (current === 'Approved') options.push('Sent');
+    if (current === 'Sent') options.push('Delivered');
+    options.push('Closed', 'Cancelled');
+    return [...new Set(options)];
+  };
+
+  // Payment state of a PO, derived from its supplier invoices so it matches the Payment Portal.
+  const getPoPaymentState = (po) => {
+    const poInvoices = invoices.filter(inv => (inv.po?._id || inv.po) === po._id && inv.status !== 'Rejected');
+    if (poInvoices.some(inv => inv.status === 'Approved')) {
+      return { label: '💳 Ready to pay', bg: '#ede9fe', color: '#5b21b6', ready: true };
+    }
+    if (poInvoices.some(inv => inv.status === 'Pending Approval')) {
+      return { label: 'Awaiting Director', bg: '#dbeafe', color: '#1d4ed8' };
+    }
+    if (poInvoices.length > 0 || po.paymentStatus === 'paid') {
+      return { label: '✓ Paid', bg: '#dcfce7', color: '#15803d' };
+    }
+    return { label: 'No invoice', bg: '#f1f5f9', color: '#475569' };
   };
 
   const handleConvertToPO = (pr) => {
@@ -423,7 +462,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const handleSendToSupplier = async (id, poNumber, supplierName) => {
     setError(''); setMessage('');
     try {
-      const res = await fetch(`http://localhost:5000/api/purchase-orders/${id}/send`, {
+      const res = await fetch(`${API_BASE}/api/purchase-orders/${id}/send`, {
         method: 'PUT',
         headers: getHeaders()
       });
@@ -448,7 +487,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       return;
     }
     try {
-      const res = await fetch('http://localhost:5000/api/suppliers/add', {
+      const res = await fetch(`${API_BASE}/api/suppliers/add`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify(supForm)
@@ -471,7 +510,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     if (!window.confirm('Are you sure you want to deactivate this supplier?')) return;
     setError(''); setMessage('');
     try {
-      const res = await fetch(`http://localhost:5000/api/suppliers/${id}/deactivate`, {
+      const res = await fetch(`${API_BASE}/api/suppliers/${id}/deactivate`, {
         method: 'PUT',
         headers: getHeaders()
       });
@@ -508,7 +547,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:5000/api/suppliers/${id}`, {
+      const res = await fetch(`${API_BASE}/api/suppliers/${id}`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify(editSupForm)
@@ -804,6 +843,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             { id: 'orders', label: 'Purchase Orders', icon: '📦' },
             { id: 'suppliers', label: 'Suppliers Registry', icon: '🏭' },
             { id: 'payment', label: 'Payment', icon: '💳' },
+            { id: 'reports', label: 'Reports', icon: '📑' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
             <div key={item.id} onClick={() => { setActivePage(item.id); setError(''); setMessage(''); }}
@@ -826,6 +866,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             {activePage === 'orders' && 'Purchase Orders Catalog'}
             {activePage === 'suppliers' && 'Supplier Registry'}
             {activePage === 'payment' && 'Payment Portal'}
+            {activePage === 'reports' && 'Reports Center'}
             {activePage === 'settings' && 'User Settings & Preferences'}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -989,7 +1030,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           {message && <div style={{ background: '#e8f5e9', border: '1px solid #4caf50', color: '#2e7d32', padding: '10px 16px', borderRadius: '6px', marginBottom: '16px' }}>{message}</div>}
 
           {/* Stats Bar */}
-          {activePage === 'settings' ? null : activePage === 'suppliers' ? (
+          {activePage === 'settings' || activePage === 'reports' ? null : activePage === 'suppliers' ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
               {supplierStats.map((s, i) => (
                 <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
@@ -1376,7 +1417,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                 if (!supplierId) return;
                                 try {
                                   const token = JSON.parse(localStorage.getItem('user'))?.token;
-                                  const res = await fetch(`http://localhost:5000/api/purchase-orders/${po._id}/supplier`, {
+                                  const res = await fetch(`${API_BASE}/api/purchase-orders/${po._id}/supplier`, {
                                     method: 'PUT',
                                     headers: {
                                       'Content-Type': 'application/json',
@@ -1433,27 +1474,26 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           }}>{po.status}</span>
                         </td>
                         <td style={{ padding: '12px 16px' }}>
-                          <span style={{
-                            background: po.paymentStatus === 'paid' ? '#dcfce7' : po.paymentStatus === 'failed' ? '#fee2e2' : '#fef3c7',
-                            color: po.paymentStatus === 'paid' ? '#15803d' : po.paymentStatus === 'failed' ? '#991b1b' : '#b45309',
-                            padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'
-                          }}>
-                            {po.paymentStatus === 'paid' ? '✓ Paid' : po.paymentStatus === 'failed' ? 'Failed' : 'Pending'}
-                          </span>
+                          {(() => {
+                            const pay = getPoPaymentState(po);
+                            return (
+                              <span
+                                onClick={pay.ready ? () => setActivePage('payment') : undefined}
+                                title={pay.ready ? 'Go to Payment Portal to pay this invoice' : undefined}
+                                style={{
+                                  background: pay.bg, color: pay.color,
+                                  padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold',
+                                  display: 'inline-block', cursor: pay.ready ? 'pointer' : 'default'
+                                }}>
+                                {pay.label}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td style={{ padding: '12px 16px' }}>
                           <div style={{ display: 'flex', gap: '6px', flexDirection: 'column', width: '130px' }}>
                             {po.status === 'Pending' && (
-                              <div style={{ display: 'flex', gap: '4px' }}>
-                                <button onClick={() => handleUpdateStatus(po._id, 'Approved')}
-                                  style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', flex: 1 }}>
-                                  Approve
-                                </button>
-                                <button onClick={() => handleUpdateStatus(po._id, 'Rejected')}
-                                  style={{ background: '#ef4444', color: 'white', border: 'none', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', flex: 1 }}>
-                                  Reject
-                                </button>
-                              </div>
+                              <span style={{ fontSize: '11px', color: '#b45309', fontWeight: '600' }}>Awaiting Director approval</span>
                             )}
                             {po.status === 'Approved' && (
                               <button onClick={() => handleSendToSupplier(po._id, po.poNumber, po.supplier)}
@@ -1461,40 +1501,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                 Send to Supplier
                               </button>
                             )}
-                            {['Approved', 'Sent', 'Delivered'].includes(po.status) && po.paymentStatus !== 'paid' && (
-                              <button
-                                disabled={payingPoId === po._id}
-                                onClick={async () => {
-                                  try {
-                                    setPayingPoId(po._id);
-                                    setError('');
-                                    await createCheckoutSession(po._id);
-                                  } catch (err) {
-                                    setError(err.message || 'Failed to initiate payment checkout.');
-                                    setPayingPoId(null);
-                                  }
-                                }}
-                                style={{
-                                  background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                  color: 'white',
-                                  border: 'none',
-                                  padding: '6px 10px',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  fontSize: '11px',
-                                  fontWeight: 'bold',
-                                  marginTop: '2px'
-                                }}
-                              >
-                                {payingPoId === po._id ? 'Redirecting...' : '💳 Pay Now'}
-                              </button>
-                            )}
                             <select
                               value={po.status} 
                               onChange={e => handleUpdateStatus(po._id, e.target.value)}
                               style={{ padding: '4px', fontSize: '11px', borderRadius: '4px', border: '1px solid #ddd', cursor: 'pointer', outline: 'none', background: 'white' }}
                             >
-                              {['Pending', 'Approved', 'Rejected', 'Sent', 'Delivered', 'Closed', 'Cancelled'].map(st => (
+                              {getPoStatusOptions(po.status).map(st => (
                                 <option key={st} value={st}>{st}</option>
                               ))}
                             </select>
@@ -1699,10 +1711,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       }
 
                       let payMethodDisplay = '-';
-                      if (inv.paymentMethod) {
+                      if (status === 'Paid' && inv.paymentMethod) {
                         payMethodDisplay = inv.paymentMethod + (inv.stripeSessionId ? ` (..${inv.stripeSessionId.slice(-6)})` : '');
                       } else if (status === 'Paid') {
-                        payMethodDisplay = 'Stripe (Direct)';
+                        payMethodDisplay = 'Stripe';
                       }
 
                       return (
@@ -1733,7 +1745,21 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                             {payMethodDisplay}
                           </td>
                           <td style={{ padding: '14px 16px' }}>
-                            {status === 'Approved' ? (
+                            {status === 'Paid' ? (
+                              <button
+                                onClick={() => handleDownloadReceipt(inv)}
+                                style={{ background: '#e8f5e9', color: '#2e7d32', border: '1px solid #a5d6a7', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              >
+                                🧾 Receipt
+                              </button>
+                            ) : status === 'Approved' ? (
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              <button
+                                onClick={() => openManualPay(inv)}
+                                style={{ background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', padding: '7px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              >
+                                💵 Cash / Cheque
+                              </button>
                               <button
                                 onClick={() => handlePayInvoice(inv._id)}
                                 disabled={payingInvoiceId === inv._id}
@@ -1748,8 +1774,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                   cursor: payingInvoiceId === inv._id ? 'not-allowed' : 'pointer'
                                 }}
                               >
-                                {payingInvoiceId === inv._id ? 'Redirecting…' : '💳 Pay'}
+                                {payingInvoiceId === inv._id ? 'Redirecting…' : '💳 Stripe'}
                               </button>
+                              </div>
                             ) : (
                               <span style={{ color: '#bbb', fontSize: '12px' }}>-</span>
                             )}
@@ -1770,6 +1797,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             </div>
           )}
 
+          {activePage === 'reports' && <ReportsCenter tabs={['procurement', 'payment', 'inventory']} />}
+
           {activePage === 'settings' && <SettingsPage user={user} onLogout={onLogout} onUserUpdate={onUserUpdate} />}
 
           {/* Footer */}
@@ -1780,6 +1809,87 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       </div>
 
       {renderPOStatsModal()}
+
+      {manualPayInvoice && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <form onSubmit={handleRecordPayment} style={{ background: 'white', borderRadius: '12px', width: '460px', maxWidth: '92vw', padding: '26px', boxShadow: '0 10px 25px rgba(0,0,0,0.3)', borderTop: '6px solid #0d1b4b', textAlign: 'left', color: '#0f172a' }}>
+            <h3 style={{ margin: '0 0 4px', color: '#0d1b4b', fontSize: '17px' }}>Record Payment</h3>
+            <p style={{ margin: '0 0 16px', color: '#64748b', fontSize: '13px' }}>
+              Invoice <strong>{manualPayInvoice.invoiceNumber}</strong> · {manualPayInvoice.supplier?.name || 'Supplier'} · PO {manualPayInvoice.po?.poNumber || '-'}
+            </p>
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', fontSize: '13px' }}>
+              Amount to pay: <strong style={{ fontSize: '16px', color: '#0d1b4b' }}>LKR {Number(manualPayInvoice.amount).toLocaleString()}</strong>
+              <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>Approved by {manualPayInvoice.approvedBy || 'Director'}</div>
+            </div>
+
+            {manualPayError && <div style={{ background: '#ffebee', border: '1px solid #ef5350', color: '#c62828', padding: '8px 12px', borderRadius: '6px', marginBottom: '12px', fontSize: '13px' }}>{manualPayError}</div>}
+
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Payment Method *</label>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+              {['Cash', 'Cheque'].map(mth => (
+                <button
+                  type="button"
+                  key={mth}
+                  onClick={() => setManualPayForm({ ...manualPayForm, method: mth })}
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: '700', fontSize: '13px', border: manualPayForm.method === mth ? '2px solid #ff9800' : '1px solid #cbd5e1', background: manualPayForm.method === mth ? '#fff7ed' : 'white', color: '#0d1b4b' }}
+                >
+                  {mth === 'Cash' ? '💵 Cash' : '🏦 Cheque'}
+                </button>
+              ))}
+            </div>
+
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>
+              {manualPayForm.method === 'Cheque' ? 'Cheque Number *' : 'Voucher / Receipt No.'}
+            </label>
+            <input
+              type="text"
+              value={manualPayForm.reference}
+              onChange={e => setManualPayForm({ ...manualPayForm, reference: e.target.value })}
+              placeholder={manualPayForm.method === 'Cheque' ? 'e.g. 004512' : 'Optional'}
+              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
+            />
+
+            {manualPayForm.method === 'Cheque' && (
+              <>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Bank</label>
+                <input
+                  type="text"
+                  value={manualPayForm.bankName}
+                  onChange={e => setManualPayForm({ ...manualPayForm, bankName: e.target.value })}
+                  placeholder="e.g. Commercial Bank"
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
+                />
+              </>
+            )}
+
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Payment Date *</label>
+            <input
+              type="date"
+              value={manualPayForm.paidAt}
+              max={new Date().toISOString().substring(0, 10)}
+              onChange={e => setManualPayForm({ ...manualPayForm, paidAt: e.target.value })}
+              required
+              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
+            />
+
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Notes</label>
+            <textarea
+              value={manualPayForm.notes}
+              onChange={e => setManualPayForm({ ...manualPayForm, notes: e.target.value })}
+              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', height: '60px', marginBottom: '18px', boxSizing: 'border-box' }}
+            />
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button type="button" onClick={() => setManualPayInvoice(null)} disabled={recordingPayment} style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '9px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
+                Cancel
+              </button>
+              <button type="submit" disabled={recordingPayment} style={{ background: recordingPayment ? '#94a3b8' : '#2e7d32', color: 'white', border: 'none', padding: '9px 16px', borderRadius: '6px', cursor: recordingPayment ? 'not-allowed' : 'pointer', fontWeight: '700', fontSize: '13px' }}>
+                {recordingPayment ? 'Recording…' : 'Record Payment'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };

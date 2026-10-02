@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import VarianceReport from './VarianceReport';
+import ReportsCenter from './ReportsCenter';
 import SettingsPage from './SettingsPage';
 import { Calendar } from 'lucide-react';
 import { formatDate, formatDateLong, formatDayMonth, formatFullDate, formatShortDate, formatTime, formatDateTime } from '../utils/dateUtils';
@@ -18,6 +19,7 @@ import {
   ResponsiveContainer,
   Cell
 } from 'recharts';
+import { API_BASE } from '../config';
 
 const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -92,7 +94,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchNotifications = async () => {
     if (!hasSession()) return;
     try {
-      const res = await fetch('http://localhost:5000/api/notifications', {
+      const res = await fetch(`${API_BASE}/api/notifications`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -114,7 +116,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 0. Fetch Projects
     try {
-      const res = await fetch('http://localhost:5000/api/projects', { headers });
+      const res = await fetch(`${API_BASE}/api/projects`, { headers });
       const data = await res.json();
       let projList = data.success ? data.data : [];
       if (!projList || projList.length < 5) {
@@ -139,7 +141,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 1. Fetch BOMs
     try {
-      const res = await fetch('http://localhost:5000/api/bom', { headers });
+      const res = await fetch(`${API_BASE}/api/bom`, { headers });
       const data = await res.json();
       let bomList = data.success ? data.data : [];
       if (!bomList || bomList.length < 3) {
@@ -162,7 +164,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 2. Fetch POs (for Budget Utilized calculation)
     try {
-      const res = await fetch('http://localhost:5000/api/purchase-orders', { headers });
+      const res = await fetch(`${API_BASE}/api/purchase-orders`, { headers });
       const data = await res.json();
       let poList = data.success ? data.data : [];
       if (!poList || poList.length === 0) {
@@ -181,7 +183,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 2b. Fetch invoices awaiting payment approval
     try {
-      const res = await fetch('http://localhost:5000/api/invoices', { headers });
+      const res = await fetch(`${API_BASE}/api/invoices`, { headers });
       const data = await res.json();
       setInvoices(data.success ? data.data : []);
     } catch {
@@ -190,7 +192,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 3. Fetch Variance (for overall variance stat)
     try {
-      const res = await fetch('http://localhost:5000/api/material-usage/variance', { headers });
+      const res = await fetch(`${API_BASE}/api/material-usage/variance`, { headers });
       const data = await res.json();
       let varList = data.success ? (data.report || []) : [];
       if (!varList || varList.length === 0) {
@@ -209,7 +211,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 4. Fetch Inventory (for stock levels analytics)
     try {
-      const res = await fetch('http://localhost:5000/api/inventory', { headers });
+      const res = await fetch(`${API_BASE}/api/inventory`, { headers });
       const data = await res.json();
       let invList = Array.isArray(data) ? data : [];
       if (!invList || invList.length === 0) {
@@ -230,7 +232,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 5. Fetch Usages (for usage trends analytics)
     try {
-      const res = await fetch('http://localhost:5000/api/material-usage', { headers });
+      const res = await fetch(`${API_BASE}/api/material-usage`, { headers });
       const data = await res.json();
       let usageList = data.success ? (data.data || []) : [];
       if (!usageList || usageList.length === 0) {
@@ -249,7 +251,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 6. Fetch Site Store Inventory
     try {
-      const res = await fetch('http://localhost:5000/api/admin/projects-overview', { headers });
+      const res = await fetch(`${API_BASE}/api/admin/projects-overview`, { headers });
       const data = await res.json();
       let siteList = data.success && Array.isArray(data.data) ? data.data : [];
       if (!siteList || siteList.length === 0) {
@@ -282,7 +284,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/${id}/approve`, {
+      const res = await fetch(`${API_BASE}/api/bom/${id}/approve`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ note: noteText })
@@ -296,8 +298,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('✅ BOM Approved successfully! (Demo Mode)');
-      setBoms(prev => prev.map(b => b._id === id ? { ...b, status: 'Approved', approvedBy: user?.name || 'Director', rejectionReason: noteText } : b));
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setDirectorNote('');
     }
   };
@@ -306,7 +307,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/${id}/reject`, {
+      const res = await fetch(`${API_BASE}/api/bom/${id}/reject`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ rejectionReason: reason })
@@ -318,11 +319,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         setDirectorNote('');
         fetchData();
       } else {
-        alert(`Failed to reject BOM: ${data.message}`);
+        throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('❌ BOM Rejected (Demo Mode)');
-      setBoms(prev => prev.map(b => b._id === id ? { ...b, status: 'Rejected', rejectionReason: reason, approvedBy: user?.name || 'Director' } : b));
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setShowViewModal(false);
       setDirectorNote('');
     }
@@ -340,7 +340,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/${selectedBomId}/reject`, {
+      const res = await fetch(`${API_BASE}/api/bom/${selectedBomId}/reject`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ rejectionReason })
@@ -354,8 +354,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('❌ BOM Rejected and note sent to PM. (Demo Mode)');
-      setBoms(prev => prev.map(b => b._id === selectedBomId ? { ...b, status: 'Rejected', rejectionReason, approvedBy: user?.name || 'Director' } : b));
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setShowRejectModal(false);
     }
   };
@@ -364,7 +363,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/purchase-orders/${poId}/approve`, {
+      const res = await fetch(`${API_BASE}/api/purchase-orders/${poId}/approve`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({})
@@ -378,8 +377,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('✅ Purchase Order approved successfully! (Demo Mode)');
-      setPos(prev => prev.map(p => p._id === poId ? { ...p, status: 'Approved', approvedBy: user?.name || 'Director' } : p));
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setShowViewPOModal(false);
     }
   };
@@ -406,7 +404,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/purchase-orders/${poId}/reject`, {
+      const res = await fetch(`${API_BASE}/api/purchase-orders/${poId}/reject`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ rejectionReason: poActionNote })
@@ -421,8 +419,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('❌ Purchase Order rejected. (Demo Mode)');
-      setPos(prev => prev.map(p => p._id === poId ? { ...p, status: 'Rejected', rejectionReason: poActionNote, approvedBy: user?.name || 'Director' } : p));
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setPoActionModal(null);
       setShowViewPOModal(false);
     }
@@ -432,7 +429,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/invoices/${invoiceId}/approve-payment`, {
+      const res = await fetch(`${API_BASE}/api/invoices/${invoiceId}/approve-payment`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({})
@@ -445,8 +442,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('✅ Invoice approved for payment! (Demo Mode)');
-      setInvoices(prev => prev.map(inv => inv._id === invoiceId ? { ...inv, status: 'Approved', approvedBy: user?.name || 'Director' } : inv));
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
     }
   };
 
@@ -467,7 +463,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/invoices/${invoiceId}/reject-payment`, {
+      const res = await fetch(`${API_BASE}/api/invoices/${invoiceId}/reject-payment`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ rejectionReason: invoiceActionNote })
@@ -481,8 +477,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('❌ Invoice payment rejected. (Demo Mode)');
-      setInvoices(prev => prev.map(inv => inv._id === invoiceId ? { ...inv, status: 'Rejected', rejectionReason: invoiceActionNote, approvedBy: user?.name || 'Director' } : inv));
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setInvoiceActionModal(null);
     }
   };
@@ -649,7 +644,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (!viewingBom || !viewingBom.projectId?._id) return;
     
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/versions/${viewingBom.projectId._id}`, {
+      const res = await fetch(`${API_BASE}/api/bom/versions/${viewingBom.projectId._id}`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -1029,6 +1024,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             { id: 'po-approvals', label: 'PO Approvals', icon: '🧾' },
             { id: 'payment-approvals', label: 'Payment Approvals', icon: '💰' },
             { id: 'reports', label: 'Variance Reports', icon: '📊' },
+            { id: 'reports-center', label: 'Reports Center', icon: '🗂️' },
             { id: 'analytics', label: 'Analytics Chart', icon: '📈' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
@@ -1053,6 +1049,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             {activePage === 'po-approvals' && 'Purchase Order Approval Registry'}
             {activePage === 'payment-approvals' && 'Invoice & Payment Approval Registry'}
             {activePage === 'reports' && 'Project Material Variance Reports'}
+            {activePage === 'reports-center' && 'Reports Center'}
             {activePage === 'analytics' && 'Operational Analytics'}
             {activePage === 'settings' && 'Settings & Preferences'}
           </h2>
@@ -1073,7 +1070,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <span onClick={async () => {
                       for (const n of notifications) {
                         if (!n.isRead) {
-                          await fetch(`http://localhost:5000/api/notifications/${n._id}/read`, {
+                          await fetch(`${API_BASE}/api/notifications/${n._id}/read`, {
                             method: 'PUT',
                             headers: getHeaders()
                           });
@@ -1091,7 +1088,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                       <div key={idx} 
                         onClick={async () => {
                           if (!notif.isRead) {
-                            await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+                            await fetch(`${API_BASE}/api/notifications/${notif._id}/read`, {
                               method: 'PUT',
                               headers: getHeaders()
                             });
@@ -1468,8 +1465,16 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                             }}>{inv.status}</span>
                           </td>
                           <td style={{ padding: '14px 16px' }}>
-                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                              {isPending ? (
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
+                              {inv.file?.url ? (
+                                <a href={`${API_BASE}${inv.file.url}`} target="_blank" rel="noopener noreferrer"
+                                  style={{ ...poTableBtnBase, background: '#0d1b4b', textDecoration: 'none', display: 'inline-block' }}>
+                                  View
+                                </a>
+                              ) : (
+                                <span style={{ fontSize: '12px', color: '#94a3b8' }}>No file</span>
+                              )}
+                              {isPending && (
                                 <>
                                   <button onClick={() => openInvoiceActionModal(inv._id, 'approve')}
                                     style={{ ...poTableBtnBase, background: '#2e7d32' }}>
@@ -1480,8 +1485,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                                     ✕ Reject
                                   </button>
                                 </>
-                              ) : (
-                                <span style={{ fontSize: '12px', color: '#94a3b8' }}>-</span>
                               )}
                             </div>
                           </td>
@@ -1503,6 +1506,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'reports' && <VarianceReport />}
+          {activePage === 'reports-center' && <ReportsCenter />}
           {activePage === 'analytics' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               {/* Row 1: Project Counts & Inventory Stock Levels */}

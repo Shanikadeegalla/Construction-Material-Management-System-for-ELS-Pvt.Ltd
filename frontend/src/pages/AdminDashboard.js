@@ -26,6 +26,8 @@ import autoTable from 'jspdf-autotable';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
 import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort, formatFullDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
+import { API_BASE } from '../config';
+import ReportsCenter from './ReportsCenter';
 
 // Taxonomy of gate-able actions in the app, grouped by module. This mirrors the
 // backend's Permission collection (role + action -> Full/View/Partial/Approve/None).
@@ -170,7 +172,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchMaterialMaster = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/item-master', {
+      const res = await fetch(`${API_BASE}/api/item-master`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -191,7 +193,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMaterialForm(emptyMaterialForm);
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/item-master/next-code', {
+      const res = await fetch(`${API_BASE}/api/item-master/next-code`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -212,8 +214,8 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const url = editingMaterialId
-        ? `http://localhost:5000/api/item-master/${editingMaterialId}`
-        : 'http://localhost:5000/api/item-master';
+        ? `${API_BASE}/api/item-master/${editingMaterialId}`
+        : `${API_BASE}/api/item-master`;
       const res = await fetch(url, {
         method: editingMaterialId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -261,7 +263,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     const newStatus = item.status === 'Active' ? 'Inactive' : 'Active';
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/item-master/${item._id}`, {
+      const res = await fetch(`${API_BASE}/api/item-master/${item._id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status: newStatus })
@@ -278,10 +280,30 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  const handleDeleteMaterial = async (item) => {
+    if (!window.confirm(`Permanently remove "${item.materialName}" (${item.materialCode}) from the system? This cannot be undone.`)) return;
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`${API_BASE}/api/item-master/${item._id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        showSuccessMessage('✅ Material removed successfully!');
+        fetchMaterialMaster();
+      } else {
+        showErrorMessage(`❌ ${data.message || 'Failed to remove material.'}`);
+      }
+    } catch (err) {
+      showErrorMessage('❌ Error connecting to server.');
+    }
+  };
+
   const fetchSuppliers = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/suppliers', {
+      const res = await fetch(`${API_BASE}/api/suppliers`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -312,7 +334,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     setSupForm(emptySupplierForm);
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/suppliers/next-id', {
+      const res = await fetch(`${API_BASE}/api/suppliers/next-id`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -335,7 +357,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const formData = new FormData();
       formData.append('document', file);
-      const res = await fetch('http://localhost:5000/api/suppliers/upload-document', {
+      const res = await fetch(`${API_BASE}/api/suppliers/upload-document`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData
@@ -366,7 +388,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const url = editingSupplierId ? `http://localhost:5000/api/suppliers/${editingSupplierId}` : 'http://localhost:5000/api/suppliers';
+      const url = editingSupplierId ? `${API_BASE}/api/suppliers/${editingSupplierId}` : `${API_BASE}/api/suppliers`;
       const res = await fetch(url, {
         method: editingSupplierId ? 'PUT' : 'POST',
         headers: {
@@ -414,7 +436,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (!window.confirm('Are you sure you want to deactivate this supplier?')) return;
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/suppliers/${id}/deactivate`, {
+      const res = await fetch(`${API_BASE}/api/suppliers/${id}/deactivate`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -431,7 +453,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const handleSupplierActivate = async (id) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/suppliers/${id}/activate`, {
+      const res = await fetch(`${API_BASE}/api/suppliers/${id}/activate`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -850,7 +872,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchNotifications = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/inventory/notifications', {
+      const res = await fetch(`${API_BASE}/api/inventory/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -858,7 +880,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         setNotifications(data.data);
       }
 
-      const countRes = await fetch('http://localhost:5000/api/notifications/count', {
+      const countRes = await fetch(`${API_BASE}/api/notifications/count`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const countData = await countRes.json();
@@ -902,7 +924,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchUsers = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/auth/users', {
+      const res = await fetch(`${API_BASE}/api/auth/users`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -943,7 +965,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchAuditLogs = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/auth/audit-logs', {
+      const res = await fetch(`${API_BASE}/api/auth/audit-logs`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -957,7 +979,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchRoles = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/roles', {
+      const res = await fetch(`${API_BASE}/api/roles`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -972,7 +994,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchPermissions = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/permissions', {
+      const res = await fetch(`${API_BASE}/api/permissions`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -1023,8 +1045,8 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const url = editingRole 
-        ? `http://localhost:5000/api/roles/${editingRole._id}`
-        : 'http://localhost:5000/api/roles';
+        ? `${API_BASE}/api/roles/${editingRole._id}`
+        : `${API_BASE}/api/roles`;
       const method = editingRole ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
@@ -1043,7 +1065,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
       if (data.success) {
         const roleName = roleFormName.trim();
         for (const [moduleName, level] of Object.entries(roleFormPermissions)) {
-          await fetch('http://localhost:5000/api/permissions/edit', {
+          await fetch(`${API_BASE}/api/permissions/edit`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -1068,7 +1090,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const newStatus = role.status === 'Active' ? 'Inactive' : 'Active';
-      const res = await fetch(`http://localhost:5000/api/roles/${role._id}`, {
+      const res = await fetch(`${API_BASE}/api/roles/${role._id}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -1092,7 +1114,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (!selectedPermissionCell) return;
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/permissions/edit', {
+      const res = await fetch(`${API_BASE}/api/permissions/edit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1124,7 +1146,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/permissions/bulk-edit', {
+      const res = await fetch(`${API_BASE}/api/permissions/bulk-edit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1152,7 +1174,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const handleDirectPermissionEdit = async (role, module, level) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/permissions/edit', {
+      const res = await fetch(`${API_BASE}/api/permissions/edit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1190,7 +1212,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     setUserViewMode('details');
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/auth/next-employee-id', {
+      const res = await fetch(`${API_BASE}/api/auth/next-employee-id`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -1213,7 +1235,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const formData = new FormData();
       formData.append('avatar', file);
-      const res = await fetch('http://localhost:5000/api/auth/upload-avatar', {
+      const res = await fetch(`${API_BASE}/api/auth/upload-avatar`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData
@@ -1265,7 +1287,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/auth/register', {
+      const res = await fetch(`${API_BASE}/api/auth/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1292,7 +1314,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const handleToggleStatus = async (targetUser) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const endpoint = `http://localhost:5000/api/auth/users/${targetUser._id}/${targetUser.status !== false ? 'deactivate' : 'activate'}`;
+      const endpoint = `${API_BASE}/api/auth/users/${targetUser._id}/${targetUser.status !== false ? 'deactivate' : 'activate'}`;
       const res = await fetch(endpoint, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` }
@@ -1347,7 +1369,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
       // If email changed, call the specific update-email endpoint first
       if (editForm.email.trim().toLowerCase() !== selectedUser.email.toLowerCase()) {
-        const emailRes = await fetch(`http://localhost:5000/api/users/${selectedUser._id}/email`, {
+        const emailRes = await fetch(`${API_BASE}/api/users/${selectedUser._id}/email`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -1363,7 +1385,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
       }
 
       // Then save the remaining fields (name, role, phone, etc.)
-      const res = await fetch(`http://localhost:5000/api/auth/users/${selectedUser._id}`, {
+      const res = await fetch(`${API_BASE}/api/auth/users/${selectedUser._id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1410,7 +1432,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/auth/users/${resetPasswordUser._id}/reset-password`, {
+      const res = await fetch(`${API_BASE}/api/auth/users/${resetPasswordUser._id}/reset-password`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1513,7 +1535,8 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
       parts = ['Roles & Permissions', rolesSubTab === 'roles' ? 'System Role Profiles' : 'Workspace Access Matrix'];
     }
     if (activePage === 'activity') parts = ['Activity Log', 'System Audit Trails'];
-    if (activePage === 'settings') parts = ['Settings', 'User Preferences'];
+    if (activePage === 'reports') parts = ['Reports', 'Reports Center'];
+    if (activePage === 'settings') parts = ['Settings'];
 
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>
@@ -1762,6 +1785,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
             { id: 'material-management', label: 'Material Management', icon: <Package size={18} /> },
             { id: 'roles-permissions', label: 'Roles & Permissions', icon: <ShieldAlert size={18} /> },
             { id: 'activity', label: 'Activity Log', icon: <Clock size={18} /> },
+            { id: 'reports', label: 'Reports', icon: <Monitor size={18} /> },
             { id: 'settings', label: 'Settings', icon: <Settings size={18} /> }
           ].map(item => (
             <div key={item.id} onClick={() => {
@@ -1799,6 +1823,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
             {activePage === 'material-management' && 'Master Material Management'}
             {activePage === 'roles-permissions' && 'Roles & Permissions'}
             {activePage === 'activity' && 'Activity Logs & Audit Trails'}
+            {activePage === 'reports' && 'Reports Center'}
             {activePage === 'settings' && 'Settings & Controls'}
           </h2>
 
@@ -1874,10 +1899,10 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
               {/* Stats Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px', marginBottom: '32px' }}>
                 {[
-                  { label: 'Total Accounts', value: users.length, icon: <Users size={22} />, color: '#3b82f6', border: '#cbd5e1', keyType: 'total' },
-                  { label: 'Active Users', value: users.filter(u => u.status !== false).length, icon: <CheckCircle2 size={22} />, color: '#10b981', border: '#cbd5e1', keyType: 'active' },
-                  { label: 'Deactivated Accounts', value: users.filter(u => u.status === false).length, icon: <UserMinus size={22} />, color: '#ef4444', border: '#cbd5e1', keyType: 'deactivated' },
-                  { label: 'System Logs Recorded', value: auditLogs.length, icon: <Clock size={22} />, color: '#6366f1', border: '#cbd5e1', keyType: 'logs' }
+                  { label: 'Active Users', value: users.filter(u => u.status !== false).length, subtitle: `${users.filter(u => u.status === false).length} deactivated`, icon: <CheckCircle2 size={22} />, color: '#10b981', border: '#cbd5e1', keyType: 'active' },
+                  { label: 'Active Suppliers', value: suppliers.filter(s => s.status === 'Active').length, subtitle: `of ${suppliers.length} registered`, icon: <Truck size={22} />, color: '#3b82f6', border: '#cbd5e1', keyType: 'suppliers' },
+                  { label: 'Active Materials', value: materialMasterList.filter(m => m.status === 'Active').length, subtitle: `of ${materialMasterList.length} in catalogue`, icon: <Package size={22} />, color: '#8b5cf6', border: '#cbd5e1', keyType: 'materials' },
+                  (() => { const failed = auditLogs.filter(l => l.status === 'Failed' && new Date(l.timestamp) >= new Date(Date.now() - 24*60*60*1000)).length; return { label: 'Failed Logins (24h)', value: failed, subtitle: 'Last 24 hours', icon: <Clock size={22} />, color: failed > 0 ? '#ef4444' : '#64748b', border: '#cbd5e1', keyType: 'failedLogins' }; })()
                 ].map((stat, i) => (
                   <div
                     key={i}
@@ -1895,6 +1920,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div>
                       <div style={{ fontSize: '13px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</div>
                       <div style={{ fontSize: '28px', fontWeight: '800', color: '#0d1b4b', marginTop: '8px' }}>{stat.value}</div>
+                      {stat.subtitle && <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>{stat.subtitle}</div>}
                     </div>
                     <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: `${stat.color}15`, color: stat.color, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {stat.icon}
@@ -2104,7 +2130,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         >
                           <div style={{ width: '64px', height: '64px', borderRadius: '50%', overflow: 'hidden', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '22px', color: '#94a3b8', fontWeight: '700' }}>
                             {avatarPreview ? (
-                              <img src={avatarPreview.startsWith('blob:') ? avatarPreview : `http://localhost:5000${avatarPreview}`} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              <img src={avatarPreview.startsWith('blob:') ? avatarPreview : `${API_BASE}${avatarPreview}`} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                             ) : (
                               (selectedUser ? selectedUser.name : newUser.name || '?').charAt(0).toUpperCase()
                             )}
@@ -2723,6 +2749,9 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
           )}
 
+          {/* REPORTS PAGE */}
+          {activePage === 'reports' && <ReportsCenter />}
+
           {/* ACTIVITY LOG PAGE */}
           {activePage === 'activity' && (
             <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', overflow: 'hidden' }}>
@@ -2934,7 +2963,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                           <div style={{ fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '8px' }}>ID Photo</div>
                           {supForm.documents.idPhoto ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-                              <a href={`http://localhost:5000${supForm.documents.idPhoto.url}`} target="_blank" rel="noreferrer" style={{ color: '#2563eb', textDecoration: 'underline', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <a href={`${API_BASE}${supForm.documents.idPhoto.url}`} target="_blank" rel="noreferrer" style={{ color: '#2563eb', textDecoration: 'underline', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 ⬇ {supForm.documents.idPhoto.filename}
                               </a>
                               <button type="button" onClick={() => setSupForm(prev => ({ ...prev, documents: { ...prev.documents, idPhoto: null } }))}
@@ -3213,6 +3242,12 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                             style={{ background: m.status === 'Active' ? '#c62828' : '#2e7d32', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
                             {m.status === 'Active' ? 'Deactivate' : 'Activate'}
                           </button>
+                          {m.status === 'Inactive' && (
+                            <button onClick={() => handleDeleteMaterial(m)}
+                              style={{ background: '#475569', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginLeft: '6px' }}>
+                              Remove
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}

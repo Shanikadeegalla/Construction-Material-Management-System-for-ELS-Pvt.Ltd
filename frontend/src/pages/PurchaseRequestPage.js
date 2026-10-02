@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateUtils';
+import { API_BASE } from '../config';
 
 function PurchaseRequestPage({ user }) {
   const [requests, setRequests] = useState([]);
@@ -16,8 +17,8 @@ function PurchaseRequestPage({ user }) {
   const [formNotes, setFormNotes] = useState('');
   const [formItems, setFormItems] = useState([{ material: '', quantity: '' }]);
 
-  const API_PR_URL = 'http://localhost:5000/api/purchase-requests';
-  const API_INVENTORY_URL = 'http://localhost:5000/api/inventory';
+  const API_PR_URL = `${API_BASE}/api/purchase-requests`;
+  const API_INVENTORY_URL = `${API_BASE}/api/inventory`;
 
   // Fetch purchase requests and materials
   const fetchData = async () => {

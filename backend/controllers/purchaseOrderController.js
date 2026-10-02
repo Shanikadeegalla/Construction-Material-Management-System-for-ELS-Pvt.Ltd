@@ -4,7 +4,7 @@ import Supplier from '../models/Supplier.js';
 import PurchaseRequest from '../models/PurchaseRequest.js';
 import User from '../models/userModel.js';
 import mongoose from 'mongoose';
-import { createNotificationHelper } from './notificationController.js';
+import { createNotificationHelper, notifyRoles } from './notificationController.js';
 import { sendMail, escapeHtml } from '../utils/mailer.js';
 
 // Helper to resolve material name to an ObjectId, creating a Material if it doesn't exist
@@ -243,15 +243,25 @@ export const updatePurchaseOrderStatus = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid PO status.' });
     }
 
+    const existing = await PurchaseOrder.findById(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Purchase order not found.' });
+    }
+
+    // A PO can only go out to the supplier after Director approval, and can only be
+    // delivered once it has been sent.
+    if (status === 'Sent' && !['Approved', 'Sent'].includes(existing.status)) {
+      return res.status(400).json({ success: false, message: 'Purchase order must be Approved by the Director before it can be marked as Sent.' });
+    }
+    if (status === 'Delivered' && !['Sent', 'Delivered'].includes(existing.status)) {
+      return res.status(400).json({ success: false, message: 'Purchase order must be Sent to the supplier before it can be marked as Delivered.' });
+    }
+
     const po = await PurchaseOrder.findByIdAndUpdate(
       req.params.id,
       { status },
       { new: true }
     ).populate('prId');
-
-    if (!po) {
-      return res.status(404).json({ success: false, message: 'Purchase order not found.' });
-    }
 
     res.status(200).json({ success: true, message: `Purchase Order status updated to ${status}!`, data: po });
   } catch (error) {
@@ -286,6 +296,14 @@ export const approvePurchaseOrder = async (req, res) => {
     } catch (nErr) {
       console.error('Error creating PO approval notifications:', nErr);
     }
+
+    // Main Store receives the goods, so it is told which approved order to expect.
+    await notifyRoles(
+      ['MainStoreOfficer'],
+      `Purchase Order ${po.poNumber} was approved - expect delivery and record the GRN when goods arrive.`,
+      'PO_approved',
+      '/main-store-dashboard'
+    );
 
     res.status(200).json({ success: true, message: 'Purchase Order approved successfully!', data: po });
   } catch (error) {

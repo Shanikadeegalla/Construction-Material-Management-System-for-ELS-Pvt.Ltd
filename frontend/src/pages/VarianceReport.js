@@ -14,6 +14,7 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { formatDateTime, formatDayMonth } from '../utils/dateUtils';
+import { API_BASE } from '../config';
 
 const VarianceReport = () => {
   const [reportData, setReportData] = useState([]);
@@ -36,7 +37,7 @@ const VarianceReport = () => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('http://localhost:5000/api/material-usage/variance', {
+      const res = await fetch(`${API_BASE}/api/material-usage/variance`, {
         headers: getHeaders()
       });
       const data = await res.json();

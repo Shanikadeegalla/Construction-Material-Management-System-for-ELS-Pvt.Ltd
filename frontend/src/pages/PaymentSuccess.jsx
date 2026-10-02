@@ -41,19 +41,7 @@ function PaymentSuccess({ onReturnToPOs }) {
       setReceipt(data);
     } catch (err) {
       console.error('Error loading payment receipt details:', err);
-      // Fallback demo receipt if server is unavailable or demo mode
-      setReceipt({
-        invoiceNumber: 'INV-2026-001',
-        poNumber: 'PO-2026-001',
-        grnNumber: 'GRN-2026-001',
-        supplierName: 'Lanka Cement Ltd',
-        amount: 555000,
-        currency: 'lkr',
-        paidAt: new Date().toISOString(),
-        status: 'Paid',
-        stripeSessionId: 'cs_test_a1b2c3d4e5f6g7h8',
-        paidByName: 'Purchase Manager'
-      });
+      setError('The receipt details could not be loaded. Open the Payment page to confirm this payment and download its receipt.');
     } finally {
       setLoading(false);
     }
@@ -63,7 +51,7 @@ function PaymentSuccess({ onReturnToPOs }) {
     try {
       setDownloading(true);
       setError('');
-      await downloadPaymentReceipt(poId || 'demo');
+      await downloadPaymentReceipt(poId);
     } catch (err) {
       setError(err.message || 'Failed to download PDF receipt.');
     } finally {

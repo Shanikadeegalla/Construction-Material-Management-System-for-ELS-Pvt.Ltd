@@ -6,6 +6,10 @@ const paymentSchema = new mongoose.Schema({
     ref: 'PurchaseOrder',
     required: true
   },
+  invoice: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Invoice'
+  },
   supplier: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Supplier',
@@ -19,9 +23,29 @@ const paymentSchema = new mongoose.Schema({
     type: String,
     default: () => process.env.STRIPE_CURRENCY || 'lkr'
   },
-  stripeSessionId: {
+  // How the supplier was paid. Stripe payments are settled by the gateway;
+  // Cash and Cheque payments are recorded manually by the Purchase Manager.
+  method: {
     type: String,
-    required: true
+    enum: ['Stripe', 'Cash', 'Cheque'],
+    default: 'Stripe'
+  },
+  // Only set for Stripe payments.
+  stripeSessionId: {
+    type: String
+  },
+  // Receipt / voucher number for Cash, cheque number for Cheque.
+  reference: {
+    type: String,
+    default: ''
+  },
+  bankName: {
+    type: String,
+    default: ''
+  },
+  notes: {
+    type: String,
+    default: ''
   },
   status: {
     type: String,
