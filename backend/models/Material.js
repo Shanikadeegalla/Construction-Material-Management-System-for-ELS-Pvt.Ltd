@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { decryptDB } from '../utils/cryptoUtils.js';
+import { levelsForLocation } from '../utils/siteStoreLevels.js';
 
 const materialSchema = new mongoose.Schema({
   materialCode: {
@@ -81,9 +82,8 @@ materialSchema.pre('save', async function (next) {
       });
       if (master) {
         this.materialCode = master.materialCode;
-        this.minimumStock = master.minimumStock;
-        this.maximumStock = master.maximumStock;
-        this.reorderLevel = master.reorderLevel;
+        this.category = master.category;
+        Object.assign(this, levelsForLocation(master, this.location));
       }
     } catch (err) {
       // silent fail if model not registered

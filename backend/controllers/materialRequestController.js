@@ -1,7 +1,6 @@
 import MaterialRequest from '../models/MaterialRequest.js';
 import Material from '../models/Material.js';
 import ItemMaster from '../models/ItemMaster.js';
-import Project from '../models/Project.js';
 import User from '../models/userModel.js';
 import { decryptDB } from '../utils/cryptoUtils.js';
 import { createNotificationHelper } from './notificationController.js';
@@ -27,27 +26,11 @@ export const createMaterialRequest = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Only Site Store Officers can request materials.' });
     }
 
-    const { requiredDate, materials, notes, siteStoreId } = req.body;
+    const { requiredDate, materials, notes } = req.body;
 
     if (!requiredDate || !materials || !Array.isArray(materials) || materials.length === 0) {
       return res.status(400).json({ success: false, message: 'Please provide a required date and at least one material.' });
     }
-
-    if (!siteStoreId) {
-      return res.status(400).json({ success: false, message: 'Please select which Site Store this request is for.' });
-    }
-    const project = await Project.findById(siteStoreId);
-    if (!project) {
-      return res.status(400).json({ success: false, message: 'Selected Site Store was not found.' });
-    }
-    // A Site Store Officer is not tied to a single project - they choose which
-    // site they're acting for on each screen (mirroring how Main Store already
-    // picks a destination project for an ad hoc transfer), so the site is
-    // taken from the request body rather than the user's account.
-    const siteStore = {
-      siteStoreId: project._id,
-      siteStoreName: `${project.projectName} Site Store`
-    };
 
     // Reject duplicate material rows in the same request.
     const seenNames = new Set();
@@ -78,24 +61,23 @@ export const createMaterialRequest = async (req, res) => {
       }
     }
 
-    const siteMaterials = await Material.find({
-      location: 'SiteStore',
-      $or: [{ project_id: siteStore.siteStoreId }, { projectId: siteStore.siteStoreId }]
+    // The request is for the Site Store as a whole, so "available at site" is
+    // everything the Site Store holds of that material.
+    const siteMaterials = await Material.find({ location: 'SiteStore' });
+    const siteQtyByName = {};
+    siteMaterials.forEach(m => {
+      const name = decryptDB(m.name);
+      siteQtyByName[name] = (siteQtyByName[name] || 0) + (Number(decryptDB(m.quantity)) || 0);
     });
-    const decryptedSiteMats = siteMaterials.map(m => ({
-      name: decryptDB(m.name),
-      quantity: Number(decryptDB(m.quantity)) || 0
-    }));
 
     const preparedMaterials = materials.map(m => {
       const mm = masterByName.get(m.materialName);
-      const siteMat = decryptedSiteMats.find(sm => sm.name === m.materialName);
       return {
         materialName: m.materialName,
         category: mm.category || 'Other',
         unit: mm.unit,
         quantity: Number(m.quantity),
-        availableAtSite: siteMat ? siteMat.quantity : 0
+        availableAtSite: siteQtyByName[m.materialName] || 0
       };
     });
 
@@ -104,8 +86,6 @@ export const createMaterialRequest = async (req, res) => {
 
     const request = new MaterialRequest({
       requestNo,
-      siteStoreId: siteStore.siteStoreId,
-      siteStoreName: siteStore.siteStoreName,
       requestedBy: req.user.name,
       requestedByUserId: req.user._id,
       materials: preparedMaterials,

@@ -4,7 +4,8 @@ import mongoose from 'mongoose';
 // MaterialRequest (sourceRequestId set) or is pushed ad hoc by Main Store.
 // There is no project field here by design - the transfer is between two
 // stores only; project association happens later, separately, through
-// Material Issuance.
+// Material Issuance. siteStoreId is only set on legacy notes issued when each
+// project had its own Site Store.
 const materialTransferNoteSchema = new mongoose.Schema({
   mtnNumber: {
     type: String,
@@ -23,11 +24,11 @@ const materialTransferNoteSchema = new mongoose.Schema({
   siteStoreId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Project',
-    required: true
+    default: null
   },
   siteStoreName: {
     type: String,
-    required: true
+    default: 'Site Store'
   },
   transferDate: {
     type: Date,

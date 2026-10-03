@@ -289,7 +289,7 @@ export const getSupplierById = async (req, res) => {
   }
 };
 
-// Get a supplier's full profile: info + purchase history + quotations + invoices/payments + GRNs + performance
+// Get a supplier's full profile: info + purchase history + quotations + invoices/payments + GRNs
 // GET /api/suppliers/:id/profile
 export const getSupplierProfile = async (req, res) => {
   try {
@@ -315,49 +315,6 @@ export const getSupplierProfile = async (req, res) => {
       ]
     }).sort({ createdAt: -1 });
 
-    // Performance summary scoped to this supplier's own purchase orders
-    let deliveredCount = 0;
-    let onTimeCount = 0;
-    let totalOrderedQty = 0;
-    let totalReceivedQty = 0;
-
-    purchaseOrders.forEach(po => {
-      if (po.status === 'Delivered') {
-        deliveredCount += 1;
-        if (po.actualDeliveryDate && po.expectedDeliveryDate) {
-          if (new Date(po.actualDeliveryDate) <= new Date(po.expectedDeliveryDate)) {
-            onTimeCount += 1;
-          }
-        } else {
-          onTimeCount += 1;
-        }
-        totalOrderedQty += po.items.reduce((sum, item) => sum + (item.quantity || 0), 0);
-        totalReceivedQty += (po.receivedQty || 0);
-      }
-    });
-
-    let accuracyPercent = 100;
-    let onTimePercent = 100;
-    if (deliveredCount > 0) {
-      if (totalOrderedQty > 0) {
-        accuracyPercent = (totalReceivedQty / totalOrderedQty) * 100;
-      }
-      onTimePercent = (onTimeCount / deliveredCount) * 100;
-    }
-    accuracyPercent = Math.round(accuracyPercent * 10) / 10;
-    onTimePercent = Math.round(onTimePercent * 10) / 10;
-
-    let performanceRating = 'Poor';
-    if (deliveredCount === 0) {
-      performanceRating = 'N/A';
-    } else if (accuracyPercent > 95) {
-      performanceRating = 'Excellent';
-    } else if (accuracyPercent > 85) {
-      performanceRating = 'Good';
-    } else if (accuracyPercent > 70) {
-      performanceRating = 'Average';
-    }
-
     res.status(200).json({
       success: true,
       data: {
@@ -365,15 +322,7 @@ export const getSupplierProfile = async (req, res) => {
         purchaseOrders,
         quotations,
         invoices,
-        grns,
-        performance: {
-          totalOrders: purchaseOrders.length,
-          deliveredCount,
-          onTimeDeliveries: onTimeCount,
-          onTimePercent,
-          deliveryAccuracy: accuracyPercent,
-          performanceRating
-        }
+        grns
       }
     });
   } catch (error) {

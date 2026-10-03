@@ -1,4 +1,5 @@
 import Notification from '../models/Notification.js';
+import User from '../models/userModel.js';
 import { createNotificationHelper } from '../utils/notificationHelper.js';
 
 // @desc    Get user notifications by recipientId / userId / role
@@ -24,7 +25,7 @@ export const getNotifications = async (req, res) => {
         $and: [
           {
             $or: [
-              { recipientId: userId, type: { $in: directorTypes } },
+              { recipientId: userId },
               { role: 'Director' },
               { targetRole: 'Director' },
               { type: { $in: directorTypes } }
@@ -86,7 +87,7 @@ export const getNotificationCount = async (req, res) => {
         $and: [
           {
             $or: [
-              { recipientId: userId, type: { $in: directorTypes } },
+              { recipientId: userId },
               { role: 'Director' },
               { targetRole: 'Director' },
               { type: { $in: directorTypes } }
@@ -165,7 +166,7 @@ export const markAllAsRead = async (req, res) => {
         $and: [
           {
             $or: [
-              { recipientId: userId, type: { $in: directorTypes } },
+              { recipientId: userId },
               { role: 'Director' },
               { targetRole: 'Director' },
               { type: { $in: directorTypes } }
@@ -187,5 +188,21 @@ export const markAllAsRead = async (req, res) => {
   }
 };
 
-export { createNotificationHelper, createNotificationHelper as notifyRoles };
+export { createNotificationHelper };
+
+// Sends the same notification to every active user holding one of the given
+// roles. Never throws - a failed notification must not fail the business
+// transaction that triggered it.
+export const notifyRoles = async (roles, message, type = 'info', link = '') => {
+  try {
+    const recipients = await User.find({ role: { $in: roles }, status: { $ne: false } }).select('_id');
+    for (const r of recipients) {
+      await createNotificationHelper(r._id, message, type, link);
+    }
+    return recipients.length;
+  } catch (err) {
+    console.error('Error notifying roles:', err);
+    return 0;
+  }
+};
 

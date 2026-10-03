@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import Project from '../models/Project.js';
+import BOM from '../models/BOM.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
 import { UPLOAD_DIR } from '../config/uploadDir.js';
@@ -87,6 +88,28 @@ router.get('/next-id', protect, checkPermission('Create Project'), async (req, r
     const { startDate } = req.query;
     const { projectId } = await computeNextProjectId(startDate || Date.now());
     res.status(200).json({ success: true, projectId });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @desc    KPI counts for the PM dashboard cards
+// @route   GET /api/projects/pm-stats
+// @access  Private (Project Manager)
+router.get('/pm-stats', protect, checkPermission('Create Project'), async (req, res) => {
+  try {
+    // Same ownership rule as GET /api/projects: a PM only sees their own projects.
+    const projectQuery = req.user.role === 'ProjectManager' ? { createdBy: req.user._id } : {};
+    const projectIds = await Project.find(projectQuery).distinct('_id');
+
+    const [activeProjects, pendingBomApprovals] = await Promise.all([
+      Project.countDocuments({ ...projectQuery, status: 'Active' }),
+      // 'Submitted' (legacy: 'Pending') is the only state approveBOM accepts,
+      // i.e. the BOM is with the Director and not yet approved or rejected.
+      BOM.countDocuments({ projectId: { $in: projectIds }, status: { $in: ['Submitted', 'Pending'] } })
+    ]);
+
+    res.status(200).json({ success: true, data: { activeProjects, pendingBomApprovals } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -5,7 +5,6 @@ import {
   updatePurchaseOrderStatus,
   getPurchaseOrderById,
   sendPurchaseOrder,
-  getSupplierPerformance,
   updatePurchaseOrderSupplier,
   approvePurchaseOrder,
   rejectPurchaseOrder
@@ -19,7 +18,6 @@ router.route('/')
   .get(protect, getPurchaseOrders)
   .post(protect, checkPermission('Create PO'), createPurchaseOrder);
 
-router.get('/supplier-performance', protect, getSupplierPerformance);
 router.get('/:id', protect, getPurchaseOrderById);
 router.put('/:id/status', protect, checkPermission('Manage PO Lifecycle'), updatePurchaseOrderStatus);
 router.put('/:id/supplier', protect, checkPermission('Manage PO Lifecycle'), updatePurchaseOrderSupplier);

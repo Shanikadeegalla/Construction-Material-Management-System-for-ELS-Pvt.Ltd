@@ -28,6 +28,7 @@ import { formatBankAccountInput, isValidBankAccount, BANK_ACCOUNT_PLACEHOLDER } 
 import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort, formatFullDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import { API_BASE } from '../config';
+import useMaterialCategories from '../hooks/useMaterialCategories';
 import ReportsCenter from './ReportsCenter';
 import Pagination, { usePagination } from '../components/Pagination';
 import { scrollToElement } from '../utils/scrollToElement';
@@ -159,12 +160,8 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [docUploading, setDocUploading] = useState({});
 
   // Master Material state
-  const MATERIAL_CATEGORY_OPTIONS = [
-    'Cement & Concrete', 'Aggregates', 'Road Construction', 'Bridge Construction',
-    'Reinforcement Steel', 'Structural Steel', 'Railway Materials', 'Drainage & Culvert',
-    'Geotechnical', 'Formwork & Scaffolding', 'Fasteners & Hardware', 'Waterproofing & Joints',
-    'Safety Materials', 'Survey & Site', 'Miscellaneous', 'plumbbing','Other'//change1
-  ];
+  const { categories: MATERIAL_CATEGORY_OPTIONS, customCategories, reloadCategories } = useMaterialCategories();
+  const [newCategoryName, setNewCategoryName] = useState('');
   const MATERIAL_UNIT_OPTIONS = ['Bag', 'Piece', 'Kg', 'Ton', 'Meter', 'm³', 'm²', 'Cum', 'Litre', 'Roll', 'Sheet', 'Set', 'Coil'];
   const emptyMaterialForm = {
     materialCode: '', materialName: '', category: 'Cement & Concrete', unit: 'Bag',
@@ -300,6 +297,57 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  // Adds a new material category; it becomes available everywhere categories
+  // are used (Item Master, inventory filters, suppliers) and is selected in the form.
+  const handleAddCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) {
+      showErrorMessage('Please enter a category name.');
+      return;
+    }
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`${API_BASE}/api/material-categories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await reloadCategories();
+        setMaterialForm(prev => ({ ...prev, category: data.name }));
+        setNewCategoryName('');
+        showSuccessMessage(`✅ Category "${data.name}" added.`);
+      } else {
+        showErrorMessage(`❌ ${data.message || 'Failed to add category.'}`);
+      }
+    } catch (err) {
+      showErrorMessage('❌ Error connecting to server.');
+    }
+  };
+
+  // Only Admin-added categories that nothing uses can be removed (the server enforces this).
+  const handleRemoveCategory = async (name) => {
+    if (!window.confirm(`Remove the category "${name}"?`)) return;
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`${API_BASE}/api/material-categories/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        await reloadCategories();
+        setMaterialForm(prev => (prev.category === name ? { ...prev, category: 'Cement & Concrete' } : prev));
+        showSuccessMessage(`✅ Category "${name}" removed.`);
+      } else {
+        showErrorMessage(`❌ ${data.message || 'Failed to remove category.'}`);
+      }
+    } catch (err) {
+      showErrorMessage('❌ Error connecting to server.');
+    }
+  };
+
   const handleMaterialEditClick = (item) => {
     setEditingMaterialId(item._id);
     setMaterialForm({
@@ -366,20 +414,9 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       let rawSuppliers = data.success ? data.data : (Array.isArray(data) ? data : []);
-      if (!rawSuppliers || rawSuppliers.length === 0) {
-        rawSuppliers = [
-          { _id: '1', supplierId: 'SUP-0001', contactPerson: 'Lanka Cement Ltd', phone: '0711122334', email: 'nimal@lankacement.lk', categories: ['Cement'], status: 'Active', rating: 4.5 },
-          { _id: '2', supplierId: 'SUP-0002', contactPerson: 'Melwa Steel', phone: '0722233445', email: 'kamal@melwa.lk', categories: ['Steel'], status: 'Active', rating: 4 },
-          { _id: '3', supplierId: 'SUP-0003', contactPerson: 'Mahaweli Sand Co.', phone: '0777345678', email: 'sunil@mahawelisand.lk', categories: ['Sand', 'Aggregate'], status: 'Active', rating: 3.5 }
-        ];
-      }
       setSuppliers(rawSuppliers);
     } catch (err) {
-      setSuppliers([
-        { _id: '1', supplierId: 'SUP-0001', contactPerson: 'Lanka Cement Ltd', phone: '0711122334', email: 'nimal@lankacement.lk', categories: ['Cement'], status: 'Active', rating: 4.5 },
-        { _id: '2', supplierId: 'SUP-0002', contactPerson: 'Melwa Steel', phone: '0722233445', email: 'kamal@melwa.lk', categories: ['Steel'], status: 'Active', rating: 4 },
-        { _id: '3', supplierId: 'SUP-0003', contactPerson: 'Mahaweli Sand Co.', phone: '0777345678', email: 'sunil@mahawelisand.lk', categories: ['Sand', 'Aggregate'], status: 'Active', rating: 3.5 }
-      ]);
+      setSuppliers([]);
     }
   };
 
@@ -1824,7 +1861,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
           />
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
-            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Admin Panel</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Workspace</div>
           </div>
         </div>
 
@@ -1835,7 +1872,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
           </div>
           <div style={{ overflow: 'hidden' }}>
             <div style={{ fontSize: '13px', fontWeight: '600', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', color: 'white' }}>{user?.name || 'Administrator'}</div>
-            <div style={{ fontSize: '11px', color: '#cbd5e1' }}>{user?.role || 'Super Administrator'}</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1' }}>Admin</div>
           </div>
         </div>
 
@@ -3207,6 +3244,42 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                           <option key={c} value={c}>{c}</option>
                         ))}
                       </select>
+                      {/* Add a new category without leaving the form */}
+                      <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                        <input
+                          type="text"
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCategory(); } }}
+                          maxLength={40}
+                          style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                          placeholder="New category name"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddCategory}
+                          style={{ padding: '8px 12px', borderRadius: '6px', border: 'none', background: '#1d4ed8', color: 'white', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          + Add Category
+                        </button>
+                      </div>
+                      {customCategories.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                          {customCategories.map(c => (
+                            <span key={c} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 8px', borderRadius: '12px', background: '#e2e8f0', color: '#334155', fontSize: '12px' }}>
+                              {c}
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveCategory(c)}
+                                title={`Remove "${c}"`}
+                                style={{ border: 'none', background: 'transparent', color: '#b91c1c', cursor: 'pointer', fontWeight: '700', padding: 0, lineHeight: 1 }}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Unit of Measure *</label>

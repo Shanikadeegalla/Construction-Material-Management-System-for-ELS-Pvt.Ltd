@@ -20,15 +20,11 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import ItemMaster from '../models/ItemMaster.js';
 import Material from '../models/Material.js';
+import { MATERIAL_CATEGORIES } from '../utils/materialCategories.js';
 
 dotenv.config();
 
-const CATEGORY_ENUM = new Set([
-  'Cement & Concrete', 'Aggregates', 'Road Construction', 'Bridge Construction',
-  'Reinforcement Steel', 'Structural Steel', 'Railway Materials', 'Drainage & Culvert',
-  'Geotechnical', 'Formwork & Scaffolding', 'Fasteners & Hardware', 'Waterproofing & Joints',
-  'Safety Materials', 'Survey & Site', 'Miscellaneous', 'Other'
-]);
+const CATEGORY_ENUM = new Set(MATERIAL_CATEGORIES);
 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

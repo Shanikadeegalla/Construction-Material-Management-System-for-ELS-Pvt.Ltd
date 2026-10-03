@@ -77,6 +77,7 @@ export const createItemMaster = async (req, res) => {
       { name: materialName },
       {
         materialCode,
+        category,
         minimumStock: Number(minimumStock || 10),
         maximumStock: Number(maximumStock || 100),
         reorderLevel: calculatedReorder

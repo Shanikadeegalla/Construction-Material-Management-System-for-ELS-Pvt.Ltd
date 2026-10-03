@@ -2,11 +2,12 @@ import express from 'express';
 import {
   createCheckoutSession,
   confirmPaymentSession,
-  recordManualPayment,
   getPaymentByPO,
   generatePaymentReport,
   getPaymentReceipt,
   downloadPaymentReceipt,
+  recordManualPayment,
+  getPayments,
   handleWebhook
 } from '../controllers/paymentController.js';
 import { protect, authorizeRoles } from '../middleware/authMiddleware.js';
@@ -29,7 +30,15 @@ router.post(
   confirmPaymentSession
 );
 
-// Protected recording of manual (Cash/Cheque) payments (Purchase Manager & Admin only)
+// Purchase Manager records an offline Cash / Cheque payment for a Director-approved invoice
+router.post(
+  '/record',
+  protect,
+  authorizeRoles('PurchaseManager', 'Admin'),
+  recordManualPayment
+);
+
+// Same operation under the path used by earlier clients
 router.post(
   '/manual',
   protect,
@@ -37,11 +46,19 @@ router.post(
   recordManualPayment
 );
 
-// Protected PDF payment report generation (Purchase Manager & Admin only)
+// Payment records list (feeds the Payment report)
+router.get(
+  '/',
+  protect,
+  authorizeRoles('PurchaseManager', 'Director', 'Admin'),
+  getPayments
+);
+
+// Protected PDF payment report generation
 router.get(
   '/report',
   protect,
-  authorizeRoles('PurchaseManager', 'Admin'),
+  authorizeRoles('PurchaseManager', 'Director', 'Admin'),
   generatePaymentReport
 );
 
