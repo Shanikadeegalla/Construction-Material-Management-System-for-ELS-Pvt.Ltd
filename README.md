@@ -111,6 +111,28 @@ npm start
 
 ---
 
+## 💳 Stripe CLI & Payment Testing Guide
+
+To test Stripe payment checkout and webhooks locally:
+
+1. **Install Stripe CLI**: Download and install the [Stripe CLI](https://stripe.com/docs/stripe-cli).
+2. **Authenticate Stripe CLI**:
+   ```bash
+   stripe login
+   ```
+3. **Forward Webhooks to Backend**:
+   ```bash
+   stripe listen --forward-to localhost:5000/api/payments/webhook
+   ```
+   Copy the `whsec_...` secret printed by the CLI into `STRIPE_WEBHOOK_SECRET` in `backend/.env`.
+4. **Test Cards**:
+   - **Successful Payment**: Use `4242 4242 4242 4242` with any future expiry date and CVC `123`.
+   - **Declined Card (Failure Handling)**: Use `4000 0000 0000 0002`.
+   - **Cancelled Checkout**: Click "Cancel and return" on the Stripe Checkout page; invoice remains unpaid (`Approved` / `Pending Payment`).
+
+---
+
 ## 📄 Documentation & System Test Specification
 
 For a complete manual testing specification detailing all 10 core role scenarios (`TC01` - `TC10`), view the [docs/SYSTEM_TEST_CASES.md](file:///c:/Users/USER/.gemini/antigravity/scratch/mern-boilerplate/docs/SYSTEM_TEST_CASES.md) document.
+
