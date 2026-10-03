@@ -21,7 +21,7 @@ const getNextVersion = async (projectId) => {
 
   const latest = nonDraftBoms[nonDraftBoms.length - 1];
   const versionStr = latest.version || 'v1.0';
-  const match = versionStr.match(/^v?(\d+)\.(\d+)$/i);
+  const match = versionStr.match(/^v(\d+)\.(\d+)$/);
 
   let major = 1;
   let minor = 0;
@@ -324,23 +324,14 @@ export const rejectBOM = async (req, res) => {
     const approvedBy = req.user ? req.user.name : 'Director';
     const { rejectionReason } = req.body;
 
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ success: false, message: 'Invalid BOM ID.' });
-    }
-
-    // Same rule as approval: only a BOM waiting for the Director can be rejected.
-    const bom = await BOM.findOneAndUpdate(
-      { _id: req.params.id, status: { $in: ['Submitted', 'Pending'] } },
+    const bom = await BOM.findByIdAndUpdate(
+      req.params.id,
       { status: 'Rejected', approvedBy, rejectionReason: rejectionReason || '' },
       { new: true }
     ).populate('projectId');
 
     if (!bom) {
-      const exists = await BOM.exists({ _id: req.params.id });
-      if (!exists) {
-        return res.status(404).json({ success: false, message: 'BOM not found.' });
-      }
-      return res.status(400).json({ success: false, message: 'Only a submitted BOM can be rejected.' });
+      return res.status(404).json({ success: false, message: 'BOM not found.' });
     }
 
     const projectName = bom.projectName || (bom.projectId ? (bom.projectId.projectName || bom.projectId.name) : 'Project');
@@ -459,38 +450,6 @@ export const computeBOMStockCheck = async (bom) => {
       requestableQty: Math.max(shortage - alreadyRequestedQty, 0)
     };
   });
-};
-
-// @desc    Shortage summary for the approved BOM in force on every project,
-//          so the Approved BOMs list can show which ones still need a PR
-//          without opening each comparison.
-// @route   GET /api/bom/stock-summary
-// @access  Private
-export const getBOMStockSummary = async (req, res) => {
-  try {
-    const allApproved = await BOM.find({ status: 'Approved' }).sort({ updatedAt: -1, createdAt: -1 });
-    const seenProjects = new Set();
-    const boms = allApproved.filter((b) => {
-      const key = String(b.projectId);
-      if (seenProjects.has(key)) return false;
-      seenProjects.add(key);
-      return true;
-    });
-
-    const data = {};
-    await Promise.all(boms.map(async (bom) => {
-      const rows = await computeBOMStockCheck(bom);
-      data[String(bom._id)] = {
-        shortageCount: rows.filter((r) => r.shortage > 0).length,
-        // Shortage lines that no active PR covers yet.
-        toRequestCount: rows.filter((r) => r.requestableQty > 0).length
-      };
-    }));
-
-    res.status(200).json({ success: true, data });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
 };
 
 // @desc    Compare an approved BOM's planned materials against Main Store stock

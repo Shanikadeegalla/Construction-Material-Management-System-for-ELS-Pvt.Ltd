@@ -8,9 +8,10 @@ import DirectorDashboard from './pages/DirectorDashboard';
 import SiteStoreDashboard from './pages/SiteStoreDashboard';
 import PaymentSuccess from './pages/PaymentSuccess';
 import PaymentCancel from './pages/PaymentCancel';
+import { ToastProvider } from './context/ToastContext';
 import { API_BASE } from './config';
 
-function App() {
+function MainApp() {
   const [view, setView] = useState('login');
   const [user, setUser] = useState(null);
   const [loginEmail, setLoginEmail] = useState('');
@@ -457,4 +458,10 @@ const styles = {
   },
 };
 
-export default App;
+export default function App() {
+  return (
+    <ToastProvider>
+      <MainApp />
+    </ToastProvider>
+  );
+}

@@ -1,7 +1,25 @@
+import fs from 'fs';
+import path from 'path';
 import Invoice from '../models/Invoice.js';
 import User from '../models/userModel.js';
 import PurchaseOrder from '../models/PurchaseOrder.js';
 import { createNotificationHelper, notifyRoles } from './notificationController.js';
+import { UPLOAD_DIR } from '../config/uploadDir.js';
+
+const attachFileExists = (invoice) => {
+  const invObj = invoice.toObject ? invoice.toObject() : { ...invoice };
+  const fileUrl = invObj.file?.url || invObj.filePath || invObj.fileUrl;
+  if (fileUrl) {
+    const filename = path.basename(fileUrl);
+    const cleanUrl = fileUrl.replace(/^\/uploads\//, '');
+    const fullPath = path.join(UPLOAD_DIR, cleanUrl);
+    const basePath = path.join(UPLOAD_DIR, filename);
+    invObj.fileExists = fs.existsSync(fullPath) || fs.existsSync(basePath);
+  } else {
+    invObj.fileExists = false;
+  }
+  return invObj;
+};
 
 const generateNextInvoiceNumber = async () => {
   let next = (await Invoice.countDocuments()) + 1;
@@ -25,6 +43,7 @@ const GRN_MATCH_POPULATE = {
 // actually arrived (GRN), so the Director can see short, damaged or over-billed
 // deliveries before approving payment. Expects a populated, lean invoice.
 const buildDeliveryCheck = (invoice) => {
+  if (!invoice) return { status: 'No GRN', lines: [], poTotal: 0, acceptedValue: 0, invoiceAmount: 0, warnings: [] };
   const po = invoice.po || {};
   const grn = invoice.grn;
   const poItems = po.items || [];
@@ -110,6 +129,17 @@ const buildDeliveryCheck = (invoice) => {
   return { status, lines, poTotal, acceptedValue, invoiceAmount: amount, warnings };
 };
 
+const formatInvoice = (inv) => {
+  const withFile = attachFileExists(inv);
+  let deliveryCheck = { status: 'No GRN', lines: [], poTotal: 0, acceptedValue: 0, invoiceAmount: Number(inv.amount) || 0, warnings: [] };
+  try {
+    deliveryCheck = buildDeliveryCheck(inv);
+  } catch (err) {
+    console.error('Error computing deliveryCheck:', err);
+  }
+  return { ...withFile, deliveryCheck };
+};
+
 // @desc    Record an invoice received from a supplier (MainStore, tied to a GRN/PO)
 // @route   POST /api/invoices
 // @access  Private (Create Invoice)
@@ -134,6 +164,13 @@ export const createInvoice = async (req, res) => {
     }
 
     const invoiceNumber = await generateNextInvoiceNumber();
+
+    if (req.file) {
+      const filePathOnDisk = path.join(UPLOAD_DIR, req.file.filename);
+      if (!fs.existsSync(filePathOnDisk)) {
+        return res.status(400).json({ success: false, message: 'File upload failed. The invoice file was not saved to disk.' });
+      }
+    }
 
     const invoice = new Invoice({
       invoiceNumber,
@@ -164,7 +201,7 @@ export const createInvoice = async (req, res) => {
       console.error('Error creating invoice submission notifications:', nErr);
     }
 
-    res.status(201).json({ success: true, message: 'Invoice recorded successfully!', data: invoice });
+    res.status(201).json({ success: true, message: 'Invoice recorded successfully!', data: formatInvoice(invoice) });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
@@ -179,6 +216,43 @@ export const getInvoices = async (req, res) => {
     if (req.query.supplier) query.supplier = req.query.supplier;
     if (req.query.po) query.po = req.query.po;
     if (req.query.status) query.status = req.query.status;
+    if (req.query.search) {
+      query.$or = [
+        { invoiceNumber: new RegExp(req.query.search, 'i') },
+        { notes: new RegExp(req.query.search, 'i') },
+        { submittedBy: new RegExp(req.query.search, 'i') }
+      ];
+    }
+
+    if (req.query.page || req.query.limit) {
+      const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+      const skip = (page - 1) * limit;
+
+      const total = await Invoice.countDocuments(query);
+      const totalPages = Math.ceil(total / limit) || 1;
+
+      const invoices = await Invoice.find(query)
+        .populate('supplier', 'name supplierId')
+        .populate('po', PO_MATCH_FIELDS)
+        .populate(GRN_MATCH_POPULATE)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+      const formatted = invoices.map(formatInvoice);
+
+      return res.status(200).json({
+        success: true,
+        count: formatted.length,
+        total,
+        page,
+        limit,
+        totalPages,
+        data: formatted
+      });
+    }
 
     const invoices = await Invoice.find(query)
       .populate('supplier', 'name supplierId')
@@ -187,9 +261,9 @@ export const getInvoices = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    const data = invoices.map(inv => ({ ...inv, deliveryCheck: buildDeliveryCheck(inv) }));
+    const formatted = invoices.map(formatInvoice);
 
-    res.status(200).json({ success: true, count: data.length, data });
+    res.status(200).json({ success: true, count: formatted.length, data: formatted });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -208,7 +282,7 @@ export const getInvoiceById = async (req, res) => {
     if (!invoice) {
       return res.status(404).json({ success: false, message: 'Invoice not found.' });
     }
-    res.status(200).json({ success: true, data: { ...invoice, deliveryCheck: buildDeliveryCheck(invoice) } });
+    res.status(200).json({ success: true, data: formatInvoice(invoice) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -251,7 +325,7 @@ export const approveInvoicePayment = async (req, res) => {
       'Invoice_approved'
     );
 
-    res.status(200).json({ success: true, message: 'Invoice approved for payment!', data: invoice });
+    res.status(200).json({ success: true, message: 'Invoice approved for payment!', data: formatInvoice(invoice) });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
@@ -285,7 +359,7 @@ export const rejectInvoicePayment = async (req, res) => {
       'Invoice_rejected'
     );
 
-    res.status(200).json({ success: true, message: 'Invoice payment rejected.', data: invoice });
+    res.status(200).json({ success: true, message: 'Invoice payment rejected.', data: formatInvoice(invoice) });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
@@ -304,15 +378,45 @@ export const markInvoicePaid = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Only approved invoices can be marked as paid.' });
     }
 
-    // Kept for backwards compatibility; payments are normally recorded through
-    // POST /api/payments/record (Cash/Cheque) or Stripe checkout, both of
-    // which also create the Payment record this shortcut does not.
     invoice.status = 'Paid';
     invoice.paidAt = new Date();
     invoice.paymentMethod = req.body.paymentMethod || 'Cash';
     await invoice.save();
 
-    res.status(200).json({ success: true, message: 'Invoice marked as paid!', data: invoice });
+    res.status(200).json({ success: true, message: 'Invoice marked as paid!', data: formatInvoice(invoice) });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Re-upload invoice file for an existing invoice record
+// @route   PUT /api/invoices/:id/reupload
+// @access  Private
+export const reuploadInvoiceFile = async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: 'Invoice not found.' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'Please attach an invoice file to upload.' });
+    }
+    const filePathOnDisk = path.join(UPLOAD_DIR, req.file.filename);
+    if (!fs.existsSync(filePathOnDisk)) {
+      return res.status(400).json({ success: false, message: 'File upload failed. The file was not saved to disk.' });
+    }
+
+    invoice.file = {
+      url: `/uploads/${req.file.filename}`,
+      filename: req.file.originalname
+    };
+    await invoice.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Invoice document re-uploaded successfully!',
+      data: formatInvoice(invoice)
+    });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }

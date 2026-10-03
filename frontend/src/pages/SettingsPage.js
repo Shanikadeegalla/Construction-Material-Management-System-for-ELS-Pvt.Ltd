@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
 import { API_BASE } from '../config';
+import { useToast } from '../context/ToastContext';
 
 const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
+  const toast = useToast();
   const fileInputRef = useRef(null);
   const [imgError, setImgError] = useState(false);
 
@@ -45,7 +47,14 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
 
   // Status message, shown inside the card it belongs to: { section, type: 'error' | 'success', text }
-  const [notice, setNotice] = useState(null);
+  const [notice, setNoticeState] = useState(null);
+  const setNotice = (val) => {
+    setNoticeState(val);
+    if (val && val.text) {
+      if (val.type === 'success') toast.success(val.text.replace(/^[✅❌]\s*/, ''));
+      else if (val.type === 'error') toast.error(val.text.replace(/^[✅❌]\s*/, ''));
+    }
+  };
   const [loading, setLoading] = useState(false);
 
   const applyDarkModeClass = (isDark) => {

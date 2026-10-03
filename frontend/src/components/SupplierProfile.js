@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { formatDate } from '../utils/dateUtils';
-import { API_BASE } from '../config';
 import Pagination, { usePagination } from './Pagination';
+import { useToast } from '../context/ToastContext';
+import scrollToElement from '../utils/scrollToElement';
+import LoadingButton from './LoadingButton';
+import openUploadedFile from '../utils/openUploadedFile';
 
+const API_BASE = 'http://localhost:5000';
 
 const styles = {
   tabButton: (active) => ({
@@ -52,9 +56,11 @@ const InfoField = ({ label, value }) => (
 );
 
 const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, user }) => {
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState('info');
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [submittingQuote, setSubmittingQuote] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -65,8 +71,20 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
   const fetchProfile = useCallback(async () => {
     setLoading(true);
     setError('');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     try {
-      const res = await fetch(`${API_BASE}/api/suppliers/${supplierId}/profile`, { headers: getHeaders() });
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const headers = typeof getHeaders === 'function' ? getHeaders() : { Authorization: `Bearer ${token}` };
+
+      const res = await fetch(`${API_BASE}/api/suppliers/${supplierId}/profile`, {
+        headers,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
       const data = await res.json();
       if (data.success) {
         setProfile(data.data);
@@ -74,17 +92,25 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
         setError(data.message || 'Failed to load supplier profile.');
       }
     } catch (err) {
-      setError('Failed to load supplier profile.');
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        setError('Could not load supplier details (request timed out). Please retry.');
+      } else {
+        setError('Could not load supplier details. Please check your connection and retry.');
+      }
     } finally {
       setLoading(false);
     }
-  }, [supplierId, getHeaders]);
+  }, [supplierId]);
 
-  useEffect(() => { fetchProfile(); }, [fetchProfile]);
+  useEffect(() => {
+    fetchProfile();
+  }, [fetchProfile]);
 
   const handleQuoteSubmit = async (e) => {
     e.preventDefault();
     setError(''); setMessage('');
+    setSubmittingQuote(true);
     try {
       const fd = new FormData();
       fd.append('supplier', supplierId);
@@ -104,38 +130,62 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage('✅ Quotation added successfully!');
+        toast.success(`Quotation for "${quoteForm.material}" added successfully!`);
         setShowQuoteForm(false);
         setQuoteForm({ material: '', quantity: '', unit: '', price: '', date: new Date().toISOString().substring(0, 10), notes: '' });
         setQuoteFile(null);
-        fetchProfile();
+        await fetchProfile();
+        scrollToElement('quotations-list-section', { focusFirstInput: false, highlight: true });
       } else {
+        toast.error(data.message || 'Failed to add quotation.');
         setError(data.message || 'Failed to add quotation.');
       }
     } catch (err) {
+      toast.error('Failed to add quotation.');
       setError('Failed to add quotation.');
+    } finally {
+      setSubmittingQuote(false);
     }
   };
 
+  const purchaseOrders = profile?.purchaseOrders || [];
+  const quotations = profile?.quotations || [];
+  const invoices = profile?.invoices || [];
+  const grns = profile?.grns || [];
+  const supplier = profile?.supplier;
+  const performance = profile?.performance;
+
+  const poPagination = usePagination(purchaseOrders, 8, [purchaseOrders.length]);
+  const quotePagination = usePagination(quotations, 8, [quotations.length]);
+  const invPagination = usePagination(invoices, 8, [invoices.length]);
+  const grnPagination = usePagination(grns, 8, [grns.length]);
+
   if (loading) {
-    return <div style={{ padding: '40px', fontFamily: 'Segoe UI, Arial, sans-serif' }}>Loading supplier profile...</div>;
+    return (
+      <div style={{ padding: '40px', fontFamily: 'Segoe UI, Arial, sans-serif', textAlign: 'center' }}>
+        <div style={{ fontSize: '16px', fontWeight: '600', color: '#0d1b4b', marginBottom: '8px' }}>
+          ⏳ Loading supplier details...
+        </div>
+        <div style={{ fontSize: '13px', color: '#64748b' }}>Please wait while we fetch the profile data.</div>
+      </div>
+    );
   }
 
   if (error && !profile) {
     return (
       <div style={{ padding: '40px', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
-        <button onClick={onBack} style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '16px' }}>← Back</button>
-        <div style={{ color: '#c62828' }}>{error}</div>
+        <button onClick={onBack} style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '16px' }}>← Back to Suppliers</button>
+        <div style={{ color: '#c62828', background: '#ffebee', padding: '16px', borderRadius: '8px', marginBottom: '16px', fontWeight: '600', border: '1px solid #ffcdd2' }}>
+          ⚠️ {error}
+        </div>
+        <button onClick={() => fetchProfile()} style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
+          🔄 Retry Loading Supplier Details
+        </button>
       </div>
     );
   }
 
-  const { supplier, purchaseOrders, quotations, invoices, grns } = profile;
-
-  const poPagination = usePagination(purchaseOrders || [], 8, [purchaseOrders?.length]);
-  const quotePagination = usePagination(quotations || [], 8, [quotations?.length]);
-  const invPagination = usePagination(invoices || [], 8, [invoices?.length]);
-  const grnPagination = usePagination(grns || [], 8, [grns?.length]);
+  if (!supplier) return null;
 
   return (
     <div style={{ padding: '32px', fontFamily: 'Segoe UI, Arial, sans-serif', background: '#f5f6fa', minHeight: '100vh' }}>
@@ -180,8 +230,21 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
               <InfoField label="Bank Branch" value={supplier.bankBranch} />
               <InfoField label="Business Registration No." value={supplier.businessRegistrationNumber} />
               <InfoField label="VAT Number" value={supplier.vatNumber} />
+              <InfoField label="Rating" value={supplier.rating ? `${supplier.rating} / 5` : '-'} />
             </div>
           </div>
+
+          {performance && (
+            <div style={{ borderTop: '1px solid #eee', paddingTop: '20px', marginBottom: '24px' }}>
+              <h4 style={{ margin: '0 0 16px', color: '#0d1b4b', fontSize: '14px', textTransform: 'uppercase' }}>Performance Summary</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '20px' }}>
+                <InfoField label="Total Orders" value={performance.totalOrders} />
+                <InfoField label="On-Time Deliveries" value={`${performance.onTimeDeliveries} (${performance.onTimePercent}%)`} />
+                <InfoField label="Delivery Accuracy" value={`${performance.deliveryAccuracy}%`} />
+                <InfoField label="Performance Rating" value={performance.performanceRating} />
+              </div>
+            </div>
+          )}
 
           {supplier.documents && (
             <div style={{ borderTop: '1px solid #eee', paddingTop: '20px' }}>
@@ -272,7 +335,7 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Save Quotation</button>
+                      <LoadingButton type="submit" loading={submittingQuote} loadingText="Saving Quotation..." style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Save Quotation</LoadingButton>
                       <button type="button" onClick={() => setShowQuoteForm(false)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
                     </div>
                   </form>
@@ -280,7 +343,7 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
               )}
             </div>
           )}
-          <div style={styles.card}>
+          <div id="quotations-list-section" style={styles.card}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: '#0d1b4b', color: 'white' }}>
@@ -300,10 +363,13 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
                     <td style={styles.td}><span style={statusBadge(q.status)}>{q.status}</span></td>
                     <td style={styles.td}>
                       {q.file?.url ? (
-                        <>
-                          <a href={`${API_BASE}${q.file.url}`} target="_blank" rel="noreferrer" style={{ color: '#1565c0', marginRight: '10px', fontWeight: '600' }}>View</a>
-                          <a href={`${API_BASE}${q.file.url}`} download style={{ color: '#1565c0', fontWeight: '600' }}>Download</a>
-                        </>
+                        <button
+                          type="button"
+                          onClick={() => openUploadedFile(q.file.url, { fileType: 'quotation', toast })}
+                          style={{ color: '#1565c0', fontWeight: '600', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                        >
+                          👁 View
+                        </button>
                       ) : '-'}
                     </td>
                   </tr>

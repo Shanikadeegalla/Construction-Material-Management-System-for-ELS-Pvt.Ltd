@@ -1,15 +1,18 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Where uploaded files (avatars, supplier documents, invoices, quotations,
-// project drawings) are written and served from. Locally that is ./uploads.
-// On Vercel the deployment directory is read-only and only the OS temp
-// directory is writable, so uploads go there instead - note that temp storage
-// is per-instance and not durable, so files uploaded on Vercel can disappear
-// after a cold start.
+// project drawings) are written and served from. Use an absolute path relative
+// to __dirname so it does not depend on the CWD Node is launched from.
+const defaultUploadDir = path.resolve(__dirname, '..', 'uploads');
+
 export const UPLOAD_DIR = process.env.UPLOAD_DIR
-  || (process.env.VERCEL ? path.join(os.tmpdir(), 'uploads') : path.resolve('uploads'));
+  || (process.env.VERCEL ? path.join(os.tmpdir(), 'uploads') : defaultUploadDir);
 
 export const ensureDir = (dir) => {
   try {
@@ -21,3 +24,4 @@ export const ensureDir = (dir) => {
 };
 
 ensureDir(UPLOAD_DIR);
+

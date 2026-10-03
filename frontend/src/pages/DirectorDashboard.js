@@ -21,8 +21,13 @@ import {
   Cell
 } from 'recharts';
 import { API_BASE } from '../config';
+import { scrollToElement } from '../utils/scrollToElement';
+import { useToast } from '../context/ToastContext';
+import LoadingButton from '../components/LoadingButton';
+import openUploadedFile from '../utils/openUploadedFile';
 
 const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
+  const toast = useToast();
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -231,19 +236,23 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('BOM approved successfully!');
         setMessage('✅ BOM approved successfully!');
         setDirectorNote('');
         fetchData();
+        setTimeout(() => scrollToElement('#bom-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
+      toast.error(err.message || 'Action failed');
       setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setDirectorNote('');
     }
   };
 
   const rejectBOMWithReason = async (id, reason) => {
+    if (!window.confirm('Are you sure you want to reject this BOM?')) return;
     setMessage('');
     setError('');
     try {
@@ -254,14 +263,17 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('BOM rejected and note sent to PM.');
         setMessage('❌ BOM rejected and note sent to PM.');
         setShowViewModal(false);
         setDirectorNote('');
         fetchData();
+        setTimeout(() => scrollToElement('#bom-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
+      toast.error(err.message || 'Action failed');
       setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setShowViewModal(false);
       setDirectorNote('');
@@ -287,13 +299,16 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('BOM rejected and sent back to PM.');
         setMessage('❌ BOM rejected and sent back to PM.');
         setShowRejectModal(false);
         fetchData();
+        setTimeout(() => scrollToElement('#bom-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
+      toast.error(err.message || 'Action failed');
       setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setShowRejectModal(false);
     }
@@ -310,13 +325,16 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
-        setMessage(`✅ ${data.message || 'Purchase Order approved successfully!'}`);
+        toast.success('Purchase Order approved successfully!');
+        setMessage('✅ Purchase Order approved successfully!');
         setShowViewPOModal(false);
         fetchData();
+        setTimeout(() => scrollToElement('#po-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
+      toast.error(err.message || 'Action failed');
       setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setShowViewPOModal(false);
     }
@@ -351,14 +369,17 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('Purchase Order rejected and note sent to Purchase Manager.');
         setMessage('❌ Purchase Order rejected and note sent to Purchase Manager.');
         setPoActionModal(null);
         setShowViewPOModal(false);
         fetchData();
+        setTimeout(() => scrollToElement('#po-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
+      toast.error(err.message || 'Action failed');
       setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setPoActionModal(null);
       setShowViewPOModal(false);
@@ -376,13 +397,16 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('Invoice approved for payment!');
         setMessage('✅ Invoice approved for payment!');
         setViewingInvoice(null);
         fetchData();
+        setTimeout(() => scrollToElement('#invoice-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
+      toast.error(err.message || 'Action failed');
       setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
     }
   };
@@ -420,14 +444,17 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('Invoice payment rejected and note sent to Main Store.');
         setMessage('❌ Invoice payment rejected and note sent to Main Store.');
         setInvoiceActionModal(null);
         setViewingInvoice(null);
         fetchData();
+        setTimeout(() => scrollToElement('#invoice-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
+      toast.error(err.message || 'Action failed');
       setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setInvoiceActionModal(null);
     }
@@ -676,32 +703,33 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (modal === 'active-projects') {
       title = 'Active Projects Profile';
       tableHeaders = ['Project Name', 'Project Manager', 'Status', 'Budget', 'Progress %'];
-      const filtered = projects.filter(p => 
-        (p.status === 'Active' || p.status === 'active') && 
-        ((p.projectName || '').toLowerCase().includes(query) || (p.createdBy?.name || '').toLowerCase().includes(query))
-      );
-      
-      tableRows = filtered.map((p, idx) => {
-        const progress = getTimelineProgress(p);
-        return (
-          <tr key={p._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{p.projectName}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{p.createdBy?.name || 'Project Manager'}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px' }}>
-              <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', border: '1px solid rgba(46, 125, 50, 0.2)' }}>Active</span>
-            </td>
-            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>LKR {Number(p.budget).toLocaleString()}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ width: '80px', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ width: `${progress}%`, height: '100%', background: 'linear-gradient(90deg, #2563eb, #3b82f6)' }}></div>
+      tableRows = filtered.length === 0 ? (
+        <tr>
+          <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No active projects found.</td>
+        </tr>
+      ) : (
+        filtered.map((p, idx) => {
+          const progress = p.progress || 0;
+          return (
+            <tr key={p._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+              <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{p.projectName}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{p.createdBy?.name || 'Project Manager'}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px' }}>
+                <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', border: '1px solid rgba(46, 125, 50, 0.2)' }}>Active</span>
+              </td>
+              <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>LKR {Number(p.budget || 0).toLocaleString()}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ width: '80px', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                    <div style={{ width: `${progress}%`, height: '100%', background: 'linear-gradient(90deg, #2563eb, #3b82f6)' }}></div>
+                  </div>
+                  <span style={{ fontWeight: '600', color: '#475569' }}>{progress}%</span>
                 </div>
-                <span style={{ fontWeight: '600', color: '#475569' }}>{progress}%</span>
-              </div>
-            </td>
-          </tr>
-        );
-      });
+              </td>
+            </tr>
+          );
+        })
+      );
     } else if (modal === 'pending-boms') {
       title = 'BOMs Awaiting Approval';
       tableHeaders = ['Project', 'PM Name', 'Version', 'Submitted Date', 'Actions'];
@@ -712,40 +740,46 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         (b.createdBy?.name || b.createdBy || '').toLowerCase().includes(query)
       );
 
-      tableRows = filtered.map((b, idx) => {
-        const pmName = b.createdBy?.name || b.createdBy || b.submittedBy || 'Project Manager';
-        const projName = b.projectId?.projectName || b.projectId?.name || b.projectName || 'Main Project';
-        return (
-          <tr key={b._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{projName}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{pmName}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: 'bold' }}>{b.version || 'v1.0'}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#64748b' }}>{formatDate(b.submittedAt || b.createdAt)}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px' }}>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                <button 
-                  onClick={() => { setModal(null); openViewModal(b); }}
-                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                >
-                  👁 View
-                </button>
-                <button 
-                  onClick={() => { handleApprove(b._id); }}
-                  style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                >
-                  ✓ Approve
-                </button>
-                <button 
-                  onClick={() => { handleRejectClick(b._id); }}
-                  style={{ background: '#c62828', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                >
-                  ✕ Reject
-                </button>
-              </div>
-            </td>
-          </tr>
-        );
-      });
+      tableRows = filtered.length === 0 ? (
+        <tr>
+          <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No BOMs awaiting approval.</td>
+        </tr>
+      ) : (
+        filtered.map((b, idx) => {
+          const pmName = b.createdBy?.name || b.createdBy || b.submittedBy || 'Project Manager';
+          const projName = b.projectId?.projectName || b.projectId?.name || b.projectName || 'Main Project';
+          return (
+            <tr key={b._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+              <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{projName}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{pmName}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: 'bold' }}>{b.version || 'v1.0'}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px', color: '#64748b' }}>{formatDate(b.submittedAt || b.createdAt)}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px' }}>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button 
+                    onClick={() => { setModal(null); openViewModal(b); }}
+                    style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                  >
+                    👁 View
+                  </button>
+                  <button 
+                    onClick={() => { handleApprove(b._id); }}
+                    style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                  >
+                    ✓ Approve
+                  </button>
+                  <button 
+                    onClick={() => { handleRejectClick(b._id); }}
+                    style={{ background: '#c62828', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                  >
+                    ✕ Reject
+                  </button>
+                </div>
+              </td>
+            </tr>
+          );
+        })
+      );
     } else if (modal === 'budget-utilized') {
       title = 'Project Budget Utilization';
       tableHeaders = ['Project Name', 'Allocated Budget', 'Spent', 'Remaining', 'Utilization %'];
@@ -753,22 +787,28 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       const breakdown = getBudgetBreakdown();
       const filtered = breakdown.filter(item => item.projectName.toLowerCase().includes(query));
 
-      tableRows = filtered.map((item, idx) => (
-        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{item.projectName}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>LKR {item.budget.toLocaleString()}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#c62828', fontWeight: '600' }}>LKR {item.spent.toLocaleString()}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#2e7d32', fontWeight: '600' }}>LKR {item.remaining.toLocaleString()}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{ width: '80px', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
-                <div style={{ width: `${Math.min(Number(item.percent), 100)}%`, height: '100%', background: Number(item.percent) > 90 ? '#ef4444' : Number(item.percent) > 50 ? '#f59e0b' : '#2e7d32' }}></div>
-              </div>
-              <span style={{ fontWeight: '700', color: '#475569' }}>{item.percent}%</span>
-            </div>
-          </td>
+      tableRows = filtered.length === 0 ? (
+        <tr>
+          <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No project budget data found.</td>
         </tr>
-      ));
+      ) : (
+        filtered.map((item, idx) => (
+          <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{item.projectName}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>LKR {item.budget.toLocaleString()}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#c62828', fontWeight: '600' }}>LKR {item.spent.toLocaleString()}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#2e7d32', fontWeight: '600' }}>LKR {item.remaining.toLocaleString()}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '80px', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(Number(item.percent), 100)}%`, height: '100%', background: Number(item.percent) > 90 ? '#ef4444' : Number(item.percent) > 50 ? '#f59e0b' : '#2e7d32' }}></div>
+                </div>
+                <span style={{ fontWeight: '700', color: '#475569' }}>{item.percent}%</span>
+              </div>
+            </td>
+          </tr>
+        ))
+      );
     } else if (modal === 'material-variance') {
       title = 'Material Variance Analysis';
       tableHeaders = ['Project Name', 'Material', 'Planned Qty', 'Actual Qty', 'Variance %'];
@@ -777,12 +817,17 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         (item.materialName || '').toLowerCase().includes(query)
       );
 
-      tableRows = filtered.map((item, idx) => (
-        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{item.projectName}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{item.materialName}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{item.plannedQty} {item.unit}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{item.actualQty} {item.unit}</td>
+      tableRows = filtered.length === 0 ? (
+        <tr>
+          <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No material variance records found.</td>
+        </tr>
+      ) : (
+        filtered.map((item, idx) => (
+          <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{item.projectName}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{item.materialName}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px' }}>{item.plannedQty} {item.unit}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px' }}>{item.actualQty} {item.unit}</td>
           <td style={{ padding: '14px 16px', fontSize: '13px' }}>
             <span style={{ 
               background: Number(item.variancePct) > 15 ? '#fde8e8' : Number(item.variancePct) > 0 ? '#e8f5e9' : '#e0f2fe',
@@ -796,7 +841,8 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             </span>
           </td>
         </tr>
-      ));
+      ))
+      );
     }
 
     return (
@@ -1234,7 +1280,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'approvals' && (
-            <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+            <div id="bom-approvals-section" style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>BOM Verification Registry</h3>
               </div>
@@ -1302,7 +1348,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'po-approvals' && (
-            <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+            <div id="po-approvals-section" style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>Purchase Order Verification Registry</h3>
               </div>
@@ -1374,7 +1420,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'payment-approvals' && (
-            <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+            <div id="invoice-approvals-section" style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>Supplier Invoice & Payment Registry</h3>
               </div>
@@ -1416,10 +1462,36 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                           </td>
                           <td style={{ padding: '14px 16px' }}>
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
-                              <button onClick={() => setViewingInvoice(inv)}
-                                style={{ ...poTableBtnBase, background: '#0d1b4b' }}>
-                                View
+                              <button
+                                type="button"
+                                onClick={() => setViewingInvoice(inv)}
+                                style={{ ...poTableBtnBase, background: '#475569', cursor: 'pointer' }}
+                                title="Review 3-way delivery check"
+                              >
+                                🔍 Delivery
                               </button>
+                              {inv.file?.url ? (
+                                inv.fileExists === false ? (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    style={{ ...poTableBtnBase, background: '#d97706', opacity: 0.8, cursor: 'not-allowed' }}
+                                    title="Invoice file is missing on disk. Ask Store Officer to re-upload."
+                                  >
+                                    ⚠️ File missing
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => openUploadedFile(inv.file.url, { fileType: 'invoice', toast })}
+                                    style={{ ...poTableBtnBase, background: '#0d1b4b', cursor: 'pointer' }}
+                                  >
+                                    👁 View PDF
+                                  </button>
+                                )
+                              ) : (
+                                <span style={{ fontSize: '12px', color: '#94a3b8' }}>No file</span>
+                              )}
                               {isPending && (
                                 <>
                                   <button onClick={() => openInvoiceActionModal(inv._id, 'approve')}

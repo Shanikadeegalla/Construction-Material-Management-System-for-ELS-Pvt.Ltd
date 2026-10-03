@@ -180,3 +180,63 @@ body.dark-mode .dashboard-content .settings-no-invert img {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
 }
 
+/* UX Auto-scroll Target Pulse Highlight Animation */
+.ux-target-highlight {
+  animation: uxPulseHighlight 1.6s ease-in-out forwards;
+  scroll-margin-top: 90px;
+}
+
+@keyframes uxPulseHighlight {
+  0% {
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.8), 0 4px 20px rgba(37, 99, 235, 0.3);
+    background-color: #eff6ff !important;
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.6), 0 4px 25px rgba(37, 99, 235, 0.4);
+    background-color: #dbeafe !important;
+  }
+  100% {
+    box-shadow: none;
+  }
+}
+
+/* Toast Slide In Animation */
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Loading Button Spinner Animation */
+@keyframes btnSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Pagination Mobile Responsive Rules */
+@media (max-width: 640px) {
+  .cmms-pagination-container {
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 10px !important;
+  }
+  .cmms-pagination-page-numbers {
+    display: none !important;
+  }
+  .cmms-pagination-mobile-label {
+    display: inline-block !important;
+  }
+}
+@media (min-width: 641px) {
+  .cmms-pagination-mobile-label {
+    display: none !important;
+  }
+}
+
+

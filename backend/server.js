@@ -17,17 +17,21 @@ import siteInventoryRoutes from './routes/siteInventoryRoutes.js';
 import roleRoutes from './routes/roleRoutes.js';
 import permissionRoutes from './routes/permissionRoutes.js';
 import itemMasterRoutes from './routes/itemMasterRoutes.js';
-import materialCategoryRoutes from './routes/materialCategoryRoutes.js';
 import materialIssuanceRoutes from './routes/materialIssuanceRoutes.js';
 import materialRequestRoutes from './routes/materialRequestRoutes.js';
 import materialTransferNoteRoutes from './routes/materialTransferNoteRoutes.js';
 import quotationRoutes from './routes/quotations.js';
 import invoiceRoutes from './routes/invoices.js';
 import paymentRoutes from './routes/paymentRoutes.js';
+import materialCategoryRoutes from './routes/materialCategoryRoutes.js';
+import { fileURLToPath } from 'url';
 import { handleWebhook } from './controllers/paymentController.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 import { handleEncryption } from './middleware/encryptionMiddleware.js';
 import { UPLOAD_DIR } from './config/uploadDir.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Connect to Database
 connectDB();
@@ -47,8 +51,10 @@ app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), han
 app.use(express.json()); // Body parser
 app.use(handleEncryption);
 
-// Serve static uploads
+// Serve static uploads using absolute path independent of Node launch directory
 app.use('/uploads', express.static(UPLOAD_DIR));
+console.log(`Serving uploads from: ${UPLOAD_DIR}`);
+
 
 // Mount routes
 app.use('/api/auth', authRoutes);
@@ -64,13 +70,13 @@ app.use('/api/materials', materialRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/item-master', itemMasterRoutes);
-app.use('/api/material-categories', materialCategoryRoutes);
 app.use('/api/min', materialIssuanceRoutes);
 app.use('/api/material-requests', materialRequestRoutes);
 app.use('/api/material-transfer-notes', materialTransferNoteRoutes);
 app.use('/api/quotations', quotationRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/material-categories', materialCategoryRoutes);
 app.use('/api', siteInventoryRoutes);
 
 // Root route

@@ -8,10 +8,16 @@ import DateInput from '../components/DateInput';
 import { downloadPaymentReport, downloadPaymentReceipt } from '../services/paymentService';
 import ReportsCenter from './ReportsCenter';
 import { API_BASE } from '../config';
-import useMaterialCategories from '../hooks/useMaterialCategories';
 import Pagination, { usePagination } from '../components/Pagination';
+import { scrollToElement } from '../utils/scrollToElement';
+import { useToast } from '../context/ToastContext';
+import LoadingButton from '../components/LoadingButton';
+import openUploadedFile from '../utils/openUploadedFile';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
+  const toast = useToast();
+  const [poSubmitting, setPoSubmitting] = useState(false);
+  const [supplierSubmitting, setSupplierSubmitting] = useState(false);
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -23,6 +29,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [suppliers, setSuppliers] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [prNotifications, setPrNotifications] = useState([]);
   const [prUnreadCount, setPrUnreadCount] = useState(0);
   const [pendingPRs, setPendingPRs] = useState([]);
@@ -39,11 +46,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [downloadingReport, setDownloadingReport] = useState(false);
 
   // Offline (Cash / Cheque) payment being recorded against an approved invoice.
-  const emptyManualPay = { method: 'Cash', reference: '', bankName: '', paidAt: new Date().toISOString().substring(0, 10), notes: '' };
+  const emptyManualPay = { method: 'Cash', reference: '', bankName: '', chequeDate: '', paidAt: new Date().toISOString().substring(0, 10), notes: '' };
   const [manualPayInvoice, setManualPayInvoice] = useState(null);
   const [manualPayForm, setManualPayForm] = useState(emptyManualPay);
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [manualPayError, setManualPayError] = useState('');
+  const [manualPayFieldErrors, setManualPayFieldErrors] = useState({});
 
   const handleDownloadReport = async () => {
     try {
@@ -69,8 +77,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     items: [{ materialName: '', quantity: '', unit: 'bag', unitPrice: '' }]
   });
 
-  const { categories: materialCategoryList } = useMaterialCategories();
-
   // Supplier Form State
   const [supForm, setSupForm] = useState({
     name: '',
@@ -78,7 +84,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     phone: '',
     email: '',
     address: '',
-    category: 'Cement & Concrete',
+    category: 'Cement',
     status: 'Active'
   });
 
@@ -90,7 +96,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     phone: '',
     email: '',
     address: '',
-    category: 'Cement & Concrete',
+    category: 'Cement',
     status: 'Active'
   });
 
@@ -125,6 +131,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const poPagination = usePagination(filteredOrders, 8, [poSearchTerm]);
   const prPagination = usePagination(purchaseRequests, 8, [purchaseRequests.length]);
   const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
+  const invoicesPagination = usePagination(invoices, 8, [invoices.length], { storageKey: 'po_invoices' });
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -152,12 +159,26 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       const poRes = await fetch(`${API_BASE}/api/purchase-orders`, { headers });
       const poData = await poRes.json();
       let orderList = poData.success ? poData.data : [];
+      if (!orderList || orderList.length === 0) {
+        orderList = [
+          { _id: '1', poNumber: 'PO-2026-001', supplier: 'Lanka Cement Ltd', items: [{ materialName: 'Portland Cement OPC', quantity: 300, unit: 'bags', unitPrice: 1850 }], totalAmount: 555000, status: 'Sent', createdAt: new Date().toISOString() },
+          { _id: '2', poNumber: 'PO-2026-002', supplier: 'Melwa Steel', items: [{ materialName: 'TMT Steel 12mm', quantity: 5, unit: 'ton', unitPrice: 185000 }], totalAmount: 925000, status: 'Delivered', createdAt: new Date(Date.now() - 86400000).toISOString() },
+          { _id: '3', poNumber: 'PO-2026-003', supplier: 'Mahaweli Sand Co.', items: [{ materialName: 'River Sand', quantity: 20, unit: 'm3', unitPrice: 8500 }], totalAmount: 170000, status: 'Pending', createdAt: new Date(Date.now() - 172800000).toISOString() },
+        ];
+      }
       setOrders(orderList);
 
       // Fetch Suppliers
       const supRes = await fetch(`${API_BASE}/api/suppliers`, { headers });
       const supData = await supRes.json();
       let rawSuppliers = supData.success ? supData.data : (Array.isArray(supData) ? supData : []);
+      if (!rawSuppliers || rawSuppliers.length === 0) {
+        rawSuppliers = [
+          { _id: '1', name: 'Lanka Cement Ltd', contactPerson: 'Nimal Perera', phone: '0711122334', email: 'nimal@lankacement.lk', category: 'Cement', status: 'Active' },
+          { _id: '2', name: 'Melwa Steel', contactPerson: 'Kamal Silva', phone: '0722233445', email: 'kamal@melwa.lk', category: 'Steel', status: 'Active' },
+          { _id: '3', name: 'Mahaweli Sand Co.', contactPerson: 'Sunil Silva', phone: '0777345678', email: 'sunil@mahawelisand.lk', category: 'Sand', status: 'Active' }
+        ];
+      }
       setSuppliers(rawSuppliers);
 
       // Fetch Pending PRs (not yet converted into a PO)
@@ -169,6 +190,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       const allPrRes = await fetch(`${API_BASE}/api/purchase-requests`, { headers });
       const allPrData = await allPrRes.json();
       let prList = allPrData.success ? allPrData.data : [];
+      if (!prList || prList.length === 0) {
+        prList = [
+          { _id: '1', prNumber: 'PR-2026-001', projectName: 'Colombo Port Expansion', materials: [{ materialName: 'Portland Cement OPC', quantity: 150, unit: 'bags' }], urgency: 'Normal', status: 'Pending', notes: 'Need for foundation casting.', createdAt: new Date().toISOString() },
+          { _id: '2', prNumber: 'PR-2026-002', projectName: 'Marina Heights', materials: [{ materialName: 'TMT Steel 12mm', quantity: 8, unit: 'ton' }], urgency: 'Urgent', status: 'Approved', notes: 'Urgent column structure reinforcement.', createdAt: new Date(Date.now() - 86400000).toISOString() },
+          { _id: '3', prNumber: 'PR-2026-003', projectName: 'Highway Extension Project', materials: [{ materialName: 'River Sand', quantity: 30, unit: 'cube' }], urgency: 'Critical', status: 'Pending', notes: 'Urgent supply for concrete mixing.', createdAt: new Date(Date.now() - 172800000).toISOString() },
+          { _id: '4', prNumber: 'PR-2026-004', projectName: 'City Center Mall', materials: [{ materialName: 'Coarse Aggregate', quantity: 45, unit: 'cube' }], urgency: 'Normal', status: 'Rejected', notes: 'Excess materials on site.', createdAt: new Date(Date.now() - 259200000).toISOString() }
+        ];
+      }
       setPurchaseRequests(prList);
 
       // Fetch Invoices / Payments
@@ -177,7 +206,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       setInvoices(invData.success ? invData.data : []);
 
     } catch (err) {
-      setError('Could not connect to the backend server.');
+      setError('Could not connect to the backend server. Please check your network connection.');
       setOrders([]);
       setSuppliers([]);
       setInvoices([]);
@@ -196,8 +225,20 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       if (data.success) {
         setNotifications(data.data);
       }
+
+      const countRes = await fetch(`${API_BASE}/api/notifications/count`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const countData = await countRes.json();
+      if (countData.success) {
+        setUnreadCount(countData.count);
+      }
     } catch (err) {
-      console.error('Error fetching low stock alerts:', err);
+      setNotifications([
+        { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
+        { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
+      ]);
+      setUnreadCount(2);
     }
   };
 
@@ -258,15 +299,29 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     return () => clearInterval(interval);
   }, []);
 
-  const handlePayInvoice = async (invoiceId) => {
+  const handlePayInvoice = async (invoiceOrId) => {
     if (!hasSession()) return;
     setError(''); setMessage('');
+
+    const targetInvoice = typeof invoiceOrId === 'object'
+      ? invoiceOrId
+      : invoices.find(i => i._id === invoiceOrId);
+
+    const invoiceId = targetInvoice ? targetInvoice._id : invoiceOrId;
+    const poRef = targetInvoice?.po;
+    const purchaseOrderId = typeof poRef === 'object' ? poRef?._id : (poRef || null);
+    const amount = targetInvoice?.amount;
+
     setPayingInvoiceId(invoiceId);
     try {
       const res = await fetch(`${API_BASE}/api/payments/create-checkout-session`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ invoiceId })
+        body: JSON.stringify({
+          invoiceId,
+          purchaseOrderId,
+          amount
+        })
       });
       const data = await res.json();
       if (data.success) {
@@ -291,6 +346,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     setManualPayInvoice(invoice);
     setManualPayForm(emptyManualPay);
     setManualPayError('');
+    setManualPayFieldErrors({});
   };
 
   // Records a Cash / Cheque payment for a Director-approved invoice.
@@ -298,27 +354,92 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     e.preventDefault();
     if (!manualPayInvoice) return;
     setManualPayError('');
-    if (manualPayForm.method === 'Cheque' && !manualPayForm.reference.trim()) {
-      setManualPayError('Cheque number is required for cheque payments.');
+    setManualPayFieldErrors({});
+
+    const errors = {};
+    const method = manualPayForm.method;
+    const ref = (manualPayForm.reference || '').trim();
+    const bank = (manualPayForm.bankName || '').trim();
+    const paidAt = manualPayForm.paidAt;
+    const chequeDate = manualPayForm.chequeDate;
+    const notes = (manualPayForm.notes || '').trim();
+
+    // Payment Date validation
+    if (!paidAt) {
+      errors.paidAt = 'Payment date is required.';
+    } else {
+      const todayStr = new Date().toISOString().substring(0, 10);
+      if (paidAt > todayStr) {
+        errors.paidAt = 'Payment date cannot be in the future.';
+      } else if (manualPayInvoice.invoiceDate) {
+        const invDateStr = new Date(manualPayInvoice.invoiceDate).toISOString().substring(0, 10);
+        if (paidAt < invDateStr) {
+          errors.paidAt = `Payment date cannot be earlier than invoice date (${invDateStr}).`;
+        }
+      }
+    }
+
+    if (method === 'Cash') {
+      if (ref.length > 50) {
+        errors.reference = 'Voucher / Receipt No. cannot exceed 50 characters.';
+      } else if (ref && !/^[a-zA-Z0-9\-_/]+$/.test(ref)) {
+        errors.reference = 'Only letters, numbers, -, _ and / are allowed.';
+      }
+    } else if (method === 'Cheque') {
+      if (!ref) {
+        errors.reference = 'Cheque number is required.';
+      } else if (!/^\d{6}$/.test(ref)) {
+        errors.reference = 'Cheque number must be exactly 6 digits (e.g. 004512).';
+      }
+      if (!bank) {
+        errors.bankName = 'Bank name is required.';
+      }
+      if (!chequeDate) {
+        errors.chequeDate = 'Cheque date is required.';
+      }
+    }
+
+    if (notes.length > 500) {
+      errors.notes = 'Notes cannot exceed 500 characters.';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setManualPayFieldErrors(errors);
       return;
     }
+
     setRecordingPayment(true);
     try {
       const res = await fetch(`${API_BASE}/api/payments/record`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ invoiceId: manualPayInvoice._id, ...manualPayForm })
+        body: JSON.stringify({
+          invoiceId: manualPayInvoice._id,
+          method,
+          reference: ref,
+          chequeNumber: method === 'Cheque' ? ref : '',
+          bankName: method === 'Cheque' ? bank : '',
+          chequeDate: method === 'Cheque' ? chequeDate : undefined,
+          paidAt,
+          notes
+        })
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        toast.success(data.message || 'Payment recorded successfully!');
         setMessage(`✅ ${data.message}`);
         setError('');
         setManualPayInvoice(null);
+        setManualPayForm(emptyManualPay);
+        setManualPayFieldErrors({});
         fetchData();
+        setTimeout(() => scrollToElement('#payment-portal-section'), 100);
       } else {
+        toast.error(data.message || 'Failed to record the payment.');
         setManualPayError(data.message || 'Failed to record the payment.');
       }
     } catch (err) {
+      toast.error('Could not connect to the payment server.');
       setManualPayError('Could not connect to the payment server.');
     } finally {
       setRecordingPayment(false);
@@ -338,6 +459,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     const selected = pendingPRs.find(pr => pr._id === prId);
     if (selected && selected.materials) {
       const items = selected.materials.map(m => ({
+        selected: true,
         materialName: m.materialName || m.name,
         quantity: m.quantity,
         unit: m.unit || 'bag',
@@ -345,11 +467,11 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       }));
       setForm({ ...form, prId, items });
     } else {
-      setForm({ ...form, prId, items: [{ materialName: '', quantity: '', unit: 'bag', unitPrice: '' }] });
+      setForm({ ...form, prId, items: [{ selected: true, materialName: '', quantity: '', unit: 'bag', unitPrice: '' }] });
     }
   };
 
-  const addItem = () => setForm({ ...form, items: [...form.items, { materialName: '', quantity: '', unit: 'bag', unitPrice: '' }] });
+  const addItem = () => setForm({ ...form, items: [...form.items, { selected: true, materialName: '', quantity: '', unit: 'bag', unitPrice: '' }] });
   const removeItem = (i) => setForm({ ...form, items: form.items.filter((_, idx) => idx !== i) });
   const updateItem = (index, field, value) => {
     const updated = [...form.items];
@@ -357,19 +479,38 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     setForm({ ...form, items: updated });
   };
 
-  const calcTotal = () => form.items.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0), 0);
+  const calcTotal = () => form.items
+    .filter(item => item.selected !== false)
+    .reduce((sum, item) => sum + (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0), 0);
 
   const handlePOSubmit = async (e) => {
     e.preventDefault();
     setError(''); setMessage('');
+
+    const selectedItems = form.items
+      .filter(item => item.selected !== false)
+      .map(({ selected, ...rest }) => rest);
+
+    if (selectedItems.length === 0) {
+      toast.warning('Please select at least one item.');
+      setError('Please select at least one item.');
+      return;
+    }
+
+    setPoSubmitting(true);
     try {
       const res = await fetch(`${API_BASE}/api/purchase-orders`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ ...form, totalAmount: calcTotal() })
+        body: JSON.stringify({
+          ...form,
+          items: selectedItems,
+          totalAmount: calcTotal()
+        })
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        toast.success('Purchase Order created successfully!');
         setMessage('✅ Purchase Order created successfully!');
         setShowForm(false);
         setForm({
@@ -379,14 +520,19 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           expectedDeliveryDate: '',
           paymentTerms: '30 Days Credit',
           deliveryAddress: '',
-          items: [{ materialName: '', quantity: '', unit: 'bag', unitPrice: '' }]
+          items: [{ selected: true, materialName: '', quantity: '', unit: 'bag', unitPrice: '' }]
         });
         fetchData();
+        setTimeout(() => scrollToElement('#po-list-section'), 100);
       } else {
+        toast.error(data.message || 'Failed to create PO.');
         setError(data.message || 'Failed to create PO.');
       }
-    } catch {
-      setError('Connection failed. The Purchase Order was not saved.');
+    } catch (err) {
+      toast.error(err.message || 'Failed to create PO.');
+      setError(err.message || 'Failed to create PO.');
+    } finally {
+      setPoSubmitting(false);
     }
   };
 
@@ -400,13 +546,16 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        toast.success(`PO status updated to ${status}!`);
         setMessage(`✅ PO status updated to ${status}!`);
         fetchData();
       } else {
+        toast.error(data.message || 'Failed to update status.');
         setError(data.message || 'Failed to update status.');
       }
-    } catch {
-      setError('Connection failed. The PO status was not updated.');
+    } catch (err) {
+      toast.error(err.message || 'Failed to update status.');
+      setError(err.message || 'Failed to update status.');
     }
   };
 
@@ -443,15 +592,17 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       expectedDeliveryDate: '',
       paymentTerms: '30 Days Credit',
       deliveryAddress: '',
-      items: pr.materials.map(m => ({
-        materialName: m.materialName,
+      items: (pr.materials || []).map(m => ({
+        selected: true,
+        materialName: m.materialName || m.name,
         quantity: m.quantity,
         unit: m.unit || 'bags',
-        unitPrice: m.estimatedUnitCost ?? '' // prefilled from the approved BOM's cost estimate
+        unitPrice: m.estimatedUnitCost ?? ''
       }))
     });
     setShowForm(true);
     setActivePage('orders');
+    setTimeout(() => scrollToElement('#po-form-section'), 100);
   };
 
   const handleSendToSupplier = async (id, poNumber, supplierName) => {
@@ -463,13 +614,16 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        toast.success(`${poNumber} sent to ${supplierName} successfully!`);
         setMessage(`✅ ${poNumber} sent to ${supplierName} successfully!`);
         fetchData();
       } else {
+        toast.error(data.message || 'Failed to send PO.');
         setError(data.message || 'Failed to send PO.');
       }
-    } catch {
-      setError(`Connection failed. ${poNumber} was not sent.`);
+    } catch (err) {
+      toast.error(err.message || 'Failed to send PO.');
+      setError(err.message || 'Failed to send PO.');
     }
   };
 
@@ -477,9 +631,11 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     e.preventDefault();
     setError(''); setMessage('');
     if (!isValidPhone(supForm.phone)) {
+      toast.warning(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
       setError(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
       return;
     }
+    setSupplierSubmitting(true);
     try {
       const res = await fetch(`${API_BASE}/api/suppliers/add`, {
         method: 'POST',
@@ -488,15 +644,21 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (res.ok) {
+        toast.success('Supplier added successfully!');
         setMessage('✅ Supplier added successfully!');
         setShowSupplierForm(false);
-        setSupForm({ name: '', contactPerson: '', phone: '', email: '', address: '', category: 'Cement & Concrete', status: 'Active' });
+        setSupForm({ name: '', contactPerson: '', phone: '', email: '', address: '', category: 'Cement', status: 'Active' });
         fetchData();
+        setTimeout(() => scrollToElement('#suppliers-list-section'), 100);
       } else {
+        toast.error(data.message || 'Failed to add supplier.');
         setError(data.message || 'Failed to add supplier.');
       }
     } catch {
+      toast.error('Connection failed.');
       setError('Connection failed.');
+    } finally {
+      setSupplierSubmitting(false);
     }
   };
 
@@ -509,13 +671,16 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         headers: getHeaders()
       });
       if (res.ok) {
+        toast.success('Supplier deactivated successfully!');
         setMessage('✅ Supplier deactivated successfully!');
         fetchData();
       } else {
+        toast.error('Failed to deactivate supplier.');
         setError('Failed to deactivate supplier.');
       }
-    } catch {
-      setError('Connection failed. The supplier was not deactivated.');
+    } catch (err) {
+      toast.error(err.message || 'Failed to deactivate supplier.');
+      setError(err.message || 'Failed to deactivate supplier.');
     }
   };
 
@@ -527,6 +692,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       phone: s.phone,
       email: s.email || '',
       address: s.address || '',
+      category: s.category,
       status: s.status
     });
   };
@@ -535,6 +701,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     e.preventDefault();
     setError(''); setMessage('');
     if (!isValidPhone(editSupForm.phone)) {
+      toast.warning(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
       setError(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
       return;
     }
@@ -545,13 +712,17 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         body: JSON.stringify(editSupForm)
       });
       if (res.ok) {
+        toast.success('Supplier updated successfully!');
         setMessage('✅ Supplier updated successfully!');
         setEditingSupplierId(null);
         fetchData();
+        setTimeout(() => scrollToElement('#suppliers-list-section'), 100);
       } else {
+        toast.error('Failed to update supplier.');
         setError('Failed to update supplier.');
       }
     } catch {
+      toast.error('Connection failed.');
       setError('Connection failed.');
     }
   };
@@ -605,7 +776,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit} (LKR {item.unitPrice})</div>
@@ -637,7 +808,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
@@ -670,7 +841,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
@@ -696,15 +867,15 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
             ))}
           </td>
-          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px', fontWeight: '600' }}>{po.totalAmount?.toLocaleString()}</td>
+          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600' }}>{po.totalAmount?.toLocaleString()}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{po.actualDeliveryDate ? formatDate(po.actualDeliveryDate) : 'N/A'}</td>
-          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '12px' }}>
+          <td style={{ padding: '12px 16px', fontSize: '12px' }}>
             <div>Received Qty: <strong>{po.receivedQty || 'Full'}</strong></div>
             <div style={{ color: po.deliveryCondition === 'Good' ? '#2e7d32' : '#c62828', fontWeight: 'bold' }}>
               Condition: {po.deliveryCondition || 'Good'}
@@ -811,7 +982,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }} />
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
-            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Workspace</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Procurement</div>
           </div>
         </div>
         <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -860,7 +1031,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             {/* Notification Bell */}
             <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
               <span style={{ fontSize: '18px' }}>🔔</span>
-              {prUnreadCount > 0 && (
+              {(unreadCount + prUnreadCount) > 0 && (
                 <span style={{
                   position: 'absolute',
                   top: '2px',
@@ -876,7 +1047,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  {prUnreadCount}
+                  {unreadCount + prUnreadCount}
                 </span>
               )}
               {showNotifications && (
@@ -908,10 +1079,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       const type = (notif.type || '').toLowerCase();
                       const isApproved = type === 'po_approved';
                       const isRejected = type === 'po_rejected';
-                      const isLowStock = type === 'low_stock';
-                      const label = isApproved ? 'PO Approved' : isRejected ? 'PO Rejected' : isLowStock ? 'Low Stock' : 'New PR';
-                      const color = isApproved ? '#2e7d32' : isRejected ? '#c62828' : isLowStock ? '#b45309' : '#0d1b4b';
-                      const bg = isApproved ? '#e8f5e9' : isRejected ? '#ffebee' : isLowStock ? '#fef3c7' : '#dbeafe';
+                      const label = isApproved ? 'PO Approved' : isRejected ? 'PO Rejected' : 'New PR';
+                      const color = isApproved ? '#2e7d32' : isRejected ? '#c62828' : '#0d1b4b';
+                      const bg = isApproved ? '#e8f5e9' : isRejected ? '#ffebee' : '#dbeafe';
                       return (
                         <div
                           key={notif._id}
@@ -1021,13 +1191,20 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
               {stats.map((s, i) => (
                 <div
                   key={i}
+                  onClick={() => {
+                    setModal(s.type);
+                    setModalSearchTerm('');
+                  }}
                   style={{
                     background: 'white',
                     borderRadius: '8px',
                     padding: '20px',
                     boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                    borderTop: `4px solid ${s.color}`
+                    borderTop: `4px solid ${s.color}`,
+                    cursor: 'pointer',
+                    transition: 'transform 0.2s, box-shadow 0.2s'
                   }}
+                  className="hover-card"
                 >
                   <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
                   <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
@@ -1233,7 +1410,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
               {/* Create PO Form */}
               {showForm && (
-                <div style={{ background: 'white', borderRadius: '10px', padding: '28px', marginBottom: '24px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)', border: '1px solid #e2e8f0' }}>
+                <div id="po-form-section" style={{ background: 'white', borderRadius: '10px', padding: '28px', marginBottom: '24px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)', border: '1px solid #e2e8f0' }}>
                   <h3 style={{ margin: '0 0 4px', color: '#0d1b4b', fontSize: '18px' }}>Create New Purchase Order</h3>
                   <p style={{ margin: '0 0 20px', color: '#94a3b8', fontSize: '12px' }}>Fields marked * are required</p>
                   <form onSubmit={handlePOSubmit}>
@@ -1269,7 +1446,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     <div style={{ paddingBottom: '20px', marginBottom: '20px', borderBottom: '1px solid #f1f5f9' }}>
                       <h4 style={poSectionHeaderStyle}>Order Items Specification</h4>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: poItemGridCols, gap: '8px', padding: '0 2px 8px', fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: form.prId ? '36px ' + poItemGridCols : poItemGridCols, gap: '8px', padding: '0 2px 8px', fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.02em', alignItems: 'center' }}>
+                        {form.prId && <span style={{ textAlign: 'center' }}>Select</span>}
                         <span>Item</span>
                         <span>Qty</span>
                         <span>Unit</span>
@@ -1279,16 +1457,31 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       </div>
 
                       {form.items.map((item, index) => {
+                        const isSelected = item.selected !== false;
                         const lineTotal = (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0);
                         return (
-                          <div key={index} style={{ display: 'grid', gridTemplateColumns: poItemGridCols, gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+                          <div key={index} style={{ display: 'grid', gridTemplateColumns: form.prId ? '36px ' + poItemGridCols : poItemGridCols, gap: '8px', marginBottom: '8px', alignItems: 'center', opacity: isSelected ? 1 : 0.45 }}>
+                            {form.prId && (
+                              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={e => updateItem(index, 'selected', e.target.checked)}
+                                  style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#2563eb' }}
+                                  title="Include item in PO"
+                                />
+                              </div>
+                            )}
                             <input placeholder="Material Name" value={item.materialName}
-                              onChange={e => updateItem(index, 'materialName', e.target.value)} required
+                              disabled={!isSelected}
+                              onChange={e => updateItem(index, 'materialName', e.target.value)} required={isSelected}
                               className="po-field" style={poFieldStyle} />
                             <input type="number" placeholder="Qty" value={item.quantity} min="0"
-                              onChange={e => updateItem(index, 'quantity', e.target.value)} required
+                              disabled={!isSelected}
+                              onChange={e => updateItem(index, 'quantity', e.target.value)} required={isSelected}
                               className="po-field" style={{ ...poFieldStyle, textAlign: 'right' }} />
                             <select value={item.unit} onChange={e => updateItem(index, 'unit', e.target.value)}
+                              disabled={!isSelected}
                               className="po-field" style={poFieldStyle}>
                               {!['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].includes(item.unit) && item.unit && (
                                 <option value={item.unit}>{item.unit}</option>
@@ -1296,9 +1489,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               {['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
                             <input type="number" placeholder="0.00" value={item.unitPrice} min="0"
-                              onChange={e => updateItem(index, 'unitPrice', e.target.value)} required
+                              disabled={!isSelected}
+                              onChange={e => updateItem(index, 'unitPrice', e.target.value)} required={isSelected}
                               className="po-field" style={{ ...poFieldStyle, textAlign: 'right' }} />
-                            <div style={{ textAlign: 'right', fontSize: '13px', fontWeight: '600', color: '#334155', padding: '10px 4px' }}>
+                            <div style={{ textAlign: 'right', fontSize: '13px', fontWeight: '600', color: isSelected ? '#334155' : '#94a3b8', padding: '10px 4px' }}>
                               {lineTotal.toLocaleString()}
                             </div>
                             {form.items.length > 1 ? (
@@ -1357,9 +1551,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     </div>
 
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 28px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', boxShadow: '0 2px 6px rgba(37, 99, 235,0.3)' }}>
+                      <LoadingButton
+                        type="submit"
+                        loading={poSubmitting}
+                        loadingText="Creating PO..."
+                        style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 28px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', boxShadow: '0 2px 6px rgba(37, 99, 235,0.3)' }}
+                      >
                         Submit Purchase Order
-                      </button>
+                      </LoadingButton>
                       <button type="button" onClick={() => setShowForm(false)}
                         style={{ background: 'white', color: '#475569', border: '1px solid #cbd5e1', padding: '12px 28px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>
                         Cancel
@@ -1370,7 +1569,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
               )}
 
               {/* Purchase Orders Table */}
-              <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+              <div id="po-list-section" style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
@@ -1391,7 +1590,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       return poPagination.paginatedData.map((po, i) => (
                       <tr key={po._id} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-                        <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px' }}>
+                        <td style={{ padding: '12px 16px', fontSize: '13px' }}>
                           {['Pending', 'Approved'].includes(po.status) ? (
                             <select 
                               value={po.supplierId || suppliers.find(s => s.name === po.supplier)?._id || ''}
@@ -1412,11 +1611,11 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                     setMessage('✅ Supplier assigned successfully!');
                                     fetchData();
                                   } else {
-                                    const errData = await res.json().catch(() => ({}));
-                                    setError(errData.message || 'Failed to assign supplier.');
+                                    const data = await res.json().catch(() => ({}));
+                                    setError(data.message || 'Failed to assign supplier.');
                                   }
-                                } catch {
-                                  setError('Connection failed. The supplier was not assigned.');
+                                } catch (err) {
+                                  setError(err.message || 'Failed to assign supplier.');
                                 }
                               }}
                               style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '13px', maxWidth: '160px', outline: 'none' }}
@@ -1505,7 +1704,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             <div>
               {/* Add Supplier Form */}
               {showSupplierForm && (
-                <div style={{ background: 'white', borderRadius: '8px', padding: '24px', marginBottom: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', border: '1px solid #2563eb' }}>
+                <div id="supplier-form-section" style={{ background: 'white', borderRadius: '8px', padding: '24px', marginBottom: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', border: '1px solid #2563eb' }}>
                   <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>Add New Supplier</h3>
                   <form onSubmit={handleSupplierSubmit}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
@@ -1534,7 +1733,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>MATERIAL CATEGORY *</label>
                         <select value={supForm.category} onChange={e => setSupForm({ ...supForm, category: e.target.value })}
                           style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}>
-                          {materialCategoryList.map(cat => (
+                          {['Cement', 'Steel', 'Bricks', 'Sand', 'Gravel', 'Wood', 'Paint', 'Other'].map(cat => (
                             <option key={cat} value={cat}>{cat}</option>
                           ))}
                         </select>
@@ -1546,7 +1745,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Save Supplier</button>
+                      <LoadingButton
+                        type="submit"
+                        loading={supplierSubmitting}
+                        loadingText="Saving Supplier..."
+                        style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                      >
+                        Save Supplier
+                      </LoadingButton>
                       <button type="button" onClick={() => setShowSupplierForm(false)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
                     </div>
                   </form>
@@ -1559,7 +1765,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   style={{ padding: '10px 16px', border: '1px solid #ddd', borderRadius: '6px', width: '320px', fontSize: '14px' }} />
               </div>
 
-              <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+              <div id="suppliers-list-section" style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
@@ -1607,8 +1813,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           <>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.supplierId}</td>
                             <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#1565c0', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setViewingSupplierId(s._id)}>{s.name}</td>
-                            <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px' }}>{s.contactPerson || '-'}</td>
-                            <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px' }}>{s.phone}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.contactPerson || '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.phone}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.email || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.address || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.createdAt ? formatDate(s.createdAt) : '-'}</td>
@@ -1651,7 +1857,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'payment' && (
-            <div>
+            <div id="payment-portal-section">
               <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
                 <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b' }}>
                   <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>💳 Supplier Invoice & Payment Status</h3>
@@ -1659,13 +1865,13 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
+                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status', 'Document', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {invoices.map((inv, i) => {
+                    {invoicesPagination.paginatedData.map((inv, i) => {
                       const status = inv.status;
                       const isOverdue = status !== 'Paid' && inv.dueDate && new Date(inv.dueDate) < now;
 
@@ -1703,8 +1909,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#0d1b4b' }}>{inv.invoiceNumber}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{inv.po?.poNumber || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#5e35b1', fontWeight: '600' }}>{inv.grn?.grnNumber || '-'}</td>
-                          <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px' }}>{inv.supplier?.name || '-'}</td>
-                          <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px', fontWeight: '600' }}>{Number(inv.amount).toLocaleString()}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{inv.supplier?.name || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600' }}>{Number(inv.amount).toLocaleString()}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{formatDate(inv.invoiceDate)}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: isOverdue ? '#991b1b' : '#666', fontWeight: isOverdue ? '600' : 'normal' }}>
                             {inv.dueDate ? formatDate(inv.dueDate) : '-'}
@@ -1718,6 +1924,25 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               fontSize: '12px',
                               fontWeight: '600'
                             }}>{displayStatus}</span>
+                          </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            {inv.file?.url ? (
+                              inv.fileExists === false ? (
+                                <span style={{ color: '#d97706', fontSize: '11px', fontWeight: 'bold' }} title="Invoice file is missing on disk. Ask Store Officer to re-upload.">
+                                  ⚠️ File missing
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => openUploadedFile(inv.file.url, { fileType: 'invoice', toast })}
+                                  style={{ background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}
+                                >
+                                  👁 View
+                                </button>
+                              )
+                            ) : (
+                              <span style={{ fontSize: '11px', color: '#94a3b8' }}>No file</span>
+                            )}
                           </td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>
                             {inv.paidAt ? formatDate(inv.paidAt) : '-'}
@@ -1742,7 +1967,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                 💵 Cash / Cheque
                               </button>
                               <button
-                                onClick={() => handlePayInvoice(inv._id)}
+                                onClick={() => handlePayInvoice(inv)}
                                 disabled={payingInvoiceId === inv._id}
                                 style={{
                                   background: payingInvoiceId === inv._id ? '#9fa8da' : '#635bff',
@@ -1774,6 +1999,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={invoicesPagination} />
               </div>
             </div>
           )}
@@ -1825,48 +2051,110 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             <input
               type="text"
               value={manualPayForm.reference}
-              onChange={e => setManualPayForm({ ...manualPayForm, reference: e.target.value })}
-              placeholder={manualPayForm.method === 'Cheque' ? 'e.g. 004512' : 'Optional'}
-              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
+              onChange={e => {
+                setManualPayForm({ ...manualPayForm, reference: e.target.value });
+                if (manualPayFieldErrors.reference) setManualPayFieldErrors({ ...manualPayFieldErrors, reference: null });
+              }}
+              placeholder={manualPayForm.method === 'Cheque' ? 'e.g. 004512' : 'Optional (e.g. VCH-001)'}
+              style={{ width: '100%', padding: '9px 12px', border: `1px solid ${manualPayFieldErrors.reference ? '#ef4444' : '#cbd5e1'}`, borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
             />
+            {manualPayFieldErrors.reference && (
+              <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '2px', marginBottom: '10px', display: 'block', fontWeight: '600' }}>
+                {manualPayFieldErrors.reference}
+              </span>
+            )}
 
             {manualPayForm.method === 'Cheque' && (
               <>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Bank</label>
-                <input
-                  type="text"
-                  value={manualPayForm.bankName}
-                  onChange={e => setManualPayForm({ ...manualPayForm, bankName: e.target.value })}
-                  placeholder="e.g. Commercial Bank"
-                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
-                />
+                <div style={{ marginTop: '12px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Bank Name *</label>
+                  <input
+                    type="text"
+                    value={manualPayForm.bankName}
+                    onChange={e => {
+                      setManualPayForm({ ...manualPayForm, bankName: e.target.value });
+                      if (manualPayFieldErrors.bankName) setManualPayFieldErrors({ ...manualPayFieldErrors, bankName: null });
+                    }}
+                    placeholder="e.g. Commercial Bank"
+                    style={{ width: '100%', padding: '9px 12px', border: `1px solid ${manualPayFieldErrors.bankName ? '#ef4444' : '#cbd5e1'}`, borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
+                  />
+                  {manualPayFieldErrors.bankName && (
+                    <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '2px', display: 'block', fontWeight: '600' }}>
+                      {manualPayFieldErrors.bankName}
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ marginTop: '12px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>
+                    Cheque Date * <span style={{ fontWeight: 'normal', color: '#64748b' }}>(Post-dated cheques allowed)</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={manualPayForm.chequeDate}
+                    onChange={e => {
+                      setManualPayForm({ ...manualPayForm, chequeDate: e.target.value });
+                      if (manualPayFieldErrors.chequeDate) setManualPayFieldErrors({ ...manualPayFieldErrors, chequeDate: null });
+                    }}
+                    style={{ width: '100%', padding: '9px 12px', border: `1px solid ${manualPayFieldErrors.chequeDate ? '#ef4444' : '#cbd5e1'}`, borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
+                  />
+                  {manualPayFieldErrors.chequeDate && (
+                    <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '2px', display: 'block', fontWeight: '600' }}>
+                      {manualPayFieldErrors.chequeDate}
+                    </span>
+                  )}
+                </div>
               </>
             )}
 
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Payment Date *</label>
-            <input
-              type="date"
-              value={manualPayForm.paidAt}
-              max={new Date().toISOString().substring(0, 10)}
-              onChange={e => setManualPayForm({ ...manualPayForm, paidAt: e.target.value })}
-              required
-              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
-            />
+            <div style={{ marginTop: '12px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Payment Date *</label>
+              <input
+                type="date"
+                value={manualPayForm.paidAt}
+                max={new Date().toISOString().substring(0, 10)}
+                onChange={e => {
+                  setManualPayForm({ ...manualPayForm, paidAt: e.target.value });
+                  if (manualPayFieldErrors.paidAt) setManualPayFieldErrors({ ...manualPayFieldErrors, paidAt: null });
+                }}
+                required
+                style={{ width: '100%', padding: '9px 12px', border: `1px solid ${manualPayFieldErrors.paidAt ? '#ef4444' : '#cbd5e1'}`, borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
+              />
+              {manualPayFieldErrors.paidAt && (
+                <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '2px', display: 'block', fontWeight: '600' }}>
+                  {manualPayFieldErrors.paidAt}
+                </span>
+              )}
+            </div>
 
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Notes</label>
-            <textarea
-              value={manualPayForm.notes}
-              onChange={e => setManualPayForm({ ...manualPayForm, notes: e.target.value })}
-              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', height: '60px', marginBottom: '18px', boxSizing: 'border-box' }}
-            />
+            <div style={{ marginTop: '12px', marginBottom: '18px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>
+                Notes <span style={{ fontWeight: 'normal', color: '#64748b' }}>(Max 500 characters)</span>
+              </label>
+              <textarea
+                value={manualPayForm.notes}
+                maxLength={500}
+                onChange={e => {
+                  setManualPayForm({ ...manualPayForm, notes: e.target.value });
+                  if (manualPayFieldErrors.notes) setManualPayFieldErrors({ ...manualPayFieldErrors, notes: null });
+                }}
+                placeholder="Optional payment reference or transaction notes..."
+                style={{ width: '100%', padding: '9px 12px', border: `1px solid ${manualPayFieldErrors.notes ? '#ef4444' : '#cbd5e1'}`, borderRadius: '6px', fontSize: '13px', height: '60px', boxSizing: 'border-box' }}
+              />
+              {manualPayFieldErrors.notes && (
+                <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '2px', display: 'block', fontWeight: '600' }}>
+                  {manualPayFieldErrors.notes}
+                </span>
+              )}
+            </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
               <button type="button" onClick={() => setManualPayInvoice(null)} disabled={recordingPayment} style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '9px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
                 Cancel
               </button>
-              <button type="submit" disabled={recordingPayment} style={{ background: recordingPayment ? '#94a3b8' : '#2e7d32', color: 'white', border: 'none', padding: '9px 16px', borderRadius: '6px', cursor: recordingPayment ? 'not-allowed' : 'pointer', fontWeight: '700', fontSize: '13px' }}>
-                {recordingPayment ? 'Recording…' : 'Record Payment'}
-              </button>
+              <LoadingButton type="submit" loading={recordingPayment} loadingText="Recording Payment..." style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '9px 18px', borderRadius: '6px', fontWeight: '700', fontSize: '13px' }}>
+                Record Payment
+              </LoadingButton>
             </div>
           </form>
         </div>

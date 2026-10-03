@@ -15,11 +15,51 @@ import { notifyRoles } from './notificationController.js';
 // @access  Private
 export const getMaterials = async (req, res) => {
   try {
-    const { location } = req.query;
+    const { location, page, limit, search, sort = 'updatedAt', order = 'desc' } = req.query;
     const query = {};
     if (location) {
       query.location = location;
     }
+    if (search) {
+      query.$or = [
+        { name: new RegExp(search, 'i') },
+        { category: new RegExp(search, 'i') },
+        { code: new RegExp(search, 'i') }
+      ];
+    }
+
+    if (page || limit) {
+      const pageNum = Math.max(1, parseInt(page, 10) || 1);
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+      const skip = (pageNum - 1) * limitNum;
+      const sortOrder = order === 'asc' ? 1 : -1;
+      const sortObj = { [sort]: sortOrder, _id: -1 };
+
+      const total = await Material.countDocuments(query);
+      const totalPages = Math.ceil(total / limitNum) || 1;
+
+      const materials = await Material.find(query).sort(sortObj).skip(skip).limit(limitNum);
+
+      const decrypted = materials.map(m => {
+        const doc = m.toObject();
+        if (doc.location === 'SiteStore') {
+          doc.name = decryptDB(doc.name);
+          doc.quantity = Number(decryptDB(doc.quantity)) || 0;
+        }
+        return doc;
+      });
+
+      return res.status(200).json({
+        success: true,
+        count: decrypted.length,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages,
+        data: decrypted
+      });
+    }
+
     const materials = await Material.find(query).sort({ updatedAt: -1 });
     
     // Decrypt SiteStore materials

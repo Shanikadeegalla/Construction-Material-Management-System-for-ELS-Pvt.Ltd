@@ -20,11 +20,19 @@ const getAuthHeaders = () => {
 };
 
 // Creates a Stripe Checkout Session for a Director-approved invoice and redirects browser to returned Stripe checkout URL
-export const createCheckoutSession = async (invoiceId) => {
+export const createCheckoutSession = async (invoiceId, purchaseOrderId, amount) => {
+  const payload = typeof invoiceId === 'object'
+    ? {
+        invoiceId: invoiceId._id || invoiceId.invoiceId,
+        purchaseOrderId: invoiceId.purchaseOrderId || (typeof invoiceId.po === 'object' ? invoiceId.po?._id : invoiceId.po),
+        amount: invoiceId.amount
+      }
+    : { invoiceId, purchaseOrderId, amount };
+
   const res = await fetch(`${API_URL}/create-checkout-session`, {
     method: 'POST',
     headers: getAuthHeaders(),
-    body: JSON.stringify({ invoiceId })
+    body: JSON.stringify(payload)
   });
 
   const data = await res.json();
