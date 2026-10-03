@@ -210,7 +210,6 @@ function MainApp() {
       <style>{globalStyles}</style>
       <main style={!user && !view.startsWith('payment-') ? styles.main : {}}>
         {view === 'login' && renderLogin()}
-        {view === 'register' && renderRegister()}
         {view === 'payment-success' && (
           <PaymentSuccess onReturnToPOs={() => {
             window.history.pushState({}, '', '/');

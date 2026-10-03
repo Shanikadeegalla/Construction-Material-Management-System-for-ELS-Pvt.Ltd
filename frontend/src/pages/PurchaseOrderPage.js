@@ -13,6 +13,7 @@ import { scrollToElement } from '../utils/scrollToElement';
 import { useToast } from '../context/ToastContext';
 import LoadingButton from '../components/LoadingButton';
 import openUploadedFile from '../utils/openUploadedFile';
+import MaterialsViewButton from '../components/MaterialsViewButton';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const toast = useToast();
@@ -471,7 +472,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
-  const addItem = () => setForm({ ...form, items: [...form.items, { selected: true, materialName: '', quantity: '', unit: 'bag', unitPrice: '' }] });
   const removeItem = (i) => setForm({ ...form, items: form.items.filter((_, idx) => idx !== i) });
   const updateItem = (index, field, value) => {
     const updated = [...form.items];
@@ -510,8 +510,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        toast.success('Purchase Order created successfully!');
-        setMessage('✅ Purchase Order created successfully!');
+        toast.success(`Purchase Order ${data.data?.poNumber || ''} created successfully!`);
+        setMessage(`✅ Purchase Order ${data.data?.poNumber || ''} created successfully!`);
         setShowForm(false);
         setForm({
           prId: '',
@@ -559,16 +559,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
-  // Statuses the Purchase Manager can move a PO to. Approved/Rejected are Director-only,
-  // Sent needs an Approved PO and Delivered needs a Sent PO (mirrors the backend rules).
-  const getPoStatusOptions = (current) => {
-    const options = [current, 'Pending'];
-    if (current === 'Approved') options.push('Sent');
-    if (current === 'Sent') options.push('Delivered');
-    options.push('Closed', 'Cancelled');
-    return [...new Set(options)];
-  };
-
   // Payment state of a PO, derived from its supplier invoices so it matches the Payment Portal.
   const getPoPaymentState = (po) => {
     const poInvoices = invoices.filter(inv => (inv.po?._id || inv.po) === po._id && inv.status !== 'Rejected');
@@ -614,8 +604,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        toast.success(`${poNumber} sent to ${supplierName} successfully!`);
-        setMessage(`✅ ${poNumber} sent to ${supplierName} successfully!`);
+        toast.success(`${poNumber} emailed to ${supplierName} successfully!`);
+        setMessage(`✅ ${poNumber} emailed to ${supplierName} successfully!`);
         fetchData();
       } else {
         toast.error(data.message || 'Failed to send PO.');
@@ -819,12 +809,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           </td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{formatDate(po.createdAt)}</td>
           <td style={{ padding: '12px 16px' }}>
-            <button 
-              onClick={() => { setModal(null); handleSendToSupplier(po._id, po.poNumber, po.supplier); }}
-              style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-            >
-              🚀 Send to Supplier
-            </button>
+            <span style={{ fontSize: '12px', color: '#b45309', fontWeight: '600' }}>Awaiting Director approval</span>
           </td>
         </tr>
       ));
@@ -1266,9 +1251,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
                       <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
-                        {pr.materials?.map((m, idx) => (
-                          <div key={idx}>{m.materialName} ×{m.quantity} {m.unit || 'bags'}</div>
-                        ))}
+                        <MaterialsViewButton
+                          items={pr.materials}
+                          title={pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}
+                          subtitle={pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || ''}
+                          defaultUnit="bags"
+                        />
                       </td>
                       <td style={{ padding: '12px 16px', fontSize: '12px' }}>
                         <span style={{
@@ -1316,9 +1304,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
                       <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
                       <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
-                        {pr.materials?.map((m, idx) => (
-                          <div key={idx}><strong>{m.materialName}</strong>: {m.quantity} {m.unit || 'bags'}</div>
-                        ))}
+                        <MaterialsViewButton
+                          items={pr.materials}
+                          title={pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}
+                          subtitle={pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || ''}
+                          defaultUnit="bags"
+                        />
                       </td>
                       <td style={{ padding: '12px 16px', fontSize: '12px' }}>
                         <span style={{
@@ -1502,11 +1493,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         );
                       })}
 
-                      <button type="button" onClick={addItem}
-                        style={{ background: '#e3f2fd', color: '#1565c0', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', marginTop: '6px' }}>
-                        + Add Custom Item
-                      </button>
-
                       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
                         <div style={{ background: '#f0f7ff', border: '1px solid #dbeafe', borderRadius: '8px', padding: '12px 20px', display: 'flex', alignItems: 'baseline', gap: '10px' }}>
                           <span style={{ fontSize: '13px', color: '#475569', fontWeight: '600' }}>Total PO Amount</span>
@@ -1630,9 +1616,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           )}
                         </td>
                         <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
-                          {po.items?.map((item, idx) => (
-                            <div key={idx}>{item.materialName} ×{item.quantity} {item.unit} (LKR {item.unitPrice})</div>
-                          ))}
+                          <MaterialsViewButton
+                            items={po.items}
+                            title={po.poNumber || 'Purchase Order Items'}
+                            subtitle={typeof po.supplier === 'object' ? (po.supplier?.name || '') : (po.supplier || '')}
+                            showPrice
+                          />
                         </td>
                         <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>
                           {po.totalAmount?.toLocaleString()}
@@ -1673,21 +1662,34 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                             {po.status === 'Pending' && (
                               <span style={{ fontSize: '11px', color: '#b45309', fontWeight: '600' }}>Awaiting Director approval</span>
                             )}
+                            {/* A PO only stays Approved when the automatic supplier email on approval failed */}
                             {po.status === 'Approved' && (
-                              <button onClick={() => handleSendToSupplier(po._id, po.poNumber, po.supplier)}
-                                style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
-                                Send to Supplier
+                              <>
+                                <span style={{ fontSize: '11px', color: '#b45309', fontWeight: '600' }}>Supplier email not sent</span>
+                                <button onClick={() => handleSendToSupplier(po._id, po.poNumber, po.supplier)}
+                                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                  Resend Email
+                                </button>
+                              </>
+                            )}
+                            {po.status === 'Sent' && (
+                              <span style={{ fontSize: '11px', color: '#1565c0', fontWeight: '600' }}>Awaiting delivery (GRN)</span>
+                            )}
+                            {['Pending', 'Approved', 'Sent'].includes(po.status) && (
+                              <button onClick={() => { if (window.confirm(`Cancel ${po.poNumber}? This cannot be undone.`)) handleUpdateStatus(po._id, 'Cancelled'); }}
+                                style={{ background: 'white', color: '#c62828', border: '1px solid #c62828', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                Cancel PO
                               </button>
                             )}
-                            <select
-                              value={po.status} 
-                              onChange={e => handleUpdateStatus(po._id, e.target.value)}
-                              style={{ padding: '4px', fontSize: '11px', borderRadius: '4px', border: '1px solid #ddd', cursor: 'pointer', outline: 'none', background: 'white' }}
-                            >
-                              {getPoStatusOptions(po.status).map(st => (
-                                <option key={st} value={st}>{st}</option>
-                              ))}
-                            </select>
+                            {po.status === 'Delivered' && (
+                              <button onClick={() => handleUpdateStatus(po._id, 'Closed')}
+                                style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
+                                Close PO
+                              </button>
+                            )}
+                            {['Rejected', 'Closed', 'Cancelled'].includes(po.status) && (
+                              <span style={{ fontSize: '11px', color: '#94a3b8' }}>—</span>
+                            )}
                           </div>
                         </td>
                       </tr>

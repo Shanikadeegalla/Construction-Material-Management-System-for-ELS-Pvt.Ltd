@@ -9,6 +9,7 @@ import Pagination, { usePagination } from '../components/Pagination';
 import { scrollToElement } from '../utils/scrollToElement';
 import { useToast } from '../context/ToastContext';
 import LoadingButton from '../components/LoadingButton';
+import MaterialsViewButton from '../components/MaterialsViewButton';
 
 function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const toast = useToast();
@@ -1107,18 +1108,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ ...styles.td, fontWeight: 'bold' }}>{m.minNumber}</td>
                         <td style={styles.td}>
-                          {(m.materials || []).map((mat, i) => (
-                            <div key={i} style={{ marginBottom: '4px' }}>
-                              {mat.materialName} ({mat.quantity} {mat.unit})
-                              {mat.exceedsBom && (
-                                <div>
-                                  <span style={{ background: '#ffedd5', color: '#c2410c', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', fontSize: '10px', display: 'inline-block', marginTop: '2px' }}>
-                                    ⚠️ Exceeds BOM plan by {mat.exceedAmount} {mat.unit}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                          <MaterialsViewButton items={m.materials} title={m.minNumber} subtitle="Materials Requested" />
                         </td>
                         <td style={styles.td}>
                           <span style={{
@@ -1361,16 +1351,18 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                         <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                           <td style={styles.tdBold}>{m.minNumber}</td>
                           <td style={styles.td}>
-                            {(m.materials || []).map((mat, i) => (
-                              <div key={i}>{mat.materialName} ({mat.quantity} {mat.unit})</div>
-                            ))}
+                            <MaterialsViewButton items={m.materials} title={m.minNumber} subtitle="In-Transit Materials" />
                           </td>
                           <td style={styles.td}>{m.issuedBy || '-'}</td>
-                          <td style={styles.td}>{formatDate(m.createdAt)}</td>
-                          <td style={styles.td}><span style={{ ...styles.badge, background: '#e0f2fe', color: '#0369a1' }}>In-Transit</span></td>
+                          <td style={styles.td}>{formatDate(m.issuedAt)}</td>
+                          <td style={styles.td}>
+                            <span style={{ background: '#fef3c7', color: '#d97706', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                              {m.status}
+                            </span>
+                          </td>
                           <td style={styles.td}>
                             <button
-                              onClick={() => handleAcknowledgeDelivery(m._id)}
+                              onClick={() => handleConfirmReceipt(m._id)}
                               style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
                             >
                               Confirm Receipt

@@ -685,6 +685,10 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   }, [bomMaterials]);
 
+  const handleAddMaterialRow = () => {
+    setBomMaterials([...bomMaterials, { ...emptyBomMaterialRow }]);
+  };
+
   const handleRemoveMaterialRow = (idx) => {
     if (bomMaterials.length === 1) return;
     setBomMaterials(bomMaterials.filter((_, i) => i !== idx));
@@ -2274,13 +2278,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button
-                  type="button"
-                  onClick={() => handleEditBom(viewingBom)}
-                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
-                >
-                  ✏️ Edit BOM
-                </button>
                 <button
                   type="button"
                   onClick={() => setShowViewBomModal(false)}

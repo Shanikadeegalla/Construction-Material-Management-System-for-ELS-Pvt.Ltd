@@ -80,7 +80,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [compareVersions, setCompareVersions] = useState([]);
   const [versionAId, setVersionAId] = useState('');
   const [versionBId, setVersionBId] = useState('');
-  const [directorNote, setDirectorNote] = useState('');
 
   const bomsPagination = usePagination(boms, 8, [boms.length]);
   const posPagination = usePagination(pos, 8, [pos.length]);
@@ -238,7 +237,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       if (data.success) {
         toast.success('BOM approved successfully!');
         setMessage('✅ BOM approved successfully!');
-        setDirectorNote('');
         fetchData();
         setTimeout(() => scrollToElement('#bom-approvals-section'), 100);
       } else {
@@ -247,36 +245,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     } catch (err) {
       toast.error(err.message || 'Action failed');
       setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
-      setDirectorNote('');
-    }
-  };
-
-  const rejectBOMWithReason = async (id, reason) => {
-    if (!window.confirm('Are you sure you want to reject this BOM?')) return;
-    setMessage('');
-    setError('');
-    try {
-      const res = await fetch(`${API_BASE}/api/bom/${id}/reject`, {
-        method: 'PUT',
-        headers: getHeaders(),
-        body: JSON.stringify({ rejectionReason: reason })
-      });
-      const data = await res.json();
-      if (data.success) {
-        toast.success('BOM rejected and note sent to PM.');
-        setMessage('❌ BOM rejected and note sent to PM.');
-        setShowViewModal(false);
-        setDirectorNote('');
-        fetchData();
-        setTimeout(() => scrollToElement('#bom-approvals-section'), 100);
-      } else {
-        throw new Error(data.message);
-      }
-    } catch (err) {
-      toast.error(err.message || 'Action failed');
-      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
-      setShowViewModal(false);
-      setDirectorNote('');
     }
   };
 
@@ -703,6 +671,11 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (modal === 'active-projects') {
       title = 'Active Projects Profile';
       tableHeaders = ['Project Name', 'Project Manager', 'Status', 'Budget', 'Progress %'];
+      const filtered = projects.filter(p =>
+        (p.status === 'Active' || p.status === 'active') &&
+        ((p.projectName || '').toLowerCase().includes(query) || (p.createdBy?.name || '').toLowerCase().includes(query))
+      );
+
       tableRows = filtered.length === 0 ? (
         <tr>
           <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No active projects found.</td>
@@ -1701,19 +1674,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
             </div>
 
-            {/* Approval / Rejection Optional Notes Textarea */}
-            {(viewingBom.status === 'Submitted' || viewingBom.status === 'Pending') && (
-              <div style={{ marginTop: '20px', marginBottom: '20px' }}>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px' }}>DIRECTOR NOTE / FEEDBACK (OPTIONAL)</label>
-                <textarea
-                  placeholder="Specify feedback note here (optional)."
-                  value={directorNote}
-                  onChange={e => setDirectorNote(e.target.value)}
-                  style={{ width: '100%', height: '80px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }}
-                />
-              </div>
-            )}
-
             {/* Modal Actions */}
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '15px' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
@@ -1735,29 +1695,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                 )}
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                {(viewingBom.status === 'Submitted' || viewingBom.status === 'Pending') && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleApprove(viewingBom._id, directorNote);
-                        setShowViewModal(false);
-                      }}
-                      style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
-                    >
-                      ✓ Approve BOM
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        rejectBOMWithReason(viewingBom._id, directorNote);
-                      }}
-                      style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
-                    >
-                      ✕ Reject BOM
-                    </button>
-                  </>
-                )}
                 <button
                   type="button"
                   onClick={() => setShowViewModal(false)}
@@ -1974,12 +1911,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
 
               <div style={{ marginTop: '22px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                {viewingPO.status === 'Pending' && (
-                  <>
-                    <button onClick={() => openPOActionModal(viewingPO._id, 'approve')} style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', minWidth: '110px' }}>✓ Approve</button>
-                    <button onClick={() => openPOActionModal(viewingPO._id, 'reject')} style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', minWidth: '110px' }}>✕ Reject</button>
-                  </>
-                )}
                 <button onClick={() => setShowViewPOModal(false)} style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '90px' }}>Close</button>
               </div>
             </div>
@@ -2084,7 +2015,11 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                       const mismatch = !line.onPO || line.receivedQty !== line.orderedQty;
                       return (
                         <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0', background: mismatch || line.damagedQty > 0 ? '#fffaf0' : 'white' }}>
-                          <td style={{ padding: '10px 12px', color: '#0f172a' }}>{line.materialName}{!line.onPO && <span style={{ color: '#e65100', fontSize: '11px', fontWeight: '700' }}> (not on PO)</span>}</td>
+                          <td style={{ padding: '10px 12px', color: '#0f172a' }}>{line.materialName}{!line.onPO && <span style={{ color: '#e65100', fontSize: '11px', fontWeight: '700' }}> (not on PO)</span>}
+                            {line.discrepancyReason && (
+                              <div style={{ color: '#b45309', fontSize: '11px', fontWeight: '600', marginTop: '2px' }}>{line.discrepancyReason}{line.discrepancyNote ? ` - ${line.discrepancyNote}` : ''}</div>
+                            )}
+                          </td>
                           <td style={{ padding: '10px 12px', color: '#0f172a' }}>{line.orderedQty} {line.unit}</td>
                           <td style={{ padding: '10px 12px', fontWeight: mismatch ? '700' : '400', color: mismatch ? '#e65100' : '#0f172a' }}>{grn ? line.receivedQty : '-'}</td>
                           <td style={{ padding: '10px 12px', fontWeight: line.damagedQty > 0 ? '700' : '400', color: line.damagedQty > 0 ? '#c62828' : '#0f172a' }}>{grn ? line.damagedQty : '-'}</td>
@@ -2113,12 +2048,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <span style={{ fontSize: '12px', color: '#94a3b8' }}>No invoice file attached</span>
                   )}
                   <div style={{ display: 'flex', gap: '10px' }}>
-                    {viewingInvoice.status === 'Pending Approval' && (
-                      <>
-                        <button onClick={() => openInvoiceActionModal(viewingInvoice._id, 'approve')} style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', minWidth: '110px' }}>✓ Approve</button>
-                        <button onClick={() => openInvoiceActionModal(viewingInvoice._id, 'reject')} style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', minWidth: '110px' }}>✕ Reject</button>
-                      </>
-                    )}
                     <button onClick={() => setViewingInvoice(null)} style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '90px' }}>Close</button>
                   </div>
                 </div>
