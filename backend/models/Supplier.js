@@ -1,6 +1,9 @@
 import mongoose from 'mongoose';
+import { MATERIAL_CATEGORIES, isValidCategory } from '../utils/materialCategories.js';
 
-const CATEGORY_OPTIONS = ['Cement', 'Sand', 'Steel', 'Bricks', 'Paint', 'Electrical', 'Plumbing', 'Tiles', 'Hardware', 'Aggregate', 'Timber'];
+// Suppliers are classified with the same categories as the Item Master
+// (these defaults plus any the Admin has added).
+const CATEGORY_OPTIONS = MATERIAL_CATEGORIES;
 
 const documentSchema = new mongoose.Schema({
   url: String,
@@ -37,7 +40,10 @@ const supplierSchema = new mongoose.Schema({
   },
   categories: {
     type: [String],
-    enum: CATEGORY_OPTIONS,
+    validate: {
+      validator: async (list) => (await Promise.all((list || []).map(isValidCategory))).every(Boolean),
+      message: 'Supplier has a category that is not a valid material category.'
+    },
     default: []
   },
   status: {
@@ -50,7 +56,6 @@ const supplierSchema = new mongoose.Schema({
   bankBranch: { type: String, trim: true, default: '' },
   businessRegistrationNumber: { type: String, trim: true, default: '' },
   vatNumber: { type: String, trim: true, default: '' },
-  rating: { type: Number, min: 0, max: 5, default: 0 },
   documents: {
     businessRegistration: documentSchema,
     taxCertificate: documentSchema,

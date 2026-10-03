@@ -66,8 +66,9 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   // Payment (Invoice) Approval state
   const [invoices, setInvoices] = useState([]);
-  const [invoiceActionModal, setInvoiceActionModal] = useState(null); // { action: 'approve' | 'reject', invoiceId }
+  const [invoiceActionModal, setInvoiceActionModal] = useState(null); // { action: 'approve' | 'reject', invoiceId, warnings }
   const [invoiceActionNote, setInvoiceActionNote] = useState('');
+  const [viewingInvoice, setViewingInvoice] = useState(null); // invoice shown in the PO / GRN / invoice comparison
 
   // Phase 5 States
   const [showCompareModal, setShowCompareModal] = useState(false);
@@ -134,24 +135,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       const res = await fetch(`${API_BASE}/api/projects`, { headers });
       const data = await res.json();
       let projList = data.success ? data.data : [];
-      if (!projList || projList.length < 5) {
-        projList = [
-          { _id: '1', projectId: 'PRJ-2026-001', projectName: 'Colombo Port Expansion', status: 'Active', budget: 750000000, startDate: new Date(Date.now() - 30*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 180*24*60*60*1000).toISOString(), createdBy: { name: 'John PM' } },
-          { _id: '2', projectId: 'PRJ-2026-002', projectName: 'Marina Heights', status: 'Active', budget: 350000000, startDate: new Date(Date.now() - 5*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 240*24*60*60*1000).toISOString(), createdBy: { name: 'Sarah PM' } },
-          { _id: '3', projectId: 'PRJ-2026-003', projectName: 'Highway Extension Project', status: 'Active', budget: 620000000, startDate: new Date(Date.now() - 15*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 120*24*60*60*1000).toISOString(), createdBy: { name: 'John PM' } },
-          { _id: '4', projectId: 'PRJ-2026-004', projectName: 'Water Treatment Plant', status: 'Active', budget: 280000000, startDate: new Date(Date.now() - 45*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 90*24*60*60*1000).toISOString(), createdBy: { name: 'Sarah PM' } },
-          { _id: '5', projectId: 'PRJ-2026-005', projectName: 'City Center Mall', status: 'Active', budget: 510000000, startDate: new Date(Date.now() - 10*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 300*24*60*60*1000).toISOString(), createdBy: { name: 'John PM' } }
-        ];
-      }
       setProjects(projList);
     } catch {
-      setProjects([
-        { _id: '1', projectId: 'PRJ-2026-001', projectName: 'Colombo Port Expansion', status: 'Active', budget: 750000000, startDate: new Date(Date.now() - 30*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 180*24*60*60*1000).toISOString(), createdBy: { name: 'John PM' } },
-        { _id: '2', projectId: 'PRJ-2026-002', projectName: 'Marina Heights', status: 'Active', budget: 350000000, startDate: new Date(Date.now() - 5*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 240*24*60*60*1000).toISOString(), createdBy: { name: 'Sarah PM' } },
-        { _id: '3', projectId: 'PRJ-2026-003', projectName: 'Highway Extension Project', status: 'Active', budget: 620000000, startDate: new Date(Date.now() - 15*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 120*24*60*60*1000).toISOString(), createdBy: { name: 'John PM' } },
-        { _id: '4', projectId: 'PRJ-2026-004', projectName: 'Water Treatment Plant', status: 'Active', budget: 280000000, startDate: new Date(Date.now() - 45*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 90*24*60*60*1000).toISOString(), createdBy: { name: 'Sarah PM' } },
-        { _id: '5', projectId: 'PRJ-2026-005', projectName: 'City Center Mall', status: 'Active', budget: 510000000, startDate: new Date(Date.now() - 10*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 300*24*60*60*1000).toISOString(), createdBy: { name: 'John PM' } }
-      ]);
+      setProjects([]);
+      setMessage('❌ Could not connect to the backend server.');
     }
 
     // 1. Fetch BOMs
@@ -159,22 +146,9 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       const res = await fetch(`${API_BASE}/api/bom`, { headers });
       const data = await res.json();
       let bomList = data.success ? data.data : [];
-      if (!bomList || bomList.length < 3) {
-        bomList = [
-          { _id: '1', projectName: 'Colombo Port Expansion', version: 'v1.0', createdBy: 'John PM', createdAt: new Date().toISOString(), status: 'Pending', materials: [{ name: 'Portland Cement', unit: 'bags', plannedQty: 300, category: 'Cement' }, { name: 'TMT Steel 12mm', unit: 'ton', plannedQty: 10, category: 'Steel' }] },
-          { _id: '2', projectName: 'Highway Extension Project', version: 'v1.1', createdBy: 'John PM', createdAt: new Date(Date.now() - 43200000).toISOString(), status: 'Pending', materials: [{ name: 'River Sand', unit: 'cube', plannedQty: 120, category: 'Sand' }] },
-          { _id: '3', projectName: 'City Center Mall', version: 'v1.0', createdBy: 'John PM', createdAt: new Date(Date.now() - 86400000).toISOString(), status: 'Pending', materials: [{ name: 'Coarse Aggregate', unit: 'cube', plannedQty: 250, category: 'Aggregate' }] },
-          { _id: '4', projectName: 'Marina Heights', version: 'v1.2', createdBy: 'Sarah PM', createdAt: new Date(Date.now() - 172800000).toISOString(), status: 'Approved', materials: [{ name: 'Portland Cement', unit: 'bags', plannedQty: 500, category: 'Cement' }] }
-        ];
-      }
       setBoms(bomList);
     } catch {
-      setBoms([
-        { _id: '1', projectName: 'Colombo Port Expansion', version: 'v1.0', createdBy: 'John PM', createdAt: new Date().toISOString(), status: 'Pending', materials: [{ name: 'Portland Cement', unit: 'bags', plannedQty: 300, category: 'Cement' }, { name: 'TMT Steel 12mm', unit: 'ton', plannedQty: 10, category: 'Steel' }] },
-        { _id: '2', projectName: 'Highway Extension Project', version: 'v1.1', createdBy: 'John PM', createdAt: new Date(Date.now() - 43200000).toISOString(), status: 'Pending', materials: [{ name: 'River Sand', unit: 'cube', plannedQty: 120, category: 'Sand' }] },
-        { _id: '3', projectName: 'City Center Mall', version: 'v1.0', createdBy: 'John PM', createdAt: new Date(Date.now() - 86400000).toISOString(), status: 'Pending', materials: [{ name: 'Coarse Aggregate', unit: 'cube', plannedQty: 250, category: 'Aggregate' }] },
-        { _id: '4', projectName: 'Marina Heights', version: 'v1.2', createdBy: 'Sarah PM', createdAt: new Date(Date.now() - 172800000).toISOString(), status: 'Approved', materials: [{ name: 'Portland Cement', unit: 'bags', plannedQty: 500, category: 'Cement' }] }
-      ]);
+      setBoms([]);
     }
 
     // 2. Fetch POs (for Budget Utilized calculation)
@@ -182,18 +156,9 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       const res = await fetch(`${API_BASE}/api/purchase-orders`, { headers });
       const data = await res.json();
       let poList = data.success ? data.data : [];
-      if (!poList || poList.length === 0) {
-        poList = [
-          { _id: '1', totalAmount: 555000, prId: { projectName: 'Colombo Port Expansion', project: 'Colombo Port Expansion' } },
-          { _id: '2', totalAmount: 925000, prId: { projectName: 'Marina Heights', project: 'Marina Heights' } }
-        ];
-      }
       setPos(poList);
     } catch {
-      setPos([
-        { _id: '1', totalAmount: 555000, prId: { projectName: 'Colombo Port Expansion', project: 'Colombo Port Expansion' } },
-        { _id: '2', totalAmount: 925000, prId: { projectName: 'Marina Heights', project: 'Marina Heights' } }
-      ]);
+      setPos([]);
     }
 
     // 2b. Fetch invoices awaiting payment approval
@@ -210,18 +175,9 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       const res = await fetch(`${API_BASE}/api/material-usage/variance`, { headers });
       const data = await res.json();
       let varList = data.success ? (data.report || []) : [];
-      if (!varList || varList.length === 0) {
-        varList = [
-          { projectName: 'Colombo Port Expansion', materialName: 'Portland Cement', unit: 'bags', plannedQty: 300, actualQty: 315, varianceQty: 15, variancePct: 5.0 },
-          { projectName: 'Colombo Port Expansion', materialName: 'TMT Steel 12mm', unit: 'ton', plannedQty: 10, actualQty: 12, varianceQty: 2, variancePct: 20.0 }
-        ];
-      }
       setVarianceReportData(varList);
     } catch {
-      setVarianceReportData([
-        { projectName: 'Colombo Port Expansion', materialName: 'Portland Cement', unit: 'bags', plannedQty: 300, actualQty: 315, varianceQty: 15, variancePct: 5.0 },
-        { projectName: 'Colombo Port Expansion', materialName: 'TMT Steel 12mm', unit: 'ton', plannedQty: 10, actualQty: 12, varianceQty: 2, variancePct: 20.0 }
-      ]);
+      setVarianceReportData([]);
     }
 
     // 4. Fetch Inventory (for stock levels analytics)
@@ -229,20 +185,9 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       const res = await fetch(`${API_BASE}/api/inventory`, { headers });
       const data = await res.json();
       let invList = Array.isArray(data) ? data : [];
-      if (!invList || invList.length === 0) {
-        invList = [
-          { name: 'Portland Cement', quantity: 1500, category: 'Cement' },
-          { name: 'TMT Steel 12mm', quantity: 45, category: 'Steel' },
-          { name: 'River Sand', quantity: 280, category: 'Sand' }
-        ];
-      }
       setInventory(invList);
     } catch {
-      setInventory([
-        { name: 'Portland Cement', quantity: 1500, category: 'Cement' },
-        { name: 'TMT Steel 12mm', quantity: 45, category: 'Steel' },
-        { name: 'River Sand', quantity: 280, category: 'Sand' }
-      ]);
+      setInventory([]);
     }
 
     // 5. Fetch Usages (for usage trends analytics)
@@ -250,18 +195,9 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       const res = await fetch(`${API_BASE}/api/material-usage`, { headers });
       const data = await res.json();
       let usageList = data.success ? (data.data || []) : [];
-      if (!usageList || usageList.length === 0) {
-        usageList = [
-          { materialName: 'Portland Cement', actualQty: 120, usageDate: '2026-06-28T16:33:06.626Z' },
-          { materialName: 'Portland Cement', actualQty: 200, usageDate: '2026-06-28T16:33:06.683Z' }
-        ];
-      }
       setUsages(usageList);
     } catch {
-      setUsages([
-        { materialName: 'Portland Cement', actualQty: 120, usageDate: '2026-06-28T16:33:06.626Z' },
-        { materialName: 'Portland Cement', actualQty: 200, usageDate: '2026-06-28T16:33:06.683Z' }
-      ]);
+      setUsages([]);
     }
 
     // 6. Fetch Site Store Inventory
@@ -269,21 +205,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       const res = await fetch(`${API_BASE}/api/admin/projects-overview`, { headers });
       const data = await res.json();
       let siteList = data.success && Array.isArray(data.data) ? data.data : [];
-      if (!siteList || siteList.length === 0) {
-        siteList = [
-          { _id: '1', name: 'Portland Cement', quantity: 8, minimumStock: 20, unit: 'bags', project_id: { projectName: 'Colombo Port Expansion' }, updatedAt: new Date().toISOString() },
-          { _id: '2', name: 'TMT Steel 12mm', quantity: 15, minimumStock: 10, unit: 'ton', project_id: { projectName: 'Marina Heights' }, updatedAt: new Date().toISOString() },
-          { _id: '3', name: 'River Sand', quantity: 4, minimumStock: 15, unit: 'cube', projectId: { projectName: 'Colombo Port Expansion' }, updatedAt: new Date().toISOString() }
-        ];
-      }
       setSiteMaterials(siteList);
     } catch (err) {
       console.error('Error fetching site materials:', err);
-      setSiteMaterials([
-        { _id: '1', name: 'Portland Cement', quantity: 8, minimumStock: 20, unit: 'bags', project_id: { projectName: 'Colombo Port Expansion' }, updatedAt: new Date().toISOString() },
-        { _id: '2', name: 'TMT Steel 12mm', quantity: 15, minimumStock: 10, unit: 'ton', project_id: { projectName: 'Marina Heights' }, updatedAt: new Date().toISOString() },
-        { _id: '3', name: 'River Sand', quantity: 4, minimumStock: 15, unit: 'cube', projectId: { projectName: 'Colombo Port Expansion' }, updatedAt: new Date().toISOString() }
-      ]);
+      setSiteMaterials([]);
     }
 
     setLoading(false);
@@ -385,7 +310,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
-        setMessage('✅ Purchase Order approved successfully!');
+        setMessage(`✅ ${data.message || 'Purchase Order approved successfully!'}`);
         setShowViewPOModal(false);
         fetchData();
       } else {
@@ -452,6 +377,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       const data = await res.json();
       if (data.success) {
         setMessage('✅ Invoice approved for payment!');
+        setViewingInvoice(null);
         fetchData();
       } else {
         throw new Error(data.message);
@@ -462,18 +388,27 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   const openInvoiceActionModal = (invoiceId, action) => {
-    if (action === 'approve') {
+    // A clean delivery is approved straight away; anything the GRN flagged
+    // (short, damaged, over-billed) has to be confirmed first.
+    const warnings = invoices.find(inv => inv._id === invoiceId)?.deliveryCheck?.warnings || [];
+    if (action === 'approve' && warnings.length === 0) {
       handleInvoiceApprove(invoiceId);
       return;
     }
-    setInvoiceActionModal({ action, invoiceId });
+    setInvoiceActionModal({ action, invoiceId, warnings });
     setInvoiceActionNote('');
   };
 
   const handleInvoiceActionSubmit = async (e) => {
     e.preventDefault();
     if (!invoiceActionModal) return;
-    const { invoiceId } = invoiceActionModal;
+    const { invoiceId, action } = invoiceActionModal;
+
+    if (action === 'approve') {
+      setInvoiceActionModal(null);
+      await handleInvoiceApprove(invoiceId);
+      return;
+    }
 
     setMessage('');
     setError('');
@@ -487,6 +422,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       if (data.success) {
         setMessage('❌ Invoice payment rejected and note sent to Main Store.');
         setInvoiceActionModal(null);
+        setViewingInvoice(null);
         fetchData();
       } else {
         throw new Error(data.message);
@@ -687,15 +623,24 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setShowViewModal(true);
   };
 
+  // Projects carry no progress field, so progress is the share of the planned
+  // timeline (start date -> expected end date) that has elapsed so far.
+  const getTimelineProgress = (p) => {
+    const start = new Date(p.startDate).getTime();
+    const end = new Date(p.expectedEndDate).getTime();
+    if (isNaN(start) || isNaN(end) || end <= start) return 0;
+    const pct = ((Date.now() - start) / (end - start)) * 100;
+    return Math.round(Math.min(Math.max(pct, 0), 100));
+  };
+
   const getBudgetBreakdown = () => {
     const uniqueProjNames = Array.from(new Set([
       ...projects.map(p => p.projectName),
-      ...boms.map(b => b.projectName || b.projectId?.projectName),
-      'Colombo Port Expansion', 'Marina Heights'
+      ...boms.map(b => b.projectName || b.projectId?.projectName)
     ])).filter(Boolean);
 
     return uniqueProjNames.map(name => {
-      const proj = projects.find(p => p.projectName === name) || { budget: name === 'Colombo Port Expansion' ? 750000000 : name === 'Marina Heights' ? 350000000 : 150000000 };
+      const proj = projects.find(p => p.projectName === name) || { budget: 0 };
       let spent = 0;
       pos.forEach(po => {
         const poProjName = po.prId?.projectName || po.prId?.project || po.projectName;
@@ -704,15 +649,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         }
       });
 
-      if (spent === 0) {
-        if (name === 'Colombo Port Expansion') spent = 1480000;
-        else if (name === 'Marina Heights') spent = 925000;
-        else spent = 0;
-      }
 
-      const budget = proj.budget || 100000000;
+      const budget = proj.budget || 0;
       const remaining = budget - spent;
-      const percent = ((spent / budget) * 100).toFixed(1);
+      const percent = budget > 0 ? ((spent / budget) * 100).toFixed(1) : '0.0';
 
       return {
         projectName: name,
@@ -736,20 +676,13 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (modal === 'active-projects') {
       title = 'Active Projects Profile';
       tableHeaders = ['Project Name', 'Project Manager', 'Status', 'Budget', 'Progress %'];
-      
-      const dummyActiveProjects = [
-        { _id: 'd1', projectName: 'Colombo Port Expansion', createdBy: { name: 'John PM' }, status: 'Active', budget: 750000000, progress: 65 },
-        { _id: 'd2', projectName: 'Marina Heights', createdBy: { name: 'Sarah PM' }, status: 'Active', budget: 350000000, progress: 48 },
-        { _id: 'd3', projectName: 'Kandy Highway Flyover', createdBy: { name: 'David PM' }, status: 'Active', budget: 1200000000, progress: 30 }
-      ];
-      const mergedProjects = projects.length > 0 ? projects : dummyActiveProjects;
-      const filtered = mergedProjects.filter(p => 
+      const filtered = projects.filter(p => 
         (p.status === 'Active' || p.status === 'active') && 
         ((p.projectName || '').toLowerCase().includes(query) || (p.createdBy?.name || '').toLowerCase().includes(query))
       );
       
       tableRows = filtered.map((p, idx) => {
-        const progress = p.progress || 65;
+        const progress = getTimelineProgress(p);
         return (
           <tr key={p._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
             <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{p.projectName}</td>
@@ -773,15 +706,8 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       title = 'BOMs Awaiting Approval';
       tableHeaders = ['Project', 'PM Name', 'Version', 'Submitted Date', 'Actions'];
       
-      const dummyPendingBoms = [
-        { _id: 'db1', projectName: 'Colombo Port Expansion', createdBy: { name: 'John PM' }, version: 'v1.4', createdAt: new Date().toISOString(), status: 'Pending' },
-        { _id: 'db2', projectName: 'Kandy Highway Flyover', createdBy: { name: 'David PM' }, version: 'v1.0', createdAt: new Date(Date.now() - 86400000).toISOString(), status: 'Pending' },
-        { _id: 'db3', projectName: 'Marina Heights', createdBy: { name: 'Sarah PM' }, version: 'v2.1', createdAt: new Date(Date.now() - 172800000).toISOString(), status: 'Pending' }
-      ];
-      
       const pendingBoms = boms.filter(b => b.status === 'Submitted' || b.status === 'Pending');
-      const mergedBoms = pendingBoms.length > 0 ? pendingBoms : dummyPendingBoms;
-      const filtered = mergedBoms.filter(b => 
+      const filtered = pendingBoms.filter(b => 
         (b.projectName || b.projectId?.projectName || '').toLowerCase().includes(query) || 
         (b.createdBy?.name || b.createdBy || '').toLowerCase().includes(query)
       );
@@ -825,14 +751,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       tableHeaders = ['Project Name', 'Allocated Budget', 'Spent', 'Remaining', 'Utilization %'];
       
       const breakdown = getBudgetBreakdown();
-      const dummyBudgetBreakdown = [
-        { projectName: 'Colombo Port Expansion', budget: 750000000, spent: 487500000, remaining: 262500000, percent: '65.0' },
-        { projectName: 'Marina Heights', budget: 350000000, spent: 168000000, remaining: 182000000, percent: '48.0' },
-        { projectName: 'Kandy Highway Flyover', budget: 1200000000, spent: 360000000, remaining: 840000000, percent: '30.0' }
-      ];
-      
-      const mergedBreakdown = (breakdown.length > 0 && breakdown.some(b => b.spent > 1480000)) ? breakdown : dummyBudgetBreakdown;
-      const filtered = mergedBreakdown.filter(item => item.projectName.toLowerCase().includes(query));
+      const filtered = breakdown.filter(item => item.projectName.toLowerCase().includes(query));
 
       tableRows = filtered.map((item, idx) => (
         <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
@@ -853,16 +772,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     } else if (modal === 'material-variance') {
       title = 'Material Variance Analysis';
       tableHeaders = ['Project Name', 'Material', 'Planned Qty', 'Actual Qty', 'Variance %'];
-      
-      const dummyVariance = [
-        { projectName: 'Colombo Port Expansion', materialName: 'Portland Cement', unit: 'bags', plannedQty: 50000, actualQty: 53500, varianceQty: 3500, variancePct: 7.0 },
-        { projectName: 'Colombo Port Expansion', materialName: 'TMT Steel 12mm', unit: 'ton', plannedQty: 1200, actualQty: 1440, varianceQty: 240, variancePct: 20.0 },
-        { projectName: 'Marina Heights', materialName: 'River Sand', unit: 'cube', plannedQty: 8500, actualQty: 8200, varianceQty: -300, variancePct: -3.5 },
-        { projectName: 'Kandy Highway Flyover', materialName: 'ReadyMix Concrete', unit: 'm3', plannedQty: 15000, actualQty: 16800, varianceQty: 1800, variancePct: 12.0 }
-      ];
-      
-      const mergedVariance = varianceReportData.length > 0 ? varianceReportData : dummyVariance;
-      const filtered = mergedVariance.filter(item => 
+      const filtered = varianceReportData.filter(item => 
         (item.projectName || '').toLowerCase().includes(query) || 
         (item.materialName || '').toLowerCase().includes(query)
       );
@@ -989,6 +899,21 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     whiteSpace: 'nowrap'
   };
 
+  // Delivery badge for an invoice, from the PO / GRN / invoice match the API returns
+  const deliveryBadgeLabel = (check) => {
+    if (!check) return '-';
+    if (check.status === 'Full') return check.warnings.length > 0 ? 'Full - check amount' : 'Full delivery';
+    if (check.status === 'Partial') return 'Partial / mismatch';
+    if (check.status === 'Damaged') return 'Damaged items';
+    return 'No GRN';
+  };
+  const deliveryBadgeStyle = (check) => {
+    if (!check) return { background: '#f1f5f9', color: '#64748b' };
+    if (check.warnings.length === 0) return { background: '#e8f5e9', color: '#2e7d32' };
+    if (check.status === 'Damaged') return { background: '#ffebee', color: '#c62828' };
+    return { background: '#fff3e0', color: '#e65100' };
+  };
+
   // Analytics Calculations
   const bomStatusData = [
     { name: 'Pending', count: boms.filter(b => b.status === 'Submitted' || b.status === 'Pending').length, fill: '#2563eb' },
@@ -1020,7 +945,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }} />
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
-            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Executive Director</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Workspace</div>
           </div>
         </div>
         <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1029,7 +954,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           </div>
           <div>
             <div style={{ fontSize: '13px', fontWeight: '600' }}>{user?.name || 'Director User'}</div>
-            <div style={{ fontSize: '11px', color: '#cbd5e1' }}>{user?.role || 'Director'}</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1' }}>Director</div>
           </div>
         </div>
         <nav style={{ flex: 1, padding: '8px 0' }}>
@@ -1156,19 +1081,12 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                 ].map((stat, i) => (
                   <div
                     key={i}
-                    onClick={() => {
-                      setModal(stat.type);
-                      setModalSearchTerm('');
-                    }}
-                    title="Click to view detailed information"
                     style={{
                       background: 'white',
                       borderRadius: '8px',
                       padding: '20px',
                       boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                      borderTop: `4px solid ${stat.color}`,
-                      cursor: 'pointer',
-                      transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+                      borderTop: `4px solid ${stat.color}`
                     }}
                   >
                     <div style={{ fontSize: '24px', fontWeight: '700', color: stat.color }}>{stat.value}</div>
@@ -1461,10 +1379,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                 <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>Supplier Invoice & Payment Registry</h3>
               </div>
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '1150px' }}>
                   <thead>
                     <tr style={{ background: '#f5f6fa', borderBottom: '2px solid #e2e8f0' }}>
-                      {['Invoice No', 'PO Number', 'Supplier', 'Amount (LKR)', 'Submitted By', 'Invoice Date', 'Status', 'Actions'].map(h => (
+                      {['Invoice No', 'PO Number', 'GRN No', 'Delivery', 'Supplier', 'Amount (LKR)', 'Submitted By', 'Invoice Date', 'Status', 'Actions'].map(h => (
                         <th key={h} style={{ padding: '12px 16px', textAlign: h === 'Actions' ? 'center' : 'left', fontSize: '11px', color: '#475569', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{h}</th>
                       ))}
                     </tr>
@@ -1476,6 +1394,14 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                         <tr key={inv._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#0f172a', fontWeight: '600' }}>{inv.invoiceNumber || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{inv.po?.poNumber || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{inv.grn?.grnNumber || '-'}</td>
+                          <td style={{ padding: '14px 16px' }}>
+                            <span
+                              title={(inv.deliveryCheck?.warnings || []).join('\n')}
+                              style={{ ...deliveryBadgeStyle(inv.deliveryCheck), display: 'inline-block', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '700', whiteSpace: 'nowrap' }}>
+                              {deliveryBadgeLabel(inv.deliveryCheck)}
+                            </span>
+                          </td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{inv.supplier?.name || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>{Number(inv.amount || 0).toLocaleString()}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{inv.submittedBy || '-'}</td>
@@ -1490,14 +1416,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                           </td>
                           <td style={{ padding: '14px 16px' }}>
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
-                              {inv.file?.url ? (
-                                <a href={`${API_BASE}${inv.file.url}`} target="_blank" rel="noopener noreferrer"
-                                  style={{ ...poTableBtnBase, background: '#0d1b4b', textDecoration: 'none', display: 'inline-block' }}>
-                                  View
-                                </a>
-                              ) : (
-                                <span style={{ fontSize: '12px', color: '#94a3b8' }}>No file</span>
-                              )}
+                              <button onClick={() => setViewingInvoice(inv)}
+                                style={{ ...poTableBtnBase, background: '#0d1b4b' }}>
+                                View
+                              </button>
                               {isPending && (
                                 <>
                                   <button onClick={() => openInvoiceActionModal(inv._id, 'approve')}
@@ -1518,7 +1440,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
                     {invoices.length === 0 && (
                       <tr>
-                        <td colSpan="8" style={{ padding: '30px', textAlign: 'center', color: '#999' }}>
+                        <td colSpan="10" style={{ padding: '30px', textAlign: 'center', color: '#999' }}>
                           No invoices submitted yet.
                         </td>
                       </tr>
@@ -2024,14 +1946,131 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         </div>
       )}
 
-      {/* Invoice payment reject reason modal */}
+      {/* Invoice vs PO vs GRN comparison modal */}
+      {viewingInvoice && (() => {
+        const check = viewingInvoice.deliveryCheck || { lines: [], warnings: [], poTotal: 0, acceptedValue: 0 };
+        const grn = viewingInvoice.grn;
+        return (
+          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 1100, display: 'flex', justifyContent: 'center', alignItems: 'center' }} onClick={() => setViewingInvoice(null)}>
+            <div style={{ background: 'white', borderRadius: '12px', width: '85%', maxWidth: '900px', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 20px 50px rgba(0,0,0,0.35)' }} onClick={e => e.stopPropagation()}>
+              <div style={{ background: '#0d1b4b', padding: '18px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <h3 style={{ margin: 0, color: 'white', fontSize: '17px', fontWeight: '700' }}>Invoice: {viewingInvoice.invoiceNumber}</h3>
+                  <span style={{ ...deliveryBadgeStyle(check), padding: '3px 12px', borderRadius: '12px', fontSize: '11px', fontWeight: '700' }}>{deliveryBadgeLabel(check)}</span>
+                </div>
+                <span onClick={() => setViewingInvoice(null)} style={{ cursor: 'pointer', fontWeight: 'bold', fontSize: '22px', color: 'white', lineHeight: 1 }}>&times;</span>
+              </div>
+              <div style={{ padding: '24px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '18px 24px', marginBottom: '18px', padding: '18px 20px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+                  {[
+                    ['Supplier', viewingInvoice.supplier?.name || '-'],
+                    ['PO Number', viewingInvoice.po?.poNumber || '-'],
+                    ['GRN Number', grn?.grnNumber || 'Not linked'],
+                    ['Invoice Date', formatDate(viewingInvoice.invoiceDate)],
+                    ['Goods Received', grn?.receivedDate ? formatDate(grn.receivedDate) : '-'],
+                    ['Received By', grn?.receivedBy || '-'],
+                    ['PO Total', `LKR ${Number(check.poTotal || 0).toLocaleString()}`],
+                    ['Value Accepted', grn ? `LKR ${Number(check.acceptedValue || 0).toLocaleString()}` : '-'],
+                    ['Invoice Amount', `LKR ${Number(viewingInvoice.amount || 0).toLocaleString()}`]
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '4px' }}>{label}</div>
+                      <div style={{ fontSize: '14px', color: '#0f172a', fontWeight: '600' }}>{value}</div>
+                    </div>
+                  ))}
+                  {grn?.notes && (
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '4px' }}>GRN Notes</div>
+                      <div style={{ fontSize: '14px', color: '#0f172a', fontWeight: '600' }}>{grn.notes}</div>
+                    </div>
+                  )}
+                </div>
+
+                {check.warnings.length > 0 ? (
+                  <div style={{ marginBottom: '18px', padding: '12px 16px', background: '#fff3e0', border: '1px solid #ffcc80', borderRadius: '8px', color: '#e65100', fontSize: '13px' }}>
+                    <div style={{ fontWeight: '700', marginBottom: '6px' }}>⚠️ Check before approving</div>
+                    <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                      {check.warnings.map((w, idx) => <li key={idx}>{w}</li>)}
+                    </ul>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: '18px', padding: '12px 16px', background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: '8px', color: '#2e7d32', fontSize: '13px', fontWeight: '600' }}>
+                    ✓ Goods were received in full and the invoice amount is within the PO total.
+                  </div>
+                )}
+
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', border: '1px solid #e2e8f0' }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
+                      {['Material', 'Ordered', 'Received', 'Damaged', 'Accepted', 'Unit Price', 'Accepted Value'].map(h => (
+                        <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: '11px', color: '#475569', fontWeight: '700', textTransform: 'uppercase' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {check.lines.map((line, idx) => {
+                      const mismatch = !line.onPO || line.receivedQty !== line.orderedQty;
+                      return (
+                        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0', background: mismatch || line.damagedQty > 0 ? '#fffaf0' : 'white' }}>
+                          <td style={{ padding: '10px 12px', color: '#0f172a' }}>{line.materialName}{!line.onPO && <span style={{ color: '#e65100', fontSize: '11px', fontWeight: '700' }}> (not on PO)</span>}</td>
+                          <td style={{ padding: '10px 12px', color: '#0f172a' }}>{line.orderedQty} {line.unit}</td>
+                          <td style={{ padding: '10px 12px', fontWeight: mismatch ? '700' : '400', color: mismatch ? '#e65100' : '#0f172a' }}>{grn ? line.receivedQty : '-'}</td>
+                          <td style={{ padding: '10px 12px', fontWeight: line.damagedQty > 0 ? '700' : '400', color: line.damagedQty > 0 ? '#c62828' : '#0f172a' }}>{grn ? line.damagedQty : '-'}</td>
+                          <td style={{ padding: '10px 12px', color: '#0f172a' }}>{grn ? line.acceptedQty : '-'}</td>
+                          <td style={{ padding: '10px 12px', color: '#0f172a' }}>LKR {Number(line.unitPrice || 0).toLocaleString()}</td>
+                          <td style={{ padding: '10px 12px', fontWeight: '700', color: '#0f172a' }}>{grn ? `LKR ${Number(line.acceptedValue || 0).toLocaleString()}` : '-'}</td>
+                        </tr>
+                      );
+                    })}
+                    {check.lines.length === 0 && (
+                      <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#999' }}>No item details available for this invoice.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+
+                {viewingInvoice.rejectionReason && viewingInvoice.status === 'Rejected' && (
+                  <div style={{ marginTop: '16px', fontSize: '13px', color: '#c62828' }}><strong>Rejection reason:</strong> {viewingInvoice.rejectionReason}</div>
+                )}
+
+                <div style={{ marginTop: '22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  {viewingInvoice.file?.url ? (
+                    <a href={`${API_BASE}${viewingInvoice.file.url}`} target="_blank" rel="noopener noreferrer" style={{ color: '#0d1b4b', fontWeight: '700', fontSize: '13px' }}>
+                      Open supplier invoice file
+                    </a>
+                  ) : (
+                    <span style={{ fontSize: '12px', color: '#94a3b8' }}>No invoice file attached</span>
+                  )}
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    {viewingInvoice.status === 'Pending Approval' && (
+                      <>
+                        <button onClick={() => openInvoiceActionModal(viewingInvoice._id, 'approve')} style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', minWidth: '110px' }}>✓ Approve</button>
+                        <button onClick={() => openInvoiceActionModal(viewingInvoice._id, 'reject')} style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', minWidth: '110px' }}>✕ Reject</button>
+                      </>
+                    )}
+                    <button onClick={() => setViewingInvoice(null)} style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '90px' }}>Close</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Invoice payment reject reason / approve-with-warnings modal */}
       {invoiceActionModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200 }}>
           <div style={{ background: 'white', padding: '30px', borderRadius: '10px', width: '420px', boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
             <h3 style={{ color: '#0d1b4b', marginTop: 0, marginBottom: '16px', fontSize: '18px' }}>
-              Reject Invoice Payment
+              {invoiceActionModal.action === 'approve' ? 'Approve Despite Delivery Issues?' : 'Reject Invoice Payment'}
             </h3>
             <form onSubmit={handleInvoiceActionSubmit}>
+              {invoiceActionModal.action === 'approve' ? (
+                <div style={{ marginBottom: '20px', padding: '12px 16px', background: '#fff3e0', border: '1px solid #ffcc80', borderRadius: '8px', color: '#e65100', fontSize: '13px' }}>
+                  <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                    {(invoiceActionModal.warnings || []).map((w, idx) => <li key={idx}>{w}</li>)}
+                  </ul>
+                </div>
+              ) : (
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '700', marginBottom: '6px', textTransform: 'uppercase' }}>
                   Rejection Reason
@@ -2044,9 +2083,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                   style={{ width: '100%', height: '100px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical', color: '#0f172a' }}
                 />
               </div>
+              )}
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button type="submit" style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '110px' }}>
-                  Confirm Reject
+                <button type="submit" style={{ background: invoiceActionModal.action === 'approve' ? '#2e7d32' : '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '110px' }}>
+                  {invoiceActionModal.action === 'approve' ? 'Approve Anyway' : 'Confirm Reject'}
                 </button>
                 <button type="button" onClick={() => setInvoiceActionModal(null)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '90px' }}>Cancel</button>
               </div>

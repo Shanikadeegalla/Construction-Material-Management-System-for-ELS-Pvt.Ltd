@@ -13,6 +13,103 @@ const generateNextInvoiceNumber = async () => {
   return candidate;
 };
 
+// What the Director needs from the PO and GRN to judge an invoice.
+const PO_MATCH_FIELDS = 'poNumber totalAmount items status';
+const GRN_MATCH_POPULATE = {
+  path: 'grn',
+  select: 'grnNumber status receivedDate receivedBy notes items',
+  populate: { path: 'items.material', select: 'name unit materialCode' }
+};
+
+// Three-way match: lines the invoice up against what was ordered (PO) and what
+// actually arrived (GRN), so the Director can see short, damaged or over-billed
+// deliveries before approving payment. Expects a populated, lean invoice.
+const buildDeliveryCheck = (invoice) => {
+  const po = invoice.po || {};
+  const grn = invoice.grn;
+  const poItems = po.items || [];
+  const grnItems = grn?.items || [];
+  const poTotal = Number(po.totalAmount) || 0;
+  const amount = Number(invoice.amount) || 0;
+  const nameOf = (s) => String(s || '').trim().toLowerCase();
+
+  const usedGrnItems = new Set();
+  const lines = poItems.map(pi => {
+    const gi = grnItems.find(g =>
+      !usedGrnItems.has(g) && (
+        (pi.material && g.material?._id && String(g.material._id) === String(pi.material)) ||
+        nameOf(g.material?.name) === nameOf(pi.materialName)
+      )
+    );
+    if (gi) usedGrnItems.add(gi);
+    const orderedQty = Number(pi.quantity) || 0;
+    const receivedQty = gi ? Number(gi.receivedQty) || 0 : 0;
+    const damagedQty = gi ? Number(gi.damagedQty) || 0 : 0;
+    const acceptedQty = Math.max(receivedQty - damagedQty, 0);
+    const unitPrice = Number(pi.unitPrice) || 0;
+    return {
+      materialName: pi.materialName,
+      unit: pi.unit,
+      orderedQty,
+      receivedQty,
+      damagedQty,
+      acceptedQty,
+      unitPrice,
+      acceptedValue: acceptedQty * unitPrice,
+      onPO: true
+    };
+  });
+
+  // Anything the store received that was never on the PO.
+  grnItems.filter(g => !usedGrnItems.has(g)).forEach(g => {
+    const receivedQty = Number(g.receivedQty) || 0;
+    const damagedQty = Number(g.damagedQty) || 0;
+    lines.push({
+      materialName: g.material?.name || 'Unknown material',
+      unit: g.material?.unit || '',
+      orderedQty: 0,
+      receivedQty,
+      damagedQty,
+      acceptedQty: Math.max(receivedQty - damagedQty, 0),
+      unitPrice: 0,
+      acceptedValue: 0,
+      onPO: false
+    });
+  });
+
+  const acceptedValue = lines.reduce((s, l) => s + l.acceptedValue, 0);
+  const shortLines = lines.filter(l => l.onPO && l.receivedQty < l.orderedQty).length;
+  const overLines = lines.filter(l => !l.onPO || l.receivedQty > l.orderedQty).length;
+  const damagedLines = lines.filter(l => l.damagedQty > 0).length;
+
+  const warnings = [];
+  let status = 'Full';
+  if (!grn) {
+    status = 'No GRN';
+    warnings.push('No GRN is linked to this invoice, so the delivery cannot be verified.');
+  } else {
+    if (shortLines > 0) {
+      status = 'Partial';
+      warnings.push(`${shortLines} item(s) were received short of the ordered quantity.`);
+    }
+    if (overLines > 0) {
+      status = 'Partial';
+      warnings.push(`${overLines} item(s) were received over the ordered quantity or were not on the PO.`);
+    }
+    if (damagedLines > 0) {
+      if (status === 'Full') status = 'Damaged';
+      warnings.push(`${damagedLines} item(s) arrived with damaged quantities.`);
+    }
+  }
+  if (poTotal > 0 && amount > poTotal) {
+    warnings.push(`Invoice amount (LKR ${amount.toLocaleString()}) is higher than the PO total (LKR ${poTotal.toLocaleString()}).`);
+  } else if (grn && amount > acceptedValue) {
+    warnings.push(`Invoice amount (LKR ${amount.toLocaleString()}) is higher than the value of goods accepted (LKR ${acceptedValue.toLocaleString()}).`);
+  }
+
+  return { status, lines, poTotal, acceptedValue, invoiceAmount: amount, warnings };
+};
+
 // @desc    Record an invoice received from a supplier (MainStore, tied to a GRN/PO)
 // @route   POST /api/invoices
 // @access  Private (Create Invoice)
@@ -85,11 +182,14 @@ export const getInvoices = async (req, res) => {
 
     const invoices = await Invoice.find(query)
       .populate('supplier', 'name supplierId')
-      .populate('po', 'poNumber')
-      .populate('grn', 'grnNumber')
-      .sort({ createdAt: -1 });
+      .populate('po', PO_MATCH_FIELDS)
+      .populate(GRN_MATCH_POPULATE)
+      .sort({ createdAt: -1 })
+      .lean();
 
-    res.status(200).json({ success: true, count: invoices.length, data: invoices });
+    const data = invoices.map(inv => ({ ...inv, deliveryCheck: buildDeliveryCheck(inv) }));
+
+    res.status(200).json({ success: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -102,12 +202,13 @@ export const getInvoiceById = async (req, res) => {
   try {
     const invoice = await Invoice.findById(req.params.id)
       .populate('supplier', 'name supplierId')
-      .populate('po', 'poNumber')
-      .populate('grn', 'grnNumber');
+      .populate('po', PO_MATCH_FIELDS)
+      .populate(GRN_MATCH_POPULATE)
+      .lean();
     if (!invoice) {
       return res.status(404).json({ success: false, message: 'Invoice not found.' });
     }
-    res.status(200).json({ success: true, data: invoice });
+    res.status(200).json({ success: true, data: { ...invoice, deliveryCheck: buildDeliveryCheck(invoice) } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

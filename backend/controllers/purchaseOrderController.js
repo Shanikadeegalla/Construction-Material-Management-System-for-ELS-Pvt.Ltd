@@ -1,5 +1,6 @@
 import PurchaseOrder from '../models/PurchaseOrder.js';
 import Material from '../models/Material.js';
+import ItemMaster from '../models/ItemMaster.js';
 import Supplier from '../models/Supplier.js';
 import PurchaseRequest from '../models/PurchaseRequest.js';
 import User from '../models/userModel.js';
@@ -11,16 +12,9 @@ import { sendMail, escapeHtml } from '../utils/mailer.js';
 const resolveMaterial = async (materialName, unit) => {
   let material = await Material.findOne({ name: materialName, location: 'MainStore' });
   if (!material) {
-    // Determine category based on name keywords
-    let category = 'Other';
-    const lowerName = materialName.toLowerCase();
-    if (lowerName.includes('cement')) category = 'Cement';
-    else if (lowerName.includes('steel') || lowerName.includes('iron')) category = 'Steel';
-    else if (lowerName.includes('brick')) category = 'Bricks';
-    else if (lowerName.includes('sand')) category = 'Sand';
-    else if (lowerName.includes('gravel')) category = 'Gravel';
-    else if (lowerName.includes('wood') || lowerName.includes('timber')) category = 'Wood';
-    else if (lowerName.includes('paint')) category = 'Paint';
+    // Category comes from the Item Master; 'Other' only for a material that isn't catalogued
+    const master = await ItemMaster.findOne({ materialName });
+    const category = master ? master.category : 'Other';
 
     // Map units to supported schema enums
     let mappedUnit = 'piece';
@@ -147,7 +141,7 @@ export const createPurchaseOrder = async (req, res) => {
         const newSupplier = new Supplier({
           name: supplier,
           phone: 'N/A',
-          category: 'Other'
+          categories: ['Other']
         });
         await newSupplier.save();
         supplierId = newSupplier._id;
@@ -281,19 +275,51 @@ export const approvePurchaseOrder = async (req, res) => {
     const approvedBy = req.user ? req.user.name : 'Director';
     const { note } = req.body;
 
-    const po = await PurchaseOrder.findByIdAndUpdate(
-      req.params.id,
+    // Only a PO still waiting on the Director can be approved - this stops a
+    // Sent/Delivered/Rejected order being pushed back to Approved.
+    const po = await PurchaseOrder.findOneAndUpdate(
+      { _id: req.params.id, status: 'Pending' },
       { status: 'Approved', approvedBy, approvedAt: new Date(), rejectionReason: note || '' },
       { new: true }
     );
 
     if (!po) {
-      return res.status(404).json({ success: false, message: 'Purchase order not found.' });
+      const exists = await PurchaseOrder.exists({ _id: req.params.id });
+      if (!exists) {
+        return res.status(404).json({ success: false, message: 'Purchase order not found.' });
+      }
+      return res.status(400).json({ success: false, message: 'Only a pending Purchase Order can be approved.' });
+    }
+
+    // An approved order goes straight out to the supplier. When that is not
+    // possible (no email on file, mail server unavailable) the PO simply stays
+    // Approved and the Purchase Manager sends it with "Send to Supplier".
+    let sendNote = '';
+    try {
+      const supplierDoc = po.supplier && mongoose.Types.ObjectId.isValid(po.supplier)
+        ? await Supplier.findById(po.supplier)
+        : null;
+      if (supplierDoc && supplierDoc.email) {
+        await sendMail({
+          to: supplierDoc.email,
+          subject: `Purchase Order ${po.poNumber} from ELS Construction`,
+          html: buildPOEmailHtml(po, supplierDoc)
+        });
+        po.status = 'Sent';
+        po.sentAt = new Date();
+        await po.save();
+        sendNote = ` and emailed to ${supplierDoc.name} (${supplierDoc.email})`;
+      } else {
+        sendNote = ` - not emailed: ${supplierDoc ? supplierDoc.name : 'the supplier'} has no email address on file, so it must be sent manually`;
+      }
+    } catch (mailErr) {
+      console.error('Error auto-sending approved PO:', mailErr);
+      sendNote = ' - the supplier email could not be sent, so it must be sent manually';
     }
 
     try {
       const purchaseManagers = await User.find({ role: 'PurchaseManager' });
-      const msg = `Purchase Order ${po.poNumber} Approved by Director${approvedBy ? ` (${approvedBy})` : ''}${note ? `: ${note}` : ''}`;
+      const msg = `Purchase Order ${po.poNumber} Approved by Director${approvedBy ? ` (${approvedBy})` : ''}${note ? `: ${note}` : ''}${sendNote}`;
       for (const pm of purchaseManagers) {
         await createNotificationHelper(pm._id, msg, 'PO_approved', '/purchase-orders');
       }
@@ -309,7 +335,7 @@ export const approvePurchaseOrder = async (req, res) => {
       '/main-store-dashboard'
     );
 
-    res.status(200).json({ success: true, message: 'Purchase Order approved successfully!', data: po });
+    res.status(200).json({ success: true, message: `Purchase Order ${po.poNumber} approved${sendNote}.`, data: po });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
@@ -323,14 +349,18 @@ export const rejectPurchaseOrder = async (req, res) => {
     const approvedBy = req.user ? req.user.name : 'Director';
     const { rejectionReason } = req.body;
 
-    const po = await PurchaseOrder.findByIdAndUpdate(
-      req.params.id,
+    const po = await PurchaseOrder.findOneAndUpdate(
+      { _id: req.params.id, status: 'Pending' },
       { status: 'Rejected', approvedBy, rejectionReason: rejectionReason || 'No reason provided' },
       { new: true }
     );
 
     if (!po) {
-      return res.status(404).json({ success: false, message: 'Purchase order not found.' });
+      const exists = await PurchaseOrder.exists({ _id: req.params.id });
+      if (!exists) {
+        return res.status(404).json({ success: false, message: 'Purchase order not found.' });
+      }
+      return res.status(400).json({ success: false, message: 'Only a pending Purchase Order can be rejected.' });
     }
 
     try {
@@ -470,126 +500,5 @@ export const sendPurchaseOrder = async (req, res) => {
     });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Get supplier performance metrics
-// @route   GET /api/purchase-orders/supplier-performance
-// @access  Private
-export const getSupplierPerformance = async (req, res) => {
-  try {
-    const pos = await PurchaseOrder.find().lean();
-    const suppliers = await Supplier.find().lean();
-
-    const supplierMap = {};
-    suppliers.forEach(s => {
-      supplierMap[s._id.toString()] = s.name;
-    });
-
-    const performanceData = {};
-
-    // Initialize map with all suppliers
-    suppliers.forEach(s => {
-      performanceData[s.name] = {
-        supplierName: s.name,
-        totalOrders: 0,
-        deliveredCount: 0,
-        onTimeCount: 0,
-        totalOrderedQty: 0,
-        totalReceivedQty: 0
-      };
-    });
-
-    pos.forEach(po => {
-      let supplierName = 'Unknown';
-      if (po.supplier) {
-        const supStr = po.supplier.toString();
-        if (supplierMap[supStr]) {
-          supplierName = supplierMap[supStr];
-        } else {
-          supplierName = po.supplier;
-        }
-      }
-
-      if (supplierName === 'Unknown') return;
-
-      if (!performanceData[supplierName]) {
-        performanceData[supplierName] = {
-          supplierName,
-          totalOrders: 0,
-          deliveredCount: 0,
-          onTimeCount: 0,
-          totalOrderedQty: 0,
-          totalReceivedQty: 0
-        };
-      }
-
-      const metrics = performanceData[supplierName];
-      metrics.totalOrders += 1;
-
-      if (po.status === 'Delivered') {
-        metrics.deliveredCount += 1;
-
-        // Check if on-time
-        if (po.actualDeliveryDate && po.expectedDeliveryDate) {
-          const actual = new Date(po.actualDeliveryDate);
-          const expected = new Date(po.expectedDeliveryDate);
-          if (actual <= expected) {
-            metrics.onTimeCount += 1;
-          }
-        } else {
-          metrics.onTimeCount += 1; // Default to on-time if dates not recorded
-        }
-
-        // Qty accuracy
-        const ordered = po.items.reduce((sum, item) => sum + (item.quantity || 0), 0);
-        metrics.totalOrderedQty += ordered;
-        metrics.totalReceivedQty += (po.receivedQty || 0);
-      }
-    });
-
-    const result = Object.values(performanceData).map(metrics => {
-      let accuracyPercent = 100;
-      let onTimePercent = 100;
-
-      if (metrics.deliveredCount > 0) {
-        if (metrics.totalOrderedQty > 0) {
-          accuracyPercent = (metrics.totalReceivedQty / metrics.totalOrderedQty) * 100;
-        }
-        onTimePercent = (metrics.onTimeCount / metrics.deliveredCount) * 100;
-      }
-
-      accuracyPercent = Math.round(accuracyPercent * 10) / 10;
-      onTimePercent = Math.round(onTimePercent * 10) / 10;
-
-      // Rating rules:
-      // Green "Excellent" (>95% accuracy)
-      // Blue "Good" (>85% accuracy)
-      // Yellow "Average" (>70% accuracy)
-      // Red "Poor" (below 70%)
-      let performanceRating = 'Poor';
-      if (metrics.deliveredCount === 0) {
-        performanceRating = 'N/A';
-      } else if (accuracyPercent > 95) {
-        performanceRating = 'Excellent';
-      } else if (accuracyPercent > 85) {
-        performanceRating = 'Good';
-      } else if (accuracyPercent > 70) {
-        performanceRating = 'Average';
-      }
-
-      return {
-        supplierName: metrics.supplierName,
-        totalOrders: metrics.totalOrders,
-        onTimeDeliveries: metrics.onTimeCount,
-        onTimePercent,
-        deliveryAccuracy: accuracyPercent,
-        performanceRating
-      };
-    });
-
-    res.status(200).json({ success: true, count: result.length, data: result });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
   }
 };

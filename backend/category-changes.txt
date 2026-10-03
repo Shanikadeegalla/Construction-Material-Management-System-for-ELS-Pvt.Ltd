@@ -1,0 +1,33 @@
+Connected to "ConstructionDB" (dry run).
+Material [MainStore] "Portland Cement OPC 53": "Cement" -> "Other"
+Material [MainStore] "10mm TMT Bar": "Other" -> "Reinforcement Steel"
+Material [MainStore] "Base Jack": "Other" -> "Formwork & Scaffolding"
+Material [MainStore] "I Beam": "Other" -> "Structural Steel"
+Material [MainStore] "Riprap Stone": "Other" -> "Geotechnical"
+Material [MainStore] "RCC Pipe 600mm": "Other" -> "Drainage & Culvert"
+Material [MainStore] "Steel Peg": "Steel" -> "Survey & Site"
+Material [MainStore] "Water Proofing Admixture": "Other" -> "Cement & Concrete"
+Material [MainStore] "RCC Pipe 450mm": "Other" -> "Drainage & Culvert"
+Material [MainStore] "Ready Mix Concrete Grade 30": "Other" -> "Cement & Concrete"
+Material [MainStore] "Survey Nail": "Other" -> "Survey & Site"
+Material [MainStore] "Marking Paint": "Paint" -> "Survey & Site"
+Material [MainStore] "32mm TMT Bar": "Other" -> "Reinforcement Steel"
+Material [MainStore] "40mm Aggregate": "Other" -> "Aggregates"
+Material [MainStore] "Reflective Marker": "Other" -> "Survey & Site"
+Material [MainStore] "RCC Pipe 300mm": "Other" -> "Drainage & Culvert"
+Material [MainStore] "Steel Form Panel": "Steel" -> "Formwork & Scaffolding"
+Material [MainStore] "Box Culvert Unit": "Other" -> "Drainage & Culvert"
+Material [MainStore] "Shear Connector": "Other" -> "Bridge Construction"
+Material [MainStore] "Tack Coat": "Other" -> "Road Construction"
+Material [MainStore] "Concrete Admixture": "Other" -> "Cement & Concrete"
+Material [MainStore] "Ready Mix Concrete Grade 20": "Other" -> "Cement & Concrete"
+Material [MainStore] "Scaffolding Pipe": "Other" -> "Formwork & Scaffolding"
+Material [MainStore] "Nut": "Other" -> "Fasteners & Hardware"
+Material [SiteStore] "20mm TMT Bar": "Other" -> "Reinforcement Steel"
+Material [SiteStore] "16mm TMT Bar": "Other" -> "Reinforcement Steel"
+Material [SiteStore] "River Sand": "Sand" -> "Aggregates"
+Material [MainStore] "TMT Steel 12mm": "Steel" -> "Other"
+Supplier SUP-0001 "Lanka Cement Ltd": [Cement] -> [Cement & Concrete]
+Supplier SUP-0002 "Melwa Steel": [Steel] -> [Reinforcement Steel]
+Done. 28 Material row(s) and 2 Supplier(s) would be updated; 0 Material row(s) have no Item Master match.
+Dry run only - re-run with --apply to write these changes.

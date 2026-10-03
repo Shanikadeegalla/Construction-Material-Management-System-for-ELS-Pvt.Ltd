@@ -130,7 +130,7 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
     );
   }
 
-  const { supplier, purchaseOrders, quotations, invoices, grns, performance } = profile;
+  const { supplier, purchaseOrders, quotations, invoices, grns } = profile;
 
   const poPagination = usePagination(purchaseOrders || [], 8, [purchaseOrders?.length]);
   const quotePagination = usePagination(quotations || [], 8, [quotations?.length]);
@@ -180,21 +180,8 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
               <InfoField label="Bank Branch" value={supplier.bankBranch} />
               <InfoField label="Business Registration No." value={supplier.businessRegistrationNumber} />
               <InfoField label="VAT Number" value={supplier.vatNumber} />
-              <InfoField label="Rating" value={supplier.rating ? `${supplier.rating} / 5` : '-'} />
             </div>
           </div>
-
-          {performance && (
-            <div style={{ borderTop: '1px solid #eee', paddingTop: '20px', marginBottom: '24px' }}>
-              <h4 style={{ margin: '0 0 16px', color: '#0d1b4b', fontSize: '14px', textTransform: 'uppercase' }}>Performance Summary</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '20px' }}>
-                <InfoField label="Total Orders" value={performance.totalOrders} />
-                <InfoField label="On-Time Deliveries" value={`${performance.onTimeDeliveries} (${performance.onTimePercent}%)`} />
-                <InfoField label="Delivery Accuracy" value={`${performance.deliveryAccuracy}%`} />
-                <InfoField label="Performance Rating" value={performance.performanceRating} />
-              </div>
-            </div>
-          )}
 
           {supplier.documents && (
             <div style={{ borderTop: '1px solid #eee', paddingTop: '20px' }}>

@@ -85,13 +85,8 @@ export const Pagination = ({
   // Extract values from pagination object if passed, otherwise use individual props
   const currentPage = pagination ? pagination.currentPage : (propCurrentPage || 1);
   const totalPages = pagination ? pagination.totalPages : (propTotalPages || 1);
-  const pageSize = pagination ? pagination.pageSize : (propPageSize || 10);
   const totalItems = pagination ? pagination.totalItems : (propTotalItems ?? 0);
   const onPageChange = pagination ? pagination.setCurrentPage : propOnPageChange;
-  const onPageSizeChange = pagination ? pagination.setPageSize : propOnPageSizeChange;
-
-  const startIndex = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const endIndex = Math.min(currentPage * pageSize, totalItems);
 
   // Helper to generate page numbers with ellipsis (e.g. 1, 2, ..., 5, 6, 7, ..., 10)
   const getPageNumbers = () => {
@@ -147,7 +142,7 @@ export const Pagination = ({
         display: 'flex',
         flexWrap: 'wrap',
         alignItems: 'center',
-        justifyContent: align === 'space-between' ? 'space-between' : align,
+        justifyContent: align === 'space-between' ? 'flex-end' : align,
         gap: '12px',
         padding: '12px 16px',
         marginTop: '12px',
@@ -159,43 +154,7 @@ export const Pagination = ({
         ...style
       }}
     >
-      {/* Left section: Item range counter */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontWeight: '500', color: 'var(--text-secondary, #64748b)' }}>
-          Showing <strong style={{ color: 'var(--text-primary, #0f172a)' }}>{startIndex}</strong> to{' '}
-          <strong style={{ color: 'var(--text-primary, #0f172a)' }}>{endIndex}</strong> of{' '}
-          <strong style={{ color: 'var(--text-primary, #0f172a)' }}>{totalItems}</strong> entries
-        </span>
-
-        {/* Page size dropdown */}
-        {onPageSizeChange && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '12px' }}>
-            <span style={{ color: 'var(--text-secondary, #64748b)', fontSize: '12px' }}>Show</span>
-            <select
-              value={pageSize}
-              onChange={(e) => onPageSizeChange(Number(e.target.value))}
-              style={{
-                padding: '4px 8px',
-                fontSize: '12px',
-                borderRadius: '6px',
-                border: '1px solid var(--border, #cbd5e1)',
-                background: 'var(--input-bg, #ffffff)',
-                color: 'var(--text-primary, #0f172a)',
-                cursor: 'pointer',
-                outline: 'none'
-              }}
-            >
-              {pageSizeOptions.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt} per page
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-      </div>
-
-      {/* Right section: Pagination Navigation Controls */}
+      {/* Pagination Navigation Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
         {/* First Page Button */}
         <button

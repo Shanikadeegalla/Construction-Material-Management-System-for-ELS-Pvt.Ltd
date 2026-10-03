@@ -3,9 +3,10 @@ import mongoose from 'mongoose';
 // A Site Store's request to Main Store for additional stock. This is a pure
 // store-to-store replenishment request - it is NOT tied to a project's BOM
 // or material usage (that's handled separately by the Material Issuance
-// Note flow). siteStoreId/siteStoreName identify which Site Store is asking,
-// derived automatically from the requesting user's assigned project - the
-// requester never picks a project.
+// Note flow). There is one general Site Store: the requester never picks a
+// project, and the stock only becomes project-specific later, when Site Store
+// issues it to a project (Material Issue & Usage). siteStoreId is only set on
+// legacy requests raised when each project had its own Site Store.
 const materialRequestSchema = new mongoose.Schema({
   requestNo: {
     type: String,
@@ -15,11 +16,11 @@ const materialRequestSchema = new mongoose.Schema({
   siteStoreId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Project',
-    required: true
+    default: null
   },
   siteStoreName: {
     type: String,
-    required: true
+    default: 'Site Store'
   },
   requestedBy: {
     type: String,

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { isValidCategory } from '../utils/materialCategories.js';
 
 const itemMasterSchema = new mongoose.Schema({
   materialCode: {
@@ -16,24 +17,10 @@ const itemMasterSchema = new mongoose.Schema({
   category: {
     type: String,
     required: true,
-    enum: [
-      'Cement & Concrete',
-      'Aggregates',
-      'Road Construction',
-      'Bridge Construction',
-      'Reinforcement Steel',
-      'Structural Steel',
-      'Railway Materials',
-      'Drainage & Culvert',
-      'Geotechnical',
-      'Formwork & Scaffolding',
-      'Fasteners & Hardware',
-      'Waterproofing & Joints',
-      'Safety Materials',
-      'Survey & Site',
-      'Miscellaneous',
-      'Other'
-    ],
+    validate: {
+      validator: isValidCategory,
+      message: props => `"${props.value}" is not a valid material category.`
+    },
     default: 'Other'
   },
   unit: {

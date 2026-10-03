@@ -138,40 +138,16 @@ export const loginUser = async (req, res, next) => {
       queryConditions.push({ email: { $regex: new RegExp(`^${escapedIdentifier}@`, 'i') } });
     }
 
-    let user = await User.findOne({ $or: queryConditions });
+    const user = await User.findOne({ $or: queryConditions });
 
-    if (!user) {
-      user = await User.findOne({
-        $or: [
-          { email: { $regex: new RegExp(`${escapedIdentifier}`, 'i') } },
-          { username: { $regex: new RegExp(`${escapedIdentifier}`, 'i') } }
-        ]
-      });
-    }
-
-    let cleanPassword = password.trim();
-    let isMatch = user ? await user.matchPassword(cleanPassword) : false;
-
-    // Smart fallback password check for default handwritten / demo credentials
-    if (user && !isMatch) {
-      const strippedPassword = cleanPassword.replace(/\.$/, ''); // Strip trailing period if entered (e.g. site123.)
-      isMatch = await user.matchPassword(strippedPassword);
-
-      if (!isMatch) {
-        const defaultPasses = ['site123', 'site123.', 'dir123', 'director123', 'admin123', 'pm123', 'pm123456', 'purchase123', 'Purchase@123', 'store123', 'els123', '123456'];
-        if (defaultPasses.includes(cleanPassword) || defaultPasses.includes(strippedPassword)) {
-          user.password = strippedPassword; // Automatically update hash to clean password
-          await user.save();
-          isMatch = true;
-        }
-      }
-    }
+    const cleanPassword = password.trim();
+    const isMatch = user ? await user.matchPassword(cleanPassword) : false;
 
     if (user && isMatch) {
-      // Auto-activate account if inactive
+      // A deactivated account stays locked until an Admin reactivates it
       if (user.status === false) {
-        user.status = true;
-        await user.save();
+        res.status(403);
+        throw new Error('Your account has been deactivated. Please contact the administrator.');
       }
 
       const token = generateToken(user._id);

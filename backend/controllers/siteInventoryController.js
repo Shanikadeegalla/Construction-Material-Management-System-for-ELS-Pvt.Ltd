@@ -12,20 +12,14 @@ const decryptIfNeeded = (val) => {
   return decryptDB(val);
 };
 
-// @desc    Fetch site inventory rows matching user project session context
+// @desc    Fetch Site Store inventory. The Site Store holds one shared stock
+//          for every project - it is not split per project, so nothing is
+//          filtered by the user's or the selected project.
 // @route   GET /api/site/inventory
 // @access  Private
 export const getSiteInventory = async (req, res) => {
   try {
-    const userProjectId = req.query.projectId || (req.user ? (req.user.project_id || req.user.projectId) : null);
-    
-    const filter = { location: 'SiteStore' };
-    if (userProjectId) {
-      filter.$or = [{ project_id: userProjectId }, { projectId: userProjectId }];
-    }
-
-    // Find materials in SiteStore location
-    const materials = await Material.find(filter);
+    const materials = await Material.find({ location: 'SiteStore' });
 
     const decrypted = materials.map(m => {
       const doc = m.toObject();
@@ -97,13 +91,11 @@ export const issueMaterialToProject = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Project not found.' });
     }
 
-    const siteMaterial = await Material.findOne({
-      _id: materialId,
-      location: 'SiteStore',
-      $or: [{ project_id: projectId }, { projectId }]
-    });
+    // Site Store stock is shared, so any site material can be issued to any
+    // project - the project only decides whose usage/BOM it counts against.
+    const siteMaterial = await Material.findOne({ _id: materialId, location: 'SiteStore' });
     if (!siteMaterial) {
-      return res.status(404).json({ success: false, message: 'Material not found in Site Store inventory for this project.' });
+      return res.status(404).json({ success: false, message: 'Material not found in Site Store inventory.' });
     }
 
     const decryptedName = decryptDB(siteMaterial.name);

@@ -15,13 +15,13 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   }, []);
 
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'bom', 'settings'
-  const [requests, setRequests] = useState([]);
   const [boms, setBoms] = useState([]);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  const [modal, setModal] = useState(null);
-  const [modalSearchTerm, setModalSearchTerm] = useState('');
-  const [transfers, setTransfers] = useState([]);
+  // KPI card counts from GET /api/projects/pm-stats. null = not loaded yet,
+  // so the cards show a placeholder instead of a misleading 0.
+  const [pmStats, setPmStats] = useState(null);
+  const [pmStatsError, setPmStatsError] = useState(false);
 
   // New BOM Form State (Phase 4)
   const [bomProjectId, setBomProjectId] = useState('');
@@ -41,9 +41,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [viewBomVersions, setViewBomVersions] = useState([]);
 
   // Notifications state
-  const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
 
   // BOM approval/rejection notifications (from Director actions)
   const [bomNotifications, setBomNotifications] = useState([]);
@@ -81,20 +79,19 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     };
   };
 
-  const fetchRequests = async () => {
+  const fetchPmStats = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/purchase-requests`, {
+      const res = await fetch(`${API_BASE}/api/projects/pm-stats`, {
         headers: getHeaders()
       });
       const data = await res.json();
-      setRequests(data.success ? (data.data || []) : []);
-    } catch {
-      setRequests([
-        { _id: '1', projectName: 'Colombo Port Expansion', materials: [{ materialName: 'Portland Cement', quantity: 300, unit: 'bags', reason: 'Foundation concrete' }], status: 'Pending', requestedBy: 'Mike Storekeeper', createdAt: new Date().toISOString(), notes: 'Urgent request' },
-        { _id: '2', projectName: 'Marina Heights', materials: [{ materialName: 'TMT Steel 12mm', quantity: 5, unit: 'ton', reason: 'Column reinforcement' }], status: 'Pending', requestedBy: 'Mike Storekeeper', createdAt: new Date(Date.now() - 86400000).toISOString(), notes: '' },
-        { _id: '3', projectName: 'Highway Extension Project', materials: [{ materialName: 'River Sand', quantity: 40, unit: 'm3', reason: 'Concrete mix' }], status: 'Pending', requestedBy: 'Mike Storekeeper', createdAt: new Date(Date.now() - 172800000).toISOString(), notes: '' },
-        { _id: '4', projectName: 'Water Treatment Plant', materials: [{ materialName: 'Coarse Aggregate', quantity: 100, unit: 'bags', reason: 'Filter bed' }], status: 'Pending', requestedBy: 'Mike Storekeeper', createdAt: new Date(Date.now() - 259200000).toISOString(), notes: 'Urgent' }
-      ]);
+      if (!res.ok || !data.success) throw new Error(data.message || 'Failed to load dashboard statistics');
+      setPmStats(data.data);
+      setPmStatsError(false);
+    } catch (err) {
+      console.error('Error fetching PM dashboard stats:', err);
+      setPmStats(null);
+      setPmStatsError(true);
     }
   };
 
@@ -106,47 +103,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       const data = await res.json();
       setBoms(data.success ? (data.data || []) : []);
     } catch {
-      setBoms([
-        { _id: '1', projectName: 'Colombo Port Expansion', version: 'v1.0', createdBy: 'John PM', createdAt: new Date().toISOString(), status: 'Pending', materials: [{ name: 'Portland Cement', unit: 'bags', plannedQty: 300, category: 'Cement' }] },
-        { _id: '2', projectName: 'Marina Heights', version: 'v1.2', createdBy: 'Sarah PM', createdAt: new Date(Date.now() - 86400000).toISOString(), status: 'Approved', materials: [{ name: 'Portland Cement', unit: 'bags', plannedQty: 500, category: 'Cement' }] },
-        { _id: '3', projectName: 'Highway Extension Project', version: 'v1.1', createdBy: 'John PM', createdAt: new Date(Date.now() - 172800000).toISOString(), status: 'Pending', materials: [{ name: 'River Sand', unit: 'cube', plannedQty: 150, category: 'Sand' }] },
-        { _id: '4', projectName: 'Water Treatment Plant', version: 'v1.0', createdBy: 'Sarah PM', createdAt: new Date(Date.now() - 259200000).toISOString(), status: 'Approved', materials: [{ name: 'Coarse Aggregate', unit: 'bags', plannedQty: 200, category: 'Aggregate' }] },
-        { _id: '5', projectName: 'City Center Mall', version: 'v1.0', createdBy: 'John PM', createdAt: new Date(Date.now() - 345600000).toISOString(), status: 'Pending', materials: [{ name: 'TMT Steel 12mm', unit: 'ton', plannedQty: 25, category: 'Steel' }] }
-      ]);
-    }
-  };
-
-  const fetchNotifications = async () => {
-    try {
-      const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`${API_BASE}/api/inventory/notifications`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      let notifList = data.success ? data.data : [];
-      if (!notifList || notifList.length === 0) {
-        notifList = [
-          { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
-          { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
-        ];
-      }
-      setNotifications(notifList);
-
-      const countRes = await fetch(`${API_BASE}/api/notifications/count`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const countData = await countRes.json();
-      if (countData.success) {
-        setUnreadCount(countData.count || 2);
-      } else {
-        setUnreadCount(2);
-      }
-    } catch (err) {
-      setNotifications([
-        { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
-        { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
-      ]);
-      setUnreadCount(2);
+      setBoms([]);
     }
   };
 
@@ -213,11 +170,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       }
     } catch (err) {
       console.error('Error fetching projects:', err);
-      setProjects([
-        { _id: '1', projectId: 'PRJ-2026-001', projectName: 'Colombo Port Expansion', status: 'Active', budget: 750000000, startDate: new Date(Date.now() - 30*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 180*24*60*60*1000).toISOString(), clientName: 'SLPA', location: 'Colombo Port' },
-        { _id: '2', projectId: 'PRJ-2026-002', projectName: 'Marina Heights', status: 'Active', budget: 350000000, startDate: new Date(Date.now() - 5*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 240*24*60*60*1000).toISOString(), clientName: 'Marina Dev', location: 'Colombo 03' },
-        { _id: '3', projectId: 'PRJ-2026-003', projectName: 'Highway Extension Project', status: 'Active', budget: 620000000, startDate: new Date(Date.now() - 15*24*60*60*1000).toISOString(), expectedEndDate: new Date(Date.now() + 120*24*60*60*1000).toISOString(), clientName: 'RDA', location: 'Southern Highway' }
-      ]);
+      setProjects([]);
     }
   };
 
@@ -246,32 +199,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
   }, [showProjectForm, editingProjectId, projectForm.startDate]);
 
-  const fetchTransfers = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/inventory/transfers`, {
-        headers: getHeaders()
-      });
-      const data = await res.json();
-      setTransfers(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Error fetching transfers:', err);
-      setTransfers([
-        { _id: '1', materialName: 'Portland Cement OPC', quantity: 50, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date().toISOString() },
-        { _id: '2', materialName: 'TMT Steel 12mm', quantity: 2, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 86400000).toISOString() },
-        { _id: '3', materialName: 'River Sand', quantity: 15, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 172800000).toISOString() },
-        { _id: '4', materialName: 'Coarse Aggregate', quantity: 20, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 259200000).toISOString() },
-        { _id: '5', materialName: 'Plywood Sheets', quantity: 30, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 345600000).toISOString() },
-        { _id: '6', materialName: 'PVC Pipes 2"', quantity: 45, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 432000000).toISOString() },
-        { _id: '7', materialName: 'Binding Wire', quantity: 10, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 518400000).toISOString() },
-        { _id: '8', materialName: 'Nails 3"', quantity: 25, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 604800000).toISOString() },
-        { _id: '9', materialName: 'Paint Brilliant White', quantity: 12, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 691200000).toISOString() },
-        { _id: '10', materialName: 'Paint Brush 4"', quantity: 15, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 777600000).toISOString() },
-        { _id: '11', materialName: 'Brick Clay Red', quantity: 1000, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 864000000).toISOString() },
-        { _id: '12', materialName: 'Metal CRS 3/4"', quantity: 8, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date(Date.now() - 950400000).toISOString() }
-      ]);
-    }
-  };
-
   const hasSession = () => {
     try {
       return !!JSON.parse(localStorage.getItem('user'))?.token;
@@ -283,7 +210,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchAllData = async () => {
     if (!hasSession()) return;
     setLoading(true);
-    await Promise.all([fetchRequests(), fetchBoms(), fetchNotifications(), fetchBomNotifications(), fetchProjects(), fetchTransfers(), fetchMaterialMaster()]);
+    await Promise.all([fetchPmStats(), fetchBoms(), fetchBomNotifications(), fetchProjects(), fetchMaterialMaster()]);
     setLoading(false);
   };
 
@@ -790,36 +717,15 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
         setMessage(`❌ Failed: ${data.message}`);
       }
     } catch {
-      setMessage('✅ BOM submitted successfully! (Demo mode)');
-      const newMockBom = {
-        _id: String(Date.now()),
-        projectId: { _id: bomProjectId, name: 'Project Name' },
-        version: 'v1.0',
-        createdBy: user?.name || 'Project Manager',
-        status: 'Submitted',
-        materials: filledMaterials,
-        createdAt: new Date().toISOString()
-      };
-      setBoms(prev => [newMockBom, ...prev]);
-      setBomProjectId('');
-      setBomMaterials([{ ...emptyBomMaterialRow }]);
+      setMessage('❌ Failed: could not connect to the server. The BOM was not saved.');
     }
   };
 
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  // Scope every card to projects owned by this PM (mirrors the backend's
-  // createdBy filter on GET /api/projects) so the row reflects one PM's
-  // workload instead of every PM's data mixed together.
+  // Projects owned by this PM (mirrors the backend's createdBy filter on
+  // GET /api/projects), used to scope the reviewed-BOM table below.
   const myProjectIds = new Set(projects.map(p => p._id));
   const myProjectNames = new Set(projects.map(p => p.projectName));
 
-  const activeProjectsCount = projects.filter(p => p.status === 'Active' || p.status === 'active').length;
-  const bomsSubmittedCount = boms.filter(b => {
-    const projName = b.projectId?.projectName || b.projectName;
-    const projId = b.projectId?._id || b.projectId;
-    return b.status !== 'Draft' && (myProjectIds.has(projId) || myProjectNames.has(projName));
-  }).length;
   // BOMs the Director has already reviewed (Approved or Rejected), scoped to this
   // PM's own projects, for the "view / edit reviewed BOM" section below. Only the
   // latest version per project is considered - once a Rejected BOM is edited and
@@ -840,19 +746,11 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     return (b.status === 'Approved' || b.status === 'Rejected') && (myProjectIds.has(projId) || myProjectNames.has(projName));
   });
   const directorBomsPagination = usePagination(directorReviewedBoms, 8, [directorReviewedBoms.length]);
-  const myPendingRequests = requests.filter(r =>
-    r.status === 'Pending' && myProjectNames.has(r.projectName || r.project)
-  );
-  const pendingRequestsCount = myPendingRequests.length;
-  const issuedThisMonthCount = transfers.filter(t =>
-    new Date(t.date || t.createdAt) >= startOfMonth && myProjectIds.has(t.projectId || t.project_id)
-  ).length;
+  const statValue = (key) => (pmStats ? pmStats[key] : '—');
 
   const stats = [
-    { label: 'Active Projects', value: activeProjectsCount, color: '#0d1b4b', type: 'active-projects' },
-    { label: 'BOM Submitted', value: bomsSubmittedCount, color: '#2563eb', type: 'boms-submitted' },
-    { label: 'Pending Requests', value: pendingRequestsCount, color: '#0d1b4b', type: 'pending-requests' },
-    { label: 'Issued This Month', value: issuedThisMonthCount, color: '#2e7d32', type: 'issued-this-month' },
+    { label: 'Active Projects', value: statValue('activeProjects'), subtitle: 'Currently ongoing projects', color: '#0d1b4b' },
+    { label: 'Pending BOM Approvals', value: statValue('pendingBomApprovals'), subtitle: 'Waiting for Director approval', color: '#2563eb' },
   ];
 
   const renderProjects = () => {
@@ -1187,192 +1085,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     );
   };
 
-  const renderPMStatsModal = () => {
-    if (!modal) return null;
-
-    let title = '';
-    let tableHeaders = [];
-    let tableRows = [];
-    
-    const query = modalSearchTerm.toLowerCase();
-
-    if (modal === 'active-projects') {
-      title = "PM's Projects Directory";
-      tableHeaders = ['Project ID', 'Name', 'Status', 'Start Date', 'Expected End Date'];
-      
-      const filtered = projects.filter(p => 
-        (p.status === 'Active' || p.status === 'active') &&
-        ((p.projectId || '').toLowerCase().includes(query) || (p.projectName || '').toLowerCase().includes(query))
-      );
-
-      tableRows = filtered.map((p, idx) => (
-        <tr key={p._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#0d1b4b' }}>{p.projectId}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600' }}>{p.projectName}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px' }}>
-            <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Active</span>
-          </td>
-          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>{formatDate(p.startDate)}</td>
-          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>{formatDate(p.expectedEndDate || p.endDate)}</td>
-        </tr>
-      ));
-    } else if (modal === 'boms-submitted') {
-      title = 'BOMs Submitted Registry';
-      tableHeaders = ['Project', 'Version', 'Status', 'Submitted Date'];
-      
-      const submittedBoms = boms.filter(b => {
-        const projName = b.projectId?.projectName || b.projectName;
-        const projId = b.projectId?._id || b.projectId;
-        return b.status !== 'Draft' && (myProjectIds.has(projId) || myProjectNames.has(projName));
-      });
-      const filtered = submittedBoms.filter(b =>
-        (b.projectId?.projectName || b.projectName || '').toLowerCase().includes(query) ||
-        (b.version || '').toLowerCase().includes(query) ||
-        (b.status || '').toLowerCase().includes(query)
-      );
-
-      tableRows = filtered.map((b, idx) => (
-        <tr key={b._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{b.projectId?.projectName || b.projectId?.name || b.projectName || '-'}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px' }}>{b.version || 'v1.0'}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px' }}>
-            <span style={{
-              background: b.status === 'Approved' ? '#e8f5e9' : b.status === 'Rejected' ? '#ffebee' : '#dbeafe',
-              color: b.status === 'Approved' ? '#2e7d32' : b.status === 'Rejected' ? '#c62828' : '#0d1b4b',
-              padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '700'
-            }}>{b.status}</span>
-          </td>
-          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>{formatDate(b.submittedAt || b.createdAt)}</td>
-        </tr>
-      ));
-    } else if (modal === 'pending-requests') {
-      title = 'Pending PR Requests Checklist';
-      tableHeaders = ['PR Number', 'Material / Specification', 'Qty Requested', 'Urgency / Date', 'Status'];
-      
-      const pendingPrs = requests.filter(r => r.status === 'Pending' && myProjectNames.has(r.projectName || r.project));
-      const filtered = pendingPrs.filter(r =>
-        (r.projectName || r.project || '').toLowerCase().includes(query) ||
-        (r.materials?.some(m => m.materialName?.toLowerCase().includes(query)))
-      );
-
-      tableRows = filtered.map((r, idx) => (
-        <tr key={r._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>PR-{String(idx + 1).padStart(3, '0')}</td>
-          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#475569' }}>
-            {r.materials?.map((m, mIdx) => (
-              <div key={mIdx}>{m.materialName} ({m.unit})</div>
-            ))}
-          </td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600' }}>
-            {r.materials?.map((m, mIdx) => (
-              <div key={mIdx}>{m.quantity}</div>
-            ))}
-          </td>
-          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>
-            <div style={{ fontWeight: 'bold', color: r.urgency === 'Critical' ? '#c62828' : r.urgency === 'Urgent' ? '#0d1b4b' : '#1565c0' }}>{r.urgency || 'Normal'}</div>
-            <div>{formatDate(r.createdAt)}</div>
-          </td>
-          <td style={{ padding: '12px 16px', fontSize: '13px' }}>
-            <span style={{ background: '#dbeafe', color: '#0d1b4b', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Pending</span>
-          </td>
-        </tr>
-      ));
-    } else if (modal === 'issued-this-month') {
-      title = 'Issued Materials (Transfers)';
-      tableHeaders = ['Material Name', 'Quantity Issued', 'Destination Site', 'Transfer Date', 'Issued By'];
-      
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const transfersThisMonth = transfers.filter(t =>
-        new Date(t.date || t.createdAt) >= startOfMonth && myProjectIds.has(t.projectId || t.project_id)
-      );
-      const filtered = transfersThisMonth.filter(t => 
-        (t.materialName || '').toLowerCase().includes(query) ||
-        (t.to || '').toLowerCase().includes(query)
-      );
-
-      tableRows = filtered.map((t, idx) => (
-        <tr key={t._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600' }}>{t.materialName}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#0d1b4b' }}>{t.quantity}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px' }}>{t.to}</td>
-          <td style={{ padding: '12px 16px', fontSize: '12px', color: '#64748b' }}>{formatDate(t.date || t.createdAt)}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', color: '#475569' }}>{t.issuedBy}</td>
-        </tr>
-      ));
-    }
-
-    return (
-      <div 
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100%',
-          height: '100%',
-          background: 'rgba(0,0,0,0.5)',
-          backdropFilter: 'blur(4px)',
-          zIndex: 1200,
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center'
-        }}
-        onClick={() => setModal(null)}
-      >
-        <div 
-          style={{
-            background: 'white',
-            borderRadius: '12px',
-            width: '80%',
-            maxWidth: '900px',
-            maxHeight: '80vh',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-            boxShadow: '0 10px 25px rgba(0,0,0,0.2)'
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div style={{ background: '#0d1b4b', padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0, color: 'white', fontSize: '18px', fontWeight: 'bold', borderLeft: '4px solid #2563eb', paddingLeft: '10px' }}>{title}</h3>
-            <button 
-              onClick={() => setModal(null)}
-              style={{ background: 'transparent', border: 'none', color: '#2563eb', fontSize: '20px', fontWeight: 'bold', cursor: 'pointer' }}
-            >
-              ✕
-            </button>
-          </div>
-          <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', overflowY: 'auto', flex: 1 }}>
-            <input 
-              placeholder="Search detailed items..." 
-              value={modalSearchTerm}
-              onChange={e => setModalSearchTerm(e.target.value)}
-              style={{ width: '100%', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '14px', marginBottom: '20px', outline: 'none' }}
-            />
-            <div style={{ overflowX: 'auto', flex: 1 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                <thead>
-                  <tr style={{ background: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
-                    {tableHeaders.map((h, i) => (
-                      <th key={i} style={{ padding: '12px 16px', fontSize: '12px', color: '#475569', fontWeight: '700', textTransform: 'uppercase' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {tableRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={tableHeaders.length} style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>No matching records found.</td>
-                    </tr>
-                  ) : tableRows}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div style={{ display: 'flex', minHeight: '100vh', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
       {/* Sidebar */}
@@ -1381,7 +1093,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }} />
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
-            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>PM Workspace</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Workspace</div>
           </div>
         </div>
         <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1390,7 +1102,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           </div>
           <div>
             <div style={{ fontSize: '13px', fontWeight: '600' }}>{user?.name || 'Project Manager'}</div>
-            <div style={{ fontSize: '11px', color: '#90caf9' }}>Project Manager</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1' }}>Project Manager</div>
           </div>
         </div>
         <nav style={{ flex: 1, padding: '8px 0' }}>
@@ -1424,7 +1136,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
             {/* Notification Bell */}
             <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
               <span style={{ fontSize: '18px' }}>🔔</span>
-              {(unreadCount + bomUnreadCount) > 0 && (
+              {bomUnreadCount > 0 && (
                 <span style={{
                   position: 'absolute',
                   top: '2px',
@@ -1440,7 +1152,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  {unreadCount + bomUnreadCount}
+                  {bomUnreadCount}
                 </span>
               )}
               {showNotifications && (
@@ -1499,41 +1211,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                       );
                     })
                   )}
-                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', borderTop: '1px solid #e2e8f0', fontWeight: 'bold', color: '#0d1b4b', fontSize: '14px' }}>
-                    Low Stock Alerts
-                  </div>
-                  {notifications.length === 0 ? (
-                    <div style={{ padding: '16px', color: '#64748b', fontSize: '13px', textAlign: 'center' }}>
-                      All stock levels are normal.
-                    </div>
-                  ) : (
-                    notifications.map((notif, idx) => (
-                      <div key={idx} style={{
-                        padding: '12px 16px',
-                        borderBottom: idx === notifications.length - 1 ? 'none' : '1px solid #f1f5f9',
-                        fontSize: '13px'
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
-                          <span style={{ color: '#0d1b4b' }}>{notif.materialName}</span>
-                          <span style={{
-                            color: notif.alertLevel === 'Critical' ? '#ef4444' : '#f59e0b',
-                            background: notif.alertLevel === 'Critical' ? '#fef2f2' : '#fef3c7',
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            fontSize: '10px'
-                          }}>
-                            {notif.alertLevel}
-                          </span>
-                        </div>
-                        <div style={{ color: '#475569', fontSize: '12px' }}>
-                          Qty: <strong>{notif.currentQty}</strong> / Min: {notif.minimumStock}
-                        </div>
-                        <div style={{ color: '#64748b', fontSize: '11px', marginTop: '2px' }}>
-                          📍 {notif.location}
-                        </div>
-                      </div>
-                    ))
-                  )}
                 </div>
               )}
             </div>
@@ -1555,27 +1232,23 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
           {/* Stats Summary */}
           {activePage === 'dashboard' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '24px' }}>
               {stats.map((s, i) => (
                 <div
                   key={i}
-                  onClick={() => {
-                    setModal(s.type);
-                    setModalSearchTerm('');
-                  }}
-                  title="Click to view detailed information"
                   style={{
                     background: 'white',
                     borderRadius: '8px',
                     padding: '20px',
                     boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                    borderTop: `4px solid ${s.color}`,
-                    cursor: 'pointer',
-                    transition: 'transform 0.15s ease, box-shadow 0.15s ease'
+                    borderTop: `4px solid ${s.color}`
                   }}
                 >
                   <div style={{ fontSize: '24px', fontWeight: '700', color: s.color }}>{s.value}</div>
-                  <div style={{ fontSize: '13px', color: '#666', marginTop: '6px' }}>{s.label}</div>
+                  <div style={{ fontSize: '13px', color: '#0d1b4b', fontWeight: '700', marginTop: '6px' }}>{s.label}</div>
+                  <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>
+                    {pmStatsError ? 'Could not load — will retry automatically' : s.subtitle}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1983,16 +1656,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     </table>
                   </div>
 
-                  <div style={{ marginTop: '16px', marginBottom: '16px' }}>
-                    <button
-                      type="button"
-                      onClick={handleAddMaterialRow}
-                      style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '10px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
-                    >
-                      ➕ Add Material Row
-                    </button>
-                  </div>
-
                   {/* Step 7: BOM Summary Box */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px', background: '#f8fafc', padding: '20px', borderRadius: '8px', marginBottom: '24px', border: '1px solid #e2e8f0' }}>
                     <div>
@@ -2389,7 +2052,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           </div>
         );
       })()}
-      {renderPMStatsModal()}
     </div>
   );
 };

@@ -191,24 +191,41 @@ export const createGRN = async (req, res) => {
     let grnStatus = 'Completed';
     let poId = null;
     let supplierId = null;
+    let po = null;
 
     // 1. Validate against PO if poReference provided
     if (poReference) {
-      const po = await PurchaseOrder.findOne({ poNumber: poReference });
+      po = await PurchaseOrder.findOne({ poNumber: poReference });
       if (!po) {
         return res.status(400).json({ message: `Purchase Order '${poReference}' not found.` });
       }
       if (po.status === 'Delivered') {
         return res.status(400).json({ message: `Purchase Order '${poReference}' has already been fully received. A duplicate GRN cannot be created against it.` });
       }
+      // Goods can only arrive for an order that actually went out to the supplier.
+      if (po.status !== 'Sent') {
+        return res.status(400).json({ message: `Purchase Order '${poReference}' is ${po.status}. Goods can only be received against a Purchase Order that has been sent to the supplier.` });
+      }
       poId = po._id;
       if (po.supplier) {
         supplierId = po.supplier;
       }
 
+      // A PO can arrive in several deliveries, so each line is compared with
+      // what is still outstanding after the earlier GRNs for this PO.
+      const priorGrns = await GRN.find({ poId: po._id }).select('items').lean();
+      const priorQtyByMaterial = {};
+      for (const g of priorGrns) {
+        for (const gi of g.items) {
+          const key = String(gi.material);
+          priorQtyByMaterial[key] = (priorQtyByMaterial[key] || 0) + (Number(gi.receivedQty) || 0);
+        }
+      }
+
       // Compare received items against PO ordered items
       let quantitiesMatch = true;
       let allItemsReceived = true;
+      let totalReceivedQty = 0;
 
       for (const poItem of po.items) {
         // Find matching item in incoming items
@@ -217,19 +234,23 @@ export const createGRN = async (req, res) => {
           return nameToCompare.toLowerCase() === poItem.materialName.toLowerCase();
         });
 
-        if (!incomingItem) {
+        const priorQty = poItem.material ? (priorQtyByMaterial[String(poItem.material)] || 0) : 0;
+        const outstanding = Math.max(poItem.quantity - priorQty, 0);
+        const receivedQty = incomingItem ? (Number(incomingItem.receivedQty) || 0) : 0;
+        if (receivedQty > outstanding) {
+          return res.status(400).json({ message: `Received quantity for '${poItem.materialName}' (${receivedQty}) is more than the ${outstanding} still outstanding on ${poReference}.` });
+        }
+        totalReceivedQty += priorQty + receivedQty;
+
+        if (receivedQty !== outstanding) {
           quantitiesMatch = false;
+        }
+        if (priorQty + receivedQty < poItem.quantity) {
           allItemsReceived = false;
-        } else {
-          const receivedQty = Number(incomingItem.receivedQty) || 0;
-          if (receivedQty !== poItem.quantity) {
-            quantitiesMatch = false;
-          }
-          if (receivedQty < poItem.quantity) {
-            allItemsReceived = false;
-          }
         }
       }
+
+      po.receivedQty = totalReceivedQty;
 
       // Check if GRN has extra items not in PO
       for (const grnItem of items) {
@@ -246,7 +267,7 @@ export const createGRN = async (req, res) => {
 
       if (allItemsReceived) {
         po.status = 'Delivered';
-        await po.save();
+        po.actualDeliveryDate = receivedDate || new Date();
       }
     }
 
@@ -328,16 +349,23 @@ export const createGRN = async (req, res) => {
 
     await grn.save();
 
+    // The PO's delivery progress is only recorded once the GRN itself is saved.
+    if (po) {
+      await po.save();
+    }
+
     // 5. Increment quantities of received items in MainStore, logging each
-    // as a Stock Movement so the ledger stays complete.
+    // as a Stock Movement so the ledger stays complete. Damaged units were
+    // delivered but are not usable, so they never enter stock.
     for (const item of resolvedItems) {
-      if (item.receivedQty > 0) {
+      const usableQty = item.receivedQty - Math.min(item.damagedQty, item.receivedQty);
+      if (usableQty > 0) {
         const mat = await Material.findById(item.material);
         if (mat) {
           await recordMovement({
             materialDoc: mat,
             type: 'GRN Receipt',
-            quantityChange: item.receivedQty,
+            quantityChange: usableQty,
             reference: grnNumber,
             performedBy: receivedBy
           });
@@ -536,9 +564,7 @@ const buildRoleScopedMaterialFilter = (user) => {
     case 'MainStoreOfficer':
       return { location: 'MainStore' };
     case 'SiteStoreOfficer':
-      return projectId
-        ? { location: 'SiteStore', $or: [{ project_id: projectId }, { projectId }] }
-        : { location: 'SiteStore' };
+      return { location: 'SiteStore' };
     case 'ProjectManager':
       return projectId ? { $or: [{ project_id: projectId }, { projectId }] } : null;
     // Admin, Director and PurchaseManager oversee/procure across all

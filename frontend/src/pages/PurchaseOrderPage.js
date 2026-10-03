@@ -8,6 +8,7 @@ import DateInput from '../components/DateInput';
 import { downloadPaymentReport, downloadPaymentReceipt } from '../services/paymentService';
 import ReportsCenter from './ReportsCenter';
 import { API_BASE } from '../config';
+import useMaterialCategories from '../hooks/useMaterialCategories';
 import Pagination, { usePagination } from '../components/Pagination';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
@@ -22,7 +23,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [suppliers, setSuppliers] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
   const [prNotifications, setPrNotifications] = useState([]);
   const [prUnreadCount, setPrUnreadCount] = useState(0);
   const [pendingPRs, setPendingPRs] = useState([]);
@@ -69,6 +69,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     items: [{ materialName: '', quantity: '', unit: 'bag', unitPrice: '' }]
   });
 
+  const { categories: materialCategoryList } = useMaterialCategories();
+
   // Supplier Form State
   const [supForm, setSupForm] = useState({
     name: '',
@@ -76,7 +78,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     phone: '',
     email: '',
     address: '',
-    category: 'Cement',
+    category: 'Cement & Concrete',
     status: 'Active'
   });
 
@@ -88,7 +90,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     phone: '',
     email: '',
     address: '',
-    category: 'Cement',
+    category: 'Cement & Concrete',
     status: 'Active'
   });
 
@@ -150,26 +152,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       const poRes = await fetch(`${API_BASE}/api/purchase-orders`, { headers });
       const poData = await poRes.json();
       let orderList = poData.success ? poData.data : [];
-      if (!orderList || orderList.length === 0) {
-        orderList = [
-          { _id: '1', poNumber: 'PO-2026-001', supplier: 'Lanka Cement Ltd', items: [{ materialName: 'Portland Cement OPC', quantity: 300, unit: 'bags', unitPrice: 1850 }], totalAmount: 555000, status: 'Sent', createdAt: new Date().toISOString() },
-          { _id: '2', poNumber: 'PO-2026-002', supplier: 'Melwa Steel', items: [{ materialName: 'TMT Steel 12mm', quantity: 5, unit: 'ton', unitPrice: 185000 }], totalAmount: 925000, status: 'Delivered', createdAt: new Date(Date.now() - 86400000).toISOString() },
-          { _id: '3', poNumber: 'PO-2026-003', supplier: 'Mahaweli Sand Co.', items: [{ materialName: 'River Sand', quantity: 20, unit: 'm3', unitPrice: 8500 }], totalAmount: 170000, status: 'Pending', createdAt: new Date(Date.now() - 172800000).toISOString() },
-        ];
-      }
       setOrders(orderList);
 
       // Fetch Suppliers
       const supRes = await fetch(`${API_BASE}/api/suppliers`, { headers });
       const supData = await supRes.json();
       let rawSuppliers = supData.success ? supData.data : (Array.isArray(supData) ? supData : []);
-      if (!rawSuppliers || rawSuppliers.length === 0) {
-        rawSuppliers = [
-          { _id: '1', name: 'Lanka Cement Ltd', contactPerson: 'Nimal Perera', phone: '0711122334', email: 'nimal@lankacement.lk', category: 'Cement', status: 'Active' },
-          { _id: '2', name: 'Melwa Steel', contactPerson: 'Kamal Silva', phone: '0722233445', email: 'kamal@melwa.lk', category: 'Steel', status: 'Active' },
-          { _id: '3', name: 'Mahaweli Sand Co.', contactPerson: 'Sunil Silva', phone: '0777345678', email: 'sunil@mahawelisand.lk', category: 'Sand', status: 'Active' }
-        ];
-      }
       setSuppliers(rawSuppliers);
 
       // Fetch Pending PRs (not yet converted into a PO)
@@ -181,14 +169,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       const allPrRes = await fetch(`${API_BASE}/api/purchase-requests`, { headers });
       const allPrData = await allPrRes.json();
       let prList = allPrData.success ? allPrData.data : [];
-      if (!prList || prList.length === 0) {
-        prList = [
-          { _id: '1', prNumber: 'PR-2026-001', projectName: 'Colombo Port Expansion', materials: [{ materialName: 'Portland Cement OPC', quantity: 150, unit: 'bags' }], urgency: 'Normal', status: 'Pending', notes: 'Need for foundation casting.', createdAt: new Date().toISOString() },
-          { _id: '2', prNumber: 'PR-2026-002', projectName: 'Marina Heights', materials: [{ materialName: 'TMT Steel 12mm', quantity: 8, unit: 'ton' }], urgency: 'Urgent', status: 'Approved', notes: 'Urgent column structure reinforcement.', createdAt: new Date(Date.now() - 86400000).toISOString() },
-          { _id: '3', prNumber: 'PR-2026-003', projectName: 'Highway Extension Project', materials: [{ materialName: 'River Sand', quantity: 30, unit: 'cube' }], urgency: 'Critical', status: 'Pending', notes: 'Urgent supply for concrete mixing.', createdAt: new Date(Date.now() - 172800000).toISOString() },
-          { _id: '4', prNumber: 'PR-2026-004', projectName: 'City Center Mall', materials: [{ materialName: 'Coarse Aggregate', quantity: 45, unit: 'cube' }], urgency: 'Normal', status: 'Rejected', notes: 'Excess materials on site.', createdAt: new Date(Date.now() - 259200000).toISOString() }
-        ];
-      }
       setPurchaseRequests(prList);
 
       // Fetch Invoices / Payments
@@ -197,23 +177,11 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       setInvoices(invData.success ? invData.data : []);
 
     } catch (err) {
-      setError('Could not connect to the backend server. Loading fallback demo data.');
-      setOrders([
-        { _id: '1', poNumber: 'PO-2026-001', supplier: 'Lanka Cement Ltd', items: [{ materialName: 'Portland Cement OPC', quantity: 300, unit: 'bags', unitPrice: 1850 }], totalAmount: 555000, status: 'Sent', createdAt: new Date().toISOString() },
-        { _id: '2', poNumber: 'PO-2026-002', supplier: 'Melwa Steel', items: [{ materialName: 'TMT Steel 12mm', quantity: 5, unit: 'ton', unitPrice: 185000 }], totalAmount: 925000, status: 'Delivered', createdAt: new Date(Date.now() - 86400000).toISOString() },
-        { _id: '3', poNumber: 'PO-2026-003', supplier: 'Mahaweli Sand Co.', items: [{ materialName: 'River Sand', quantity: 20, unit: 'm3', unitPrice: 8500 }], totalAmount: 170000, status: 'Pending', createdAt: new Date(Date.now() - 172800000).toISOString() },
-      ]);
-      setSuppliers([
-        { _id: '1', name: 'Lanka Cement Ltd', contactPerson: 'Nimal Perera', phone: '0711122334', email: 'nimal@lankacement.lk', category: 'Cement', status: 'Active' },
-        { _id: '2', name: 'Melwa Steel', contactPerson: 'Kamal Silva', phone: '0722233445', email: 'kamal@melwa.lk', category: 'Steel', status: 'Active' },
-      ]);
+      setError('Could not connect to the backend server.');
+      setOrders([]);
+      setSuppliers([]);
       setInvoices([]);
-      setPurchaseRequests([
-        { _id: '1', prNumber: 'PR-2026-001', projectName: 'Colombo Port Expansion', materials: [{ materialName: 'Portland Cement OPC', quantity: 150, unit: 'bags' }], urgency: 'Normal', status: 'Pending', notes: 'Need for foundation casting.', createdAt: new Date().toISOString() },
-        { _id: '2', prNumber: 'PR-2026-002', projectName: 'Marina Heights', materials: [{ materialName: 'TMT Steel 12mm', quantity: 8, unit: 'ton' }], urgency: 'Urgent', status: 'Approved', notes: 'Urgent column structure reinforcement.', createdAt: new Date(Date.now() - 86400000).toISOString() },
-        { _id: '3', prNumber: 'PR-2026-003', projectName: 'Highway Extension Project', materials: [{ materialName: 'River Sand', quantity: 30, unit: 'cube' }], urgency: 'Critical', status: 'Pending', notes: 'Urgent supply for concrete mixing.', createdAt: new Date(Date.now() - 172800000).toISOString() },
-        { _id: '4', prNumber: 'PR-2026-004', projectName: 'City Center Mall', materials: [{ materialName: 'Coarse Aggregate', quantity: 45, unit: 'cube' }], urgency: 'Normal', status: 'Rejected', notes: 'Excess materials on site.', createdAt: new Date(Date.now() - 259200000).toISOString() }
-      ]);
+      setPurchaseRequests([]);
     }
   };
 
@@ -228,20 +196,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       if (data.success) {
         setNotifications(data.data);
       }
-
-      const countRes = await fetch(`${API_BASE}/api/notifications/count`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const countData = await countRes.json();
-      if (countData.success) {
-        setUnreadCount(countData.count);
-      }
     } catch (err) {
-      setNotifications([
-        { materialName: 'Portland Cement OPC', currentQty: 0, minimumStock: 10, location: 'MainStore', alertLevel: 'Critical' },
-        { materialName: 'Steel Bars 12mm', currentQty: 2, minimumStock: 2, location: 'SiteStore', alertLevel: 'Low' }
-      ]);
-      setUnreadCount(2);
+      console.error('Error fetching low stock alerts:', err);
     }
   };
 
@@ -430,7 +386,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         setError(data.message || 'Failed to create PO.');
       }
     } catch {
-      setError('Connection failed. Mock PO saved.');
+      setError('Connection failed. The Purchase Order was not saved.');
     }
   };
 
@@ -450,8 +406,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         setError(data.message || 'Failed to update status.');
       }
     } catch {
-      setMessage(`✅ PO status updated to ${status}! (Demo Mode)`);
-      setOrders(prev => prev.map(o => o._id === id ? { ...o, status } : o));
+      setError('Connection failed. The PO status was not updated.');
     }
   };
 
@@ -514,8 +469,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         setError(data.message || 'Failed to send PO.');
       }
     } catch {
-      setMessage(`✅ ${poNumber} sent to ${supplierName} successfully! (Demo Mode)`);
-      setOrders(prev => prev.map(o => o._id === id ? { ...o, status: 'Sent', sentAt: new Date().toISOString() } : o));
+      setError(`Connection failed. ${poNumber} was not sent.`);
     }
   };
 
@@ -536,7 +490,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       if (res.ok) {
         setMessage('✅ Supplier added successfully!');
         setShowSupplierForm(false);
-        setSupForm({ name: '', contactPerson: '', phone: '', email: '', address: '', category: 'Cement', status: 'Active' });
+        setSupForm({ name: '', contactPerson: '', phone: '', email: '', address: '', category: 'Cement & Concrete', status: 'Active' });
         fetchData();
       } else {
         setError(data.message || 'Failed to add supplier.');
@@ -561,8 +515,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         setError('Failed to deactivate supplier.');
       }
     } catch {
-      setMessage('✅ Supplier deactivated! (Demo Mode)');
-      setSuppliers(prev => prev.map(s => s._id === id ? { ...s, status: 'Inactive' } : s));
+      setError('Connection failed. The supplier was not deactivated.');
     }
   };
 
@@ -574,7 +527,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       phone: s.phone,
       email: s.email || '',
       address: s.address || '',
-      category: s.category,
       status: s.status
     });
   };
@@ -653,7 +605,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
+          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit} (LKR {item.unitPrice})</div>
@@ -685,7 +637,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
+          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
@@ -718,7 +670,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
+          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
@@ -744,15 +696,15 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       tableRows = filtered.map((po, idx) => (
         <tr key={po._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
           <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
+          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px', fontWeight: '500' }}>{typeof po.supplier === 'object' ? (po.supplier?.name || po.supplier?.supplierId || '—') : (po.supplier || '—')}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#555' }}>
             {po.items?.map((item, idx) => (
               <div key={idx}>{item.materialName} ×{item.quantity} {item.unit}</div>
             ))}
           </td>
-          <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600' }}>{po.totalAmount?.toLocaleString()}</td>
+          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px', fontWeight: '600' }}>{po.totalAmount?.toLocaleString()}</td>
           <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{po.actualDeliveryDate ? formatDate(po.actualDeliveryDate) : 'N/A'}</td>
-          <td style={{ padding: '12px 16px', fontSize: '12px' }}>
+          <td style={{ padding: '12px 16px', color: '#334155', fontSize: '12px' }}>
             <div>Received Qty: <strong>{po.receivedQty || 'Full'}</strong></div>
             <div style={{ color: po.deliveryCondition === 'Good' ? '#2e7d32' : '#c62828', fontWeight: 'bold' }}>
               Condition: {po.deliveryCondition || 'Good'}
@@ -859,7 +811,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }} />
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: '#2563eb' }}>ELS Construction</div>
-            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Procurement</div>
+            <div style={{ fontSize: '11px', color: '#cbd5e1', fontWeight: '500' }}>Workspace</div>
           </div>
         </div>
         <div style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -908,7 +860,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             {/* Notification Bell */}
             <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
               <span style={{ fontSize: '18px' }}>🔔</span>
-              {(unreadCount + prUnreadCount) > 0 && (
+              {prUnreadCount > 0 && (
                 <span style={{
                   position: 'absolute',
                   top: '2px',
@@ -924,7 +876,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  {unreadCount + prUnreadCount}
+                  {prUnreadCount}
                 </span>
               )}
               {showNotifications && (
@@ -956,9 +908,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       const type = (notif.type || '').toLowerCase();
                       const isApproved = type === 'po_approved';
                       const isRejected = type === 'po_rejected';
-                      const label = isApproved ? 'PO Approved' : isRejected ? 'PO Rejected' : 'New PR';
-                      const color = isApproved ? '#2e7d32' : isRejected ? '#c62828' : '#0d1b4b';
-                      const bg = isApproved ? '#e8f5e9' : isRejected ? '#ffebee' : '#dbeafe';
+                      const isLowStock = type === 'low_stock';
+                      const label = isApproved ? 'PO Approved' : isRejected ? 'PO Rejected' : isLowStock ? 'Low Stock' : 'New PR';
+                      const color = isApproved ? '#2e7d32' : isRejected ? '#c62828' : isLowStock ? '#b45309' : '#0d1b4b';
+                      const bg = isApproved ? '#e8f5e9' : isRejected ? '#ffebee' : isLowStock ? '#fef3c7' : '#dbeafe';
                       return (
                         <div
                           key={notif._id}
@@ -1068,20 +1021,13 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
               {stats.map((s, i) => (
                 <div
                   key={i}
-                  onClick={() => {
-                    setModal(s.type);
-                    setModalSearchTerm('');
-                  }}
                   style={{
                     background: 'white',
                     borderRadius: '8px',
                     padding: '20px',
                     boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                    borderTop: `4px solid ${s.color}`,
-                    cursor: 'pointer',
-                    transition: 'transform 0.2s, box-shadow 0.2s'
+                    borderTop: `4px solid ${s.color}`
                   }}
-                  className="hover-card"
                 >
                   <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
                   <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
@@ -1445,7 +1391,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       return poPagination.paginatedData.map((po, i) => (
                       <tr key={po._id} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                         <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{po.poNumber}</td>
-                        <td style={{ padding: '12px 16px', fontSize: '13px' }}>
+                        <td style={{ padding: '12px 16px', color: '#334155', fontSize: '13px' }}>
                           {['Pending', 'Approved'].includes(po.status) ? (
                             <select 
                               value={po.supplierId || suppliers.find(s => s.name === po.supplier)?._id || ''}
@@ -1466,15 +1412,11 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                     setMessage('✅ Supplier assigned successfully!');
                                     fetchData();
                                   } else {
-                                    // Fallback for Demo Mode
-                                    const supName = suppliers.find(s => s._id === supplierId)?.name || 'Supplier';
-                                    setOrders(prev => prev.map(o => o._id === po._id ? { ...o, supplier: supName } : o));
-                                    setMessage('✅ Supplier assigned successfully! (Demo Mode)');
+                                    const errData = await res.json().catch(() => ({}));
+                                    setError(errData.message || 'Failed to assign supplier.');
                                   }
                                 } catch {
-                                  const supName = suppliers.find(s => s._id === supplierId)?.name || 'Supplier';
-                                  setOrders(prev => prev.map(o => o._id === po._id ? { ...o, supplier: supName } : o));
-                                  setMessage('✅ Supplier assigned successfully! (Demo Mode)');
+                                  setError('Connection failed. The supplier was not assigned.');
                                 }
                               }}
                               style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '13px', maxWidth: '160px', outline: 'none' }}
@@ -1592,7 +1534,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' }}>MATERIAL CATEGORY *</label>
                         <select value={supForm.category} onChange={e => setSupForm({ ...supForm, category: e.target.value })}
                           style={{ width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' }}>
-                          {['Cement', 'Steel', 'Bricks', 'Sand', 'Gravel', 'Wood', 'Paint', 'Other'].map(cat => (
+                          {materialCategoryList.map(cat => (
                             <option key={cat} value={cat}>{cat}</option>
                           ))}
                         </select>
@@ -1665,8 +1607,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           <>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.supplierId}</td>
                             <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#1565c0', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setViewingSupplierId(s._id)}>{s.name}</td>
-                            <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.contactPerson || '-'}</td>
-                            <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.phone}</td>
+                            <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px' }}>{s.contactPerson || '-'}</td>
+                            <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px' }}>{s.phone}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.email || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.address || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.createdAt ? formatDate(s.createdAt) : '-'}</td>
@@ -1761,8 +1703,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#0d1b4b' }}>{inv.invoiceNumber}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{inv.po?.poNumber || '-'}</td>
                           <td style={{ padding: '14px 16px', fontSize: '13px', color: '#5e35b1', fontWeight: '600' }}>{inv.grn?.grnNumber || '-'}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{inv.supplier?.name || '-'}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600' }}>{Number(inv.amount).toLocaleString()}</td>
+                          <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px' }}>{inv.supplier?.name || '-'}</td>
+                          <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px', fontWeight: '600' }}>{Number(inv.amount).toLocaleString()}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{formatDate(inv.invoiceDate)}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: isOverdue ? '#991b1b' : '#666', fontWeight: isOverdue ? '600' : 'normal' }}>
                             {inv.dueDate ? formatDate(inv.dueDate) : '-'}

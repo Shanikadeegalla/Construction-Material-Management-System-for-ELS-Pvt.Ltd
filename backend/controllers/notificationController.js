@@ -25,7 +25,7 @@ export const getNotifications = async (req, res) => {
         $and: [
           {
             $or: [
-              { recipientId: userId, type: { $in: directorTypes } },
+              { recipientId: userId },
               { role: 'Director' },
               { targetRole: 'Director' },
               { type: { $in: directorTypes } }
@@ -87,7 +87,7 @@ export const getNotificationCount = async (req, res) => {
         $and: [
           {
             $or: [
-              { recipientId: userId, type: { $in: directorTypes } },
+              { recipientId: userId },
               { role: 'Director' },
               { targetRole: 'Director' },
               { type: { $in: directorTypes } }
@@ -166,7 +166,7 @@ export const markAllAsRead = async (req, res) => {
         $and: [
           {
             $or: [
-              { recipientId: userId, type: { $in: directorTypes } },
+              { recipientId: userId },
               { role: 'Director' },
               { targetRole: 'Director' },
               { type: { $in: directorTypes } }

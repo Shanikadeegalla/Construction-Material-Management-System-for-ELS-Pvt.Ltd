@@ -5,6 +5,7 @@ import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime
 import DateInput from '../components/DateInput';
 import SettingsPage from './SettingsPage';
 import { API_BASE } from '../config';
+import useMaterialCategories from '../hooks/useMaterialCategories';
 import Pagination, { usePagination } from '../components/Pagination';
 
 function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
@@ -27,6 +28,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   // Site Inventory screen filters
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('All');
+  const { categories: materialCategoryList } = useMaterialCategories();
 
   const siteFilteredMaterials = React.useMemo(() => {
     return materials.filter(m => {
@@ -38,7 +40,8 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
 
   const siteInventoryPagination = usePagination(siteFilteredMaterials, 8, [inventorySearchQuery, inventoryCategoryFilter]);
 
-  // Phase 8 - project selection (drives which project's Site Store inventory/history is shown)
+  // Phase 8 - project selection for Material Issue & Usage (which project the
+  // shared Site Store stock is issued to, and whose history/plan is shown)
   const [projects, setProjects] = useState([]);
   const [selectedProjId, setSelectedProjId] = useState('');
 
@@ -71,6 +74,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   // Materials" popup (null when closed) - keeps the history table itself
   // to one row per request instead of an expanded materials list per row.
   const [viewRequest, setViewRequest] = useState(null);
+  const [viewTransfer, setViewTransfer] = useState(null);
 
   // Material Issue & Usage Form State - combines the old Material Issuance
   // Note (project selection, MIN numbering) and Material Usage (material,
@@ -120,10 +124,8 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     setLoading(true);
     setError('');
     try {
-      const url = selectedProjId 
-        ? `${API_BASE}/api/site/inventory?projectId=${selectedProjId}` 
-        : `${API_BASE}/api/site/inventory`;
-      const res = await fetch(url, {
+      // Site Store stock is one shared pool - not split per project.
+      const res = await fetch(`${API_BASE}/api/site/inventory`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -239,8 +241,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
 
   const fetchTransferNotes = async () => {
     try {
-      const query = selectedProjId ? `?siteStoreId=${selectedProjId}` : '';
-      const res = await fetch(`${API_BASE}/api/material-transfer-notes${query}`, { headers: authHeaders() });
+      const res = await fetch(`${API_BASE}/api/material-transfer-notes`, { headers: authHeaders() });
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setTransferNotes(data.data);
@@ -324,10 +325,10 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
-  // Drives the project selector shared by Site Inventory and Material Issue &
-  // Usage - resolves the chosen project name to its _id (selectedProjId),
-  // which everything else (site inventory, MIN history, issue history) is
-  // scoped by.
+  // Drives the project selector on Material Issue & Usage - resolves the
+  // chosen project name to its _id (selectedProjId), which the MIN history,
+  // issue history and planned-vs-actual view are scoped by. Site inventory
+  // itself is shared across projects.
   const handleProjectChange = (projectName) => {
     setError(''); setSuccess('');
     const proj = projects.find(p => p.projectName === projectName || p.name === projectName);
@@ -510,12 +511,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
-  const currentProjectName = (() => {
-    const userProjId = user?.projectId || user?.project_id;
-    const userProj = projects.find(p => p._id === userProjId);
-    return userProj ? (userProj.projectName || userProj.name) : issueForm.projectName;
-  })();
-
   // Sorted list of distinct categories in the active Item Master catalog, used to
   // power the "choose a category first" filter above the material search box.
   const requestMaterialCategories = Array.from(
@@ -606,11 +601,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     e.preventDefault();
     setError(''); setSuccess('');
 
-    if (!selectedProjId) {
-      setError('Please select which Site Store this request is for.');
-      return;
-    }
-
     if (!requestForm.requiredDate) {
       setError('Please choose a required date.');
       return;
@@ -642,7 +632,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     setRequestSubmitting(true);
     try {
       const payload = {
-        siteStoreId: selectedProjId,
         requiredDate: requestForm.requiredDate,
         notes: requestForm.notes,
         materials: filledItems.map(item => ({
@@ -772,7 +761,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
           <img src="/els-logo.png" alt="ELS Logo" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%' }} />
           <div>
             <div style={styles.sidebarTitle}>ELS Construction</div>
-            <div style={styles.sidebarSubtitle}>Site Store Panel</div>
+            <div style={styles.sidebarSubtitle}>Workspace</div>
           </div>
         </div>
 
@@ -782,14 +771,11 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
             <div style={styles.sidebarUserInfo}>
               <div style={styles.sidebarUserName}>{user.name}</div>
               <div style={styles.sidebarUserRole}>
-                {user.role} {(() => {
+                Site Store Officer {(() => {
                   const userProjId = user.projectId || user.project_id;
                   const userProj = projects.find(p => p._id === userProjId);
-                  return userProj ? `(${userProj.projectName || userProj.name})` : '— Site Store';
+                  return userProj ? `(${userProj.projectName || userProj.name})` : '';
                 })()}
-              </div>
-              <div style={{ fontSize: '11px', color: '#10b981', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }}>
-                <span>🔒</span> Encrypted
               </div>
             </div>
           </div>
@@ -915,6 +901,22 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               </div>
             </div>
 
+            {/* Stats row */}
+            <div style={styles.statsGrid}>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>Site Materials (SKUs)</div>
+                <div style={styles.statValue}>{totalSiteSKUs}</div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>Site Stock Value</div>
+                <div style={styles.statValue}>LKR {siteStockValue.toLocaleString()}</div>
+              </div>
+              <div style={{ ...styles.statCard, borderLeft: siteWarningItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
+                <div style={styles.statLabel}>Stock Warnings</div>
+                <div style={{ ...styles.statValue, color: siteWarningItems > 0 ? '#ef4444' : '#0d1b4b' }}>{siteWarningItems}</div>
+              </div>
+            </div>
+
             {/* Low Stock Alert Section */}
             {materials.some(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)) && (
               <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '8px', padding: '16px', marginBottom: '24px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)', textAlign: 'left' }}>
@@ -944,7 +946,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                         const isCritical = m.quantity <= min;
                         const projName = m.project_id?.projectName || m.projectId?.projectName || m.project_id?.name || m.projectId?.name || 'Main Project';
                         return (
-                          <tr key={m._id || idx} style={{ borderBottom: '1px solid #fef3c7' }}>
+                          <tr key={m._id || idx} style={{ borderBottom: '1px solid #fef3c7', color: '#1f2937' }}>
                             <td style={{ padding: '8px', fontWeight: '600' }}>{projName}</td>
                             <td style={{ padding: '8px' }}>{m.name}</td>
                             <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold' }}>{m.quantity} {m.unit}</td>
@@ -970,22 +972,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               </div>
             )}
 
-            {/* Stats row */}
-            <div style={styles.statsGrid}>
-              <div style={styles.statCard}>
-                <div style={styles.statLabel}>Site Materials (SKUs)</div>
-                <div style={styles.statValue}>{totalSiteSKUs}</div>
-              </div>
-              <div style={styles.statCard}>
-                <div style={styles.statLabel}>Site Stock Value</div>
-                <div style={styles.statValue}>LKR {siteStockValue.toLocaleString()}</div>
-              </div>
-              <div style={{ ...styles.statCard, borderLeft: siteWarningItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
-                <div style={styles.statLabel}>Stock Warnings</div>
-                <div style={{ ...styles.statValue, color: siteWarningItems > 0 ? '#ef4444' : '#0d1b4b' }}>{siteWarningItems}</div>
-              </div>
-            </div>
-
             {inTransitTransfers.length > 0 && (
               <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '14px 16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
                 <div style={{ color: '#1e3a8a', fontSize: '13px', fontWeight: '600' }}>
@@ -1002,41 +988,93 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               <h3 style={styles.infoBoxTitle}>ℹ️ Local Store Operations Info</h3>
               <p style={styles.infoBoxText}>
                 This panel displays materials currently checked-out and stored at the local construction site. 
-                Stock level increases once you confirm receipt of a transfer issued by the Main Store (Site Inventory → In-Transit Transfers).
+                Stock level increases once you confirm receipt of a transfer issued by the Main Store (In-Transit Transfers below).
               </p>
             </div>
 
-            {/* Inventory table snippet */}
-            <div style={styles.tableContainer}>
-              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>Current Site Stocks</h3>
-              {materials.length === 0 ? (
-                <div style={styles.emptyState}>No materials currently at site. Use Main Store to issue materials.</div>
+            {/* In-Transit Material Transfer Notes (Main Store -> this Site Store) */}
+            <div style={{ ...styles.tableContainer, marginTop: '30px' }}>
+              <div style={{ padding: '16px 20px', color: 'white', margin: 0, borderBottom: '1px solid #eee', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ margin: 0, fontSize: '15px', color: 'white' }}>🚚 In-Transit Transfers from Main Store (Awaiting Receipt)</h3>
+              </div>
+              {inTransitTransfers.length === 0 ? (
+                <div style={styles.emptyState}>No Material Transfer Notes currently in transit.</div>
               ) : (
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
-                      <th style={styles.th}>Material Name</th>
-                      <th style={styles.th}>Category</th>
-                      <th style={styles.th}>Unit</th>
-                      <th style={styles.th}>Local Qty</th>
-                      <th style={styles.th}>Status</th>
+                      <th style={styles.th}>MTN No.</th>
+                      <th style={styles.th}>Request No.</th>
+                      <th style={styles.th}>Materials</th>
+                      <th style={styles.th}>Issued By</th>
+                      <th style={styles.th}>Transfer Date</th>
+                      <th style={styles.th}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {materials.slice(0, 5).map(m => {
-                      const status = inventoryMaterialStatus(m);
-                      return (
-                        <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
-                          <td style={styles.tdBold}>{m.name}</td>
-                          <td style={styles.td}>{m.category}</td>
-                          <td style={styles.td}>{m.unit}</td>
-                          <td style={styles.td}>{m.quantity}</td>
-                          <td style={styles.td}>
-                            <span style={{ background: status.bg, color: status.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{status.label}</span>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {inTransitTransfers.map(t => (
+                      <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={styles.tdBold}>{t.mtnNumber}</td>
+                        <td style={styles.td}>{t.requestNo || '-'}</td>
+                        <td style={styles.td}>
+                          <button
+                            onClick={() => setViewTransfer(t)}
+                            style={{ background: '#1a73e8', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                          >
+                            View ({(t.materials || []).length})
+                          </button>
+                        </td>
+                        <td style={styles.td}>{t.createdBy}</td>
+                        <td style={styles.td}>{formatDate(t.transferDate)}</td>
+                        <td style={styles.td}>
+                          <button
+                            onClick={() => handleConfirmMtnReceipt(t)}
+                            disabled={receivingMtnId === t._id}
+                            style={{ background: receivingMtnId === t._id ? '#94a3b8' : '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: receivingMtnId === t._id ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                          >
+                            {receivingMtnId === t._id ? 'Confirming…' : 'Confirm Receipt'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Received Material Transfer Notes history */}
+            <div style={{ ...styles.tableContainer, marginTop: '24px' }}>
+              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>📦 Received Transfers History</h3>
+              {receivedTransfers.length === 0 ? (
+                <div style={styles.emptyState}>No transfers received yet.</div>
+              ) : (
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.tableHeaderRow}>
+                      <th style={styles.th}>MTN No.</th>
+                      <th style={styles.th}>Materials Received</th>
+                      <th style={styles.th}>Transfer Date</th>
+                      <th style={styles.th}>Received By</th>
+                      <th style={styles.th}>Received On</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {receivedTransfers.map(t => (
+                      <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={styles.tdBold}>{t.mtnNumber}</td>
+                        <td style={styles.td}>
+                          <button
+                            onClick={() => setViewTransfer(t)}
+                            style={{ background: '#1a73e8', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                          >
+                            View ({(t.materials || []).length})
+                          </button>
+                        </td>
+                        <td style={styles.td}>{formatDate(t.transferDate)}</td>
+                        <td style={styles.td}>{t.receivedBy || '-'}</td>
+                        <td style={styles.td}>{t.receivedAt ? formatDate(t.receivedAt) : '-'}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               )}
@@ -1145,7 +1183,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                   style={styles.filterSelect}
                 >
                   <option value="All">All Categories</option>
-                  {['Cement', 'Steel', 'Bricks', 'Sand', 'Gravel', 'Wood', 'Paint', 'Other'].map(c => (
+                  {materialCategoryList.map(c => (
                     <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
@@ -1162,15 +1200,17 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
-                      <th style={styles.th}>Material Name</th>
+                      <th style={styles.th}>Code</th>
+                      <th style={styles.th}>Name</th>
                       <th style={styles.th}>Category</th>
                       <th style={styles.th}>Unit</th>
-                      <th style={styles.th}>Available at Site</th>
+                      <th style={styles.th}>Qty</th>
                       <th style={styles.th}>Issued to Site</th>
                       <th style={styles.th}>Consumed</th>
                       <th style={styles.th}>Min Level</th>
                       <th style={styles.th}>Pre-Order Level</th>
                       <th style={styles.th}>Max Level</th>
+                      <th style={styles.th}>Unit Price (LKR)</th>
                       <th style={styles.th}>Total Value (LKR)</th>
                       <th style={styles.th}>Status</th>
                     </tr>
@@ -1180,6 +1220,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       const status = inventoryMaterialStatus(m);
                       return (
                         <tr key={m._id} style={{ borderBottom: '1px solid #eee', backgroundColor: status.tier !== 'NORMAL' ? 'rgba(239,68,68,0.08)' : 'white' }}>
+                          <td style={styles.td}>{m.materialCode}</td>
                           <td style={{ ...styles.tdBold, color: status.tier !== 'NORMAL' ? '#c62828' : '#0d1b4b' }}>{m.name}</td>
                           <td style={styles.td}>{m.category}</td>
                           <td style={styles.td}>{m.unit}</td>
@@ -1189,7 +1230,8 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                           <td style={styles.td}>{m.minimumStock}</td>
                           <td style={styles.td}>{m.reorderLevel}</td>
                           <td style={styles.td}>{m.maximumStock}</td>
-                          <td style={styles.td}>LKR {(m.quantity * (m.unitPrice || 0)).toLocaleString()}</td>
+                          <td style={styles.td}>{(m.unitPrice || 0).toLocaleString()}</td>
+                          <td style={styles.td}>{(m.quantity * (m.unitPrice || 0)).toLocaleString()}</td>
                           <td style={styles.td}>
                             <span style={{ background: status.bg, color: status.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{status.label}</span>
                           </td>
@@ -1200,92 +1242,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                 </table>
               )}
               <Pagination pagination={siteInventoryPagination} />
-            </div>
-
-            {/* In-Transit Material Transfer Notes (Main Store -> this Site Store) */}
-            <div style={{ ...styles.tableContainer, marginTop: '30px' }}>
-              <div style={{ padding: '16px 20px', color: 'white', margin: 0, borderBottom: '1px solid #eee', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ margin: 0, fontSize: '15px', color: 'white' }}>🚚 In-Transit Transfers from Main Store (Awaiting Receipt)</h3>
-              </div>
-              {inTransitTransfers.length === 0 ? (
-                <div style={styles.emptyState}>No Material Transfer Notes currently in transit.</div>
-              ) : (
-                <table style={styles.table}>
-                  <thead>
-                    <tr style={styles.tableHeaderRow}>
-                      <th style={styles.th}>MTN No.</th>
-                      <th style={styles.th}>Site Store</th>
-                      <th style={styles.th}>Request No.</th>
-                      <th style={styles.th}>Materials</th>
-                      <th style={styles.th}>Issued By</th>
-                      <th style={styles.th}>Transfer Date</th>
-                      <th style={styles.th}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {inTransitTransfers.map(t => (
-                      <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={styles.tdBold}>{t.mtnNumber}</td>
-                        <td style={styles.td}>{t.siteStoreName}</td>
-                        <td style={styles.td}>{t.requestNo || '-'}</td>
-                        <td style={styles.td}>
-                          {(t.materials || []).map((mat, i) => (
-                            <div key={i}>{mat.materialName} ({mat.transferQty} {mat.unit})</div>
-                          ))}
-                        </td>
-                        <td style={styles.td}>{t.createdBy}</td>
-                        <td style={styles.td}>{formatDate(t.transferDate)}</td>
-                        <td style={styles.td}>
-                          <button
-                            onClick={() => handleConfirmMtnReceipt(t)}
-                            disabled={receivingMtnId === t._id}
-                            style={{ background: receivingMtnId === t._id ? '#94a3b8' : '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: receivingMtnId === t._id ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                          >
-                            {receivingMtnId === t._id ? 'Confirming…' : 'Confirm Receipt'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
-            {/* Received Material Transfer Notes history */}
-            <div style={{ ...styles.tableContainer, marginTop: '24px' }}>
-              <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>📦 Received Transfers History</h3>
-              {receivedTransfers.length === 0 ? (
-                <div style={styles.emptyState}>No transfers received yet.</div>
-              ) : (
-                <table style={styles.table}>
-                  <thead>
-                    <tr style={styles.tableHeaderRow}>
-                      <th style={styles.th}>MTN No.</th>
-                      <th style={styles.th}>Site Store</th>
-                      <th style={styles.th}>Materials Received</th>
-                      <th style={styles.th}>Transfer Date</th>
-                      <th style={styles.th}>Received By</th>
-                      <th style={styles.th}>Received On</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {receivedTransfers.map(t => (
-                      <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={styles.tdBold}>{t.mtnNumber}</td>
-                        <td style={styles.td}>{t.siteStoreName}</td>
-                        <td style={styles.td}>
-                          {(t.materials || []).map((mat, i) => (
-                            <div key={i}>{mat.materialName} ({mat.transferQty} {mat.unit})</div>
-                          ))}
-                        </td>
-                        <td style={styles.td}>{formatDate(t.transferDate)}</td>
-                        <td style={styles.td}>{t.receivedBy || '-'}</td>
-                        <td style={styles.td}>{t.receivedAt ? formatDate(t.receivedAt) : '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
             </div>
 
             {/* In-Transit Material Issuance Notes Section */}
@@ -1344,32 +1300,16 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
           <div style={styles.container}>
             <h1 style={styles.pageTitle}>Request Materials</h1>
             <p style={{ color: '#64748b', fontSize: '13px', marginTop: '-12px', marginBottom: '20px' }}>
-              Request additional stock from Main Store for {currentProjectName ? `${currentProjectName} Site Store` : 'your Site Store'} when your own stock isn't enough.
+              Request stock from Main Store into the Site Store. You choose the project later, when you issue the materials under Material Issue &amp; Usage.
             </p>
             <div style={styles.formCard}>
               <form onSubmit={handleRequestMaterialsSubmit}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px', maxWidth: '760px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px', maxWidth: '500px' }}>
                   <div>
                     <label style={styles.fieldLabel}>Request No.</label>
                     <div style={{ ...styles.formInput, background: '#f1f5f9', color: '#0d1b4b', fontWeight: 600, display: 'flex', alignItems: 'center' }}>
                       {nextRequestNumber()}
                     </div>
-                  </div>
-                  <div>
-                    <label style={styles.fieldLabel}>Project / Site Store *</label>
-                    <select
-                      value={issueForm.projectName}
-                      onChange={e => handleProjectChange(e.target.value)}
-                      style={styles.formSelect}
-                      required
-                    >
-                      <option value="">-- Select Project --</option>
-                      {projects.map(p => (
-                        <option key={p._id} value={p.projectName || p.name}>
-                          {p.projectName || p.name}
-                        </option>
-                      ))}
-                    </select>
                   </div>
                   <div>
                     <label style={styles.fieldLabel}>Required Date *</label>
@@ -1397,8 +1337,9 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </thead>
                     <tbody>
                       {requestForm.items.map((item, idx) => {
-                        const siteMat = materials.find(m => m.name === item.materialName);
-                        const availableAtSite = siteMat ? siteMat.quantity : 0;
+                        const availableAtSite = materials
+                          .filter(m => m.name === item.materialName)
+                          .reduce((sum, m) => sum + (Number(m.quantity) || 0), 0);
                         return (
                           <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                             {/* Material Combobox: click to browse (narrowed to the row's chosen Category, if any), or type to filter */}
@@ -1577,7 +1518,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                 <thead>
                   <tr style={styles.tableHeaderRow}>
                     <th style={styles.th}>Request No.</th>
-                    <th style={styles.th}>Site / Project</th>
                     <th style={styles.th}>Required Date</th>
                     <th style={styles.th}>Status</th>
                     <th style={styles.th}>MTN No.</th>
@@ -1588,7 +1528,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                 <tbody>
                   {myRequestsPagination.paginatedData.length === 0 ? (
                     <tr>
-                      <td colSpan="7" style={styles.emptyState}>No material requests submitted yet.</td>
+                      <td colSpan="6" style={styles.emptyState}>No material requests submitted yet.</td>
                     </tr>
                   ) : (
                     myRequestsPagination.paginatedData.map(r => {
@@ -1603,7 +1543,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       return (
                         <tr key={r._id} style={{ borderBottom: '1px solid #eee' }}>
                           <td style={{ ...styles.tdBold, color: '#1a365d' }}>{r.requestNo}</td>
-                          <td style={styles.td}>{r.siteStoreName}</td>
                           <td style={styles.td}>{r.requiredDate ? formatDate(r.requiredDate) : '-'}</td>
                           <td style={styles.td}>
                             <span style={{ background: statusStyle.bg, color: statusStyle.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
@@ -1952,6 +1891,53 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
             )}
             <button
               onClick={() => setViewRequest(null)}
+              style={{ marginTop: '20px', width: '100%', padding: '10px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Transferred Materials popup - opened via "View" on a Material Transfer Note row */}
+      {viewTransfer && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }} onClick={() => setViewTransfer(null)}>
+          <div style={{ background: 'white', padding: '28px', borderRadius: '12px', width: '560px', maxWidth: '90%', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 10px 25px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#0d1b4b', fontSize: '18px' }}>Transferred Materials</h3>
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>{viewTransfer.mtnNumber}{viewTransfer.requestNo ? ` — ${viewTransfer.requestNo}` : ''}</div>
+              </div>
+              <button
+                onClick={() => setViewTransfer(null)}
+                style={{ background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#64748b', lineHeight: 1 }}
+              >
+                &times;
+              </button>
+            </div>
+            <table style={styles.table}>
+              <thead>
+                <tr style={styles.tableHeaderRow}>
+                  <th style={styles.th}>Material</th>
+                  <th style={styles.th}>Quantity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(viewTransfer.materials || []).map((mat, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
+                    <td style={styles.td}>{mat.materialName}</td>
+                    <td style={styles.td}>{mat.transferQty} {mat.unit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {viewTransfer.notes && (
+              <div style={{ marginTop: '16px', fontSize: '13px', color: '#475569' }}>
+                <strong>Notes:</strong> {viewTransfer.notes}
+              </div>
+            )}
+            <button
+              onClick={() => setViewTransfer(null)}
               style={{ marginTop: '20px', width: '100%', padding: '10px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
             >
               Close
