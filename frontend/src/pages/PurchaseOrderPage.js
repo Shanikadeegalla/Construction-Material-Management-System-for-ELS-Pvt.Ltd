@@ -59,6 +59,11 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [manualPayError, setManualPayErrorState] = useState('');
   const setManualPayError = useToastSetter(setManualPayErrorState, 'error');
+  // Record Payment problems, shown under the field they belong to: { reference, bankName, chequeDate, paidAt, notes }
+  const [manualPayFieldErrors, setManualPayFieldErrors] = useState({});
+  const payFieldError = (name) => manualPayFieldErrors[name]
+    ? <div style={{ color: '#c62828', fontSize: '11px', fontWeight: '600', margin: '-10px 0 12px' }}>{manualPayFieldErrors[name]}</div>
+    : null;
   const [busyAction, withBusy] = useBusyAction();
   // Bring the form into view when it opens further down the page.
   useEffect(() => {
@@ -320,6 +325,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     setManualPayInvoice(invoice);
     setManualPayForm(emptyManualPay);
     setManualPayError('');
+    setManualPayFieldErrors({});
   };
 
   // Records a Cash / Cheque payment for a Director-approved invoice.
@@ -327,10 +333,34 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     e.preventDefault();
     if (!manualPayInvoice) return;
     setManualPayError('');
-    if (manualPayForm.method === 'Cheque' && !manualPayForm.reference.trim()) {
-      setManualPayError('Cheque number is required for cheque payments.');
-      return;
+
+    // Same rules the server applies, checked here so each problem shows under its field.
+    const errors = {};
+    const ref = (manualPayForm.reference || '').trim();
+    const toLocalDay = (value) => {
+      const d = new Date(value);
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      return d.toISOString().substring(0, 10);
+    };
+    if (!manualPayForm.paidAt) {
+      errors.paidAt = 'Payment date is required.';
+    } else if (manualPayForm.paidAt > localToday()) {
+      errors.paidAt = 'Payment date cannot be in the future.';
+    } else if (manualPayInvoice.invoiceDate && manualPayForm.paidAt < toLocalDay(manualPayInvoice.invoiceDate)) {
+      errors.paidAt = `Payment date cannot be earlier than the invoice date (${toLocalDay(manualPayInvoice.invoiceDate)}).`;
     }
+    if (manualPayForm.method === 'Cash') {
+      if (ref.length > 50) errors.reference = 'Voucher / Receipt No. cannot exceed 50 characters.';
+      else if (ref && !/^[a-zA-Z0-9\-_/]+$/.test(ref)) errors.reference = 'Only letters, numbers, -, _ and / are allowed.';
+    } else {
+      if (!ref) errors.reference = 'Cheque number is required.';
+      else if (!/^\d{6}$/.test(ref)) errors.reference = 'Cheque number must be exactly 6 digits (e.g. 004512).';
+      if (!(manualPayForm.bankName || '').trim()) errors.bankName = 'Bank name is required.';
+      if (!manualPayForm.chequeDate) errors.chequeDate = 'Cheque date is required.';
+    }
+    if ((manualPayForm.notes || '').trim().length > 500) errors.notes = 'Notes cannot exceed 500 characters.';
+    setManualPayFieldErrors(errors);
+    if (Object.keys(errors).length > 0) return;
     setRecordingPayment(true);
     try {
       const res = await fetch(`${API_BASE}/api/payments/record`, {
@@ -385,16 +415,23 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     setForm({ ...form, items: updated });
   };
 
-  const calcTotal = () => form.items.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0), 0);
+  // When a PO is raised from a Purchase Request, lines can be unticked to leave them out.
+  const selectedPoItems = () => form.items.filter(item => item.selected !== false);
+  const calcTotal = () => selectedPoItems().reduce((sum, item) => sum + (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0), 0);
 
   const handlePOSubmit = async (e) => {
     e.preventDefault();
     setError(''); setMessage('');
+    const items = selectedPoItems().map(({ selected, ...rest }) => rest);
+    if (items.length === 0) {
+      setError('Please select at least one item.');
+      return;
+    }
     try {
       const res = await fetch(`${API_BASE}/api/purchase-orders`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ ...form, totalAmount: calcTotal() })
+        body: JSON.stringify({ ...form, items, totalAmount: calcTotal() })
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -1297,7 +1334,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     <div style={{ paddingBottom: '20px', marginBottom: '20px', borderBottom: '1px solid #f1f5f9' }}>
                       <h4 style={poSectionHeaderStyle}>Order Items Specification</h4>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: poItemGridCols, gap: '8px', padding: '0 2px 8px', fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: form.prId ? '36px ' + poItemGridCols : poItemGridCols, gap: '8px', padding: '0 2px 8px', fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                        {form.prId && <span style={{ textAlign: 'center' }}>Select</span>}
                         <span>Item</span>
                         <span>Qty</span>
                         <span>Unit</span>
@@ -1307,24 +1345,36 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       </div>
 
                       {form.items.map((item, index) => {
+                        const isSelected = item.selected !== false;
                         const lineTotal = (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0);
                         return (
-                          <div key={index} style={{ display: 'grid', gridTemplateColumns: poItemGridCols, gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-                            <input placeholder="Material Name" value={item.materialName}
-                              onChange={e => updateItem(index, 'materialName', e.target.value)} required
+                          <div key={index} style={{ display: 'grid', gridTemplateColumns: form.prId ? '36px ' + poItemGridCols : poItemGridCols, gap: '8px', marginBottom: '8px', alignItems: 'center', opacity: isSelected ? 1 : 0.45 }}>
+                            {form.prId && (
+                              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={e => updateItem(index, 'selected', e.target.checked)}
+                                  style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#2563eb' }}
+                                  title="Include item in PO"
+                                />
+                              </div>
+                            )}
+                            <input placeholder="Material Name" value={item.materialName} disabled={!isSelected}
+                              onChange={e => updateItem(index, 'materialName', e.target.value)} required={isSelected}
                               className="po-field" style={poFieldStyle} />
-                            <input type="number" placeholder="Qty" value={item.quantity} min="0"
-                              onChange={e => updateItem(index, 'quantity', e.target.value)} required
+                            <input type="number" placeholder="Qty" value={item.quantity} min="0" disabled={!isSelected}
+                              onChange={e => updateItem(index, 'quantity', e.target.value)} required={isSelected}
                               className="po-field" style={{ ...poFieldStyle, textAlign: 'right' }} />
-                            <select value={item.unit} onChange={e => updateItem(index, 'unit', e.target.value)}
+                            <select value={item.unit} onChange={e => updateItem(index, 'unit', e.target.value)} disabled={!isSelected}
                               className="po-field" style={poFieldStyle}>
                               {!['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].includes(item.unit) && item.unit && (
                                 <option value={item.unit}>{item.unit}</option>
                               )}
                               {['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
-                            <input type="number" placeholder="0.00" value={item.unitPrice} min="0"
-                              onChange={e => updateItem(index, 'unitPrice', e.target.value)} required
+                            <input type="number" placeholder="0.00" value={item.unitPrice} min="0" disabled={!isSelected}
+                              onChange={e => updateItem(index, 'unitPrice', e.target.value)} required={isSelected}
                               className="po-field" style={{ ...poFieldStyle, textAlign: 'right' }} />
                             <div style={{ textAlign: 'right', fontSize: '13px', fontWeight: '600', color: '#334155', padding: '10px 4px' }}>
                               {lineTotal.toLocaleString()}
@@ -1862,6 +1912,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
               placeholder={manualPayForm.method === 'Cheque' ? '6 digits, e.g. 004512' : 'Optional'}
               style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
             />
+            {payFieldError('reference')}
 
             {manualPayForm.method === 'Cheque' && (
               <>
@@ -1874,6 +1925,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   required
                   style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
                 />
+                {payFieldError('bankName')}
 
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Cheque Date *</label>
                 <input
@@ -1883,6 +1935,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   required
                   style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
                 />
+                {payFieldError('chequeDate')}
               </>
             )}
 
@@ -1895,6 +1948,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
               required
               style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
             />
+            {payFieldError('paidAt')}
 
             <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Notes</label>
             <textarea
@@ -1902,6 +1956,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
               onChange={e => setManualPayForm({ ...manualPayForm, notes: e.target.value })}
               style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', height: '60px', marginBottom: '18px', boxSizing: 'border-box' }}
             />
+            {payFieldError('notes')}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
               <button type="button" onClick={() => setManualPayInvoice(null)} disabled={recordingPayment} style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '9px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>

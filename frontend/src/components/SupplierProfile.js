@@ -65,8 +65,11 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
   const fetchProfile = useCallback(async () => {
     setLoading(true);
     setError('');
+    // Give up after 10 seconds instead of leaving the profile loading forever.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
-      const res = await fetch(`${API_BASE}/api/suppliers/${supplierId}/profile`, { headers: getHeaders() });
+      const res = await fetch(`${API_BASE}/api/suppliers/${supplierId}/profile`, { headers: getHeaders(), signal: controller.signal });
       const data = await res.json();
       if (data.success) {
         setProfile(data.data);
@@ -74,8 +77,11 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
         setError(data.message || 'Failed to load supplier profile.');
       }
     } catch (err) {
-      setError('Failed to load supplier profile.');
+      setError(err.name === 'AbortError'
+        ? 'Could not load supplier details (request timed out). Please retry.'
+        : 'Could not load supplier details. Please check your connection and retry.');
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   }, [supplierId, getHeaders]);
@@ -117,6 +123,12 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
     }
   };
 
+  // Hooks must run on every render, so these sit above the loading / error returns.
+  const poPagination = usePagination(profile?.purchaseOrders || [], 8, [profile?.purchaseOrders?.length]);
+  const quotePagination = usePagination(profile?.quotations || [], 8, [profile?.quotations?.length]);
+  const invPagination = usePagination(profile?.invoices || [], 8, [profile?.invoices?.length]);
+  const grnPagination = usePagination(profile?.grns || [], 8, [profile?.grns?.length]);
+
   if (loading) {
     return <div style={{ padding: '40px', fontFamily: 'Segoe UI, Arial, sans-serif' }}>Loading supplier profile...</div>;
   }
@@ -131,11 +143,6 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
   }
 
   const { supplier, purchaseOrders, quotations, invoices, grns } = profile;
-
-  const poPagination = usePagination(purchaseOrders || [], 8, [purchaseOrders?.length]);
-  const quotePagination = usePagination(quotations || [], 8, [quotations?.length]);
-  const invPagination = usePagination(invoices || [], 8, [invoices?.length]);
-  const grnPagination = usePagination(grns || [], 8, [grns?.length]);
 
   return (
     <div style={{ padding: '32px', fontFamily: 'Segoe UI, Arial, sans-serif', background: '#f5f6fa', minHeight: '100vh' }}>

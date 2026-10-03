@@ -28,6 +28,7 @@ import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort, for
 import DateInput from '../components/DateInput';
 import { API_BASE } from '../config';
 import { useToast } from '../context/ToastContext';
+import { formatBankAccountInput, isValidBankAccount, BANK_ACCOUNT_PLACEHOLDER } from '../utils/bankUtils';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import ReportsCenter from './ReportsCenter';
 import Pagination, { usePagination } from '../components/Pagination';
@@ -474,6 +475,10 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     }
     if (!isValidPhone(supForm.phone)) {
       alert(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
+      return;
+    }
+    if (!isValidBankAccount(supForm.accountNumber)) {
+      alert('Bank Account Number must contain only numeric digits (between 6 and 20 digits).');
       return;
     }
     try {
@@ -3035,8 +3040,14 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         </div>
                         <div>
                           <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Account Number</label>
-                          <input type="text" value={supForm.accountNumber} onChange={(e) => setSupForm({ ...supForm, accountNumber: e.target.value })}
-                            style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} placeholder="e.g. 8001234567" />
+                          <input type="text" maxLength={20} value={supForm.accountNumber}
+                            onChange={(e) => setSupForm({ ...supForm, accountNumber: formatBankAccountInput(e.target.value) })}
+                            style={{ width: '100%', padding: '10px', borderRadius: '6px', border: `1px solid ${supForm.accountNumber && !isValidBankAccount(supForm.accountNumber) ? '#ef4444' : '#cbd5e1'}` }} placeholder={BANK_ACCOUNT_PLACEHOLDER} />
+                          {supForm.accountNumber && !isValidBankAccount(supForm.accountNumber) && (
+                            <span style={{ fontSize: '11px', color: '#ef4444', marginTop: '4px', display: 'block', fontWeight: '600' }}>
+                              Account number must be 6–20 numeric digits
+                            </span>
+                          )}
                         </div>
                         <div>
                           <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Branch</label>

@@ -325,6 +325,16 @@ try {
   check('Paged PO list returns one row and the page count', r.data.data?.length === 1 && r.data.totalPages >= 2, JSON.stringify({ n: r.data.data?.length, tp: r.data.totalPages }));
   r = await api('buy', 'GET', '/invoices?page=1&limit=1');
   check('Paged invoice list returns one row and the page count', r.data.data?.length === 1 && r.data.totalPages >= 2, JSON.stringify({ n: r.data.data?.length, tp: r.data.totalPages }));
+
+  console.log('[PO from selected PR items, supplier bank account]');
+  r = await api('buy', 'POST', '/purchase-orders', { prId: pr._id, supplier: String(supplier._id), items: [items[0]], totalAmount: 1 });
+  check('PO from one selected PR item, total recalculated', r.status === 201 && r.data.data?.items?.length === 1 && r.data.data.totalAmount === items[0].quantity * 100, JSON.stringify({ s: r.status, t: r.data.data?.totalAmount, m: r.data.message }));
+  r = await api('buy', 'POST', '/purchase-orders', { prId: pr._id, supplier: String(supplier._id), items: [{ materialName: 'Not On This Request', quantity: 1, unit: 'bag', unitPrice: 1 }], totalAmount: 1 });
+  check('PO item outside its Purchase Request rejected', r.status === 400 && /not part of Purchase Request/.test(r.data.message || ''), JSON.stringify(r.data));
+  const badAcc = await Supplier.create({ name: 'E2E Bad Account', phone: '0711234568', category: 'Other', supplierId: 'SUP-E2E-BAD', accountNumber: 'AB-12' }).then(() => null, e => e);
+  check('Supplier bank account with letters rejected', !!badAcc && /numeric digits/.test(badAcc.message), String(badAcc && badAcc.message));
+  const okAcc = await Supplier.create({ name: 'E2E Good Account', phone: '0711234569', category: 'Other', supplierId: 'SUP-E2E-OK', accountNumber: '8001234567' }).then(d => d, e => e);
+  check('Supplier bank account with 10 digits accepted', okAcc?.accountNumber === '8001234567', String(okAcc && okAcc.message));
 } catch (err) {
   fail++;
   console.log('ERROR', err.stack || err);
