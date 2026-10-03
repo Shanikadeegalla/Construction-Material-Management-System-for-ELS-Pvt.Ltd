@@ -6,9 +6,16 @@ import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
 import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import * as XLSX from 'xlsx';
+import { API_BASE } from '../config';
+import ReportsCenter from './ReportsCenter';
 import Pagination, { usePagination } from '../components/Pagination';
+import { scrollToElement } from '../utils/scrollToElement';
+import { useToast } from '../context/ToastContext';
+import LoadingButton from '../components/LoadingButton';
+import openUploadedFile from '../utils/openUploadedFile';
 
 function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
+  const toast = useToast();
   const [view, setView] = useState('dashboard'); // 'dashboard', 'inventory', 'grn', 'purchase-request', 'min', 'approved-boms', 'stock-adjustments', 'stock-ledger', 'reports', 'notifications', 'settings'
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -26,6 +33,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [suppliers, setSuppliers] = useState([]);
   const [prs, setPrs] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [grnSubmitting, setGrnSubmitting] = useState(false);
+  const [prSubmitting, setPrSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [modal, setModal] = useState(null);
@@ -33,7 +42,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
   // Usage charts state
   const [usageLogs, setUsageLogs] = useState([]);
-  const [selectedMonth, setSelectedMonth] = useState('2026-07');
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
   const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
 
   // Site Store material requests (SSR) awaiting review, and the resulting
@@ -66,6 +75,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [selectedBom, setSelectedBom] = useState(null);
   const [shortageItems, setShortageItems] = useState([]);
   const [viewBom, setViewBom] = useState(null);
+  const [bomCompareLoading, setBomCompareLoading] = useState(false);
+  const [bomPrSubmitting, setBomPrSubmitting] = useState(false);
 
   // PR Form State
   const [prForm, setPrForm] = useState({
@@ -143,6 +154,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const stockAdjustments = React.useMemo(() => stockLedger.filter(e => e.type === 'Adjustment'), [stockLedger]);
   const adjustmentsPagination = usePagination(stockAdjustments, 8, [stockAdjustments.length]);
 
+  const lowStockAlertsList = React.useMemo(() => materials.filter(m => m.location === 'MainStore' && materialStatus(m).tier !== 'NORMAL'), [materials]);
+  const lowStockAlertsPagination = usePagination(lowStockAlertsList, 5, [lowStockAlertsList.length]);
+
   // Stock Adjustment form state
   const [adjustmentForm, setAdjustmentForm] = useState({ materialId: '', physicalCount: '', reason: 'Count Correction', notes: '' });
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
@@ -178,7 +192,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     if (!hasSession()) return;
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/notifications', {
+      const res = await fetch(`${API_BASE}/api/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -194,7 +208,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const handleMarkNotificationRead = async (notif) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+      await fetch(`${API_BASE}/api/notifications/${notif._id}/read`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -208,7 +222,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const handleMarkAllNotificationsRead = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+      await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -225,7 +239,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const fetchPendingRequests = async () => {
     try {
       const headers = getHeaders();
-      const res = await fetch('http://localhost:5000/api/material-requests', { headers });
+      const res = await fetch(`${API_BASE}/api/material-requests`, { headers });
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setPendingRequests(data.data.filter(r => ['Pending', 'Partially Transferred'].includes(r.status)));
@@ -238,7 +252,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const fetchTransferNotes = async () => {
     try {
       const headers = getHeaders();
-      const res = await fetch('http://localhost:5000/api/material-transfer-notes', { headers });
+      const res = await fetch(`${API_BASE}/api/material-transfer-notes`, { headers });
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setTransferNotes(data.data);
@@ -251,7 +265,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const fetchPurchaseOrders = async () => {
     try {
       const headers = getHeaders();
-      const res = await fetch('http://localhost:5000/api/purchase-orders', { headers });
+      const res = await fetch(`${API_BASE}/api/purchase-orders`, { headers });
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setPurchaseOrders(data.data);
@@ -265,7 +279,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     setLedgerLoading(true);
     try {
       const headers = getHeaders();
-      const res = await fetch('http://localhost:5000/api/inventory/stock-ledger', { headers });
+      const res = await fetch(`${API_BASE}/api/inventory/stock-ledger`, { headers });
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setStockLedger(data.data);
@@ -280,7 +294,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const fetchPersistedNotifications = async () => {
     try {
       const headers = getHeaders();
-      const res = await fetch('http://localhost:5000/api/notifications', { headers });
+      const res = await fetch(`${API_BASE}/api/notifications`, { headers });
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setPersistedNotifications(data.data);
@@ -293,7 +307,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const fetchUsageLogs = async () => {
     try {
       const headers = getHeaders();
-      const res = await fetch('http://localhost:5000/api/material-usage', { headers });
+      const res = await fetch(`${API_BASE}/api/material-usage`, { headers });
       const data = await res.json();
       let finalData = data;
       if (data && data.ciphertext) {
@@ -323,27 +337,27 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       const headers = getHeaders();
 
       // Fetch materials
-      const matRes = await fetch('http://localhost:5000/api/inventory', { headers });
+      const matRes = await fetch(`${API_BASE}/api/inventory`, { headers });
       const matData = await matRes.json();
       if (Array.isArray(matData)) setMaterials(matData);
 
       // Fetch GRNs
-      const grnRes = await fetch('http://localhost:5000/api/inventory/grn-list', { headers });
+      const grnRes = await fetch(`${API_BASE}/api/inventory/grn-list`, { headers });
       const grnData = await grnRes.json();
       if (Array.isArray(grnData)) setGrns(grnData);
 
       // Fetch invoices (to flag which GRNs already have a supplier invoice attached)
-      const invRes = await fetch('http://localhost:5000/api/invoices', { headers });
+      const invRes = await fetch(`${API_BASE}/api/invoices`, { headers });
       const invData = await invRes.json();
       if (invData.success) setGrnInvoices(invData.data);
 
       // Fetch Transfers
-      const transferRes = await fetch('http://localhost:5000/api/inventory/transfers', { headers });
+      const transferRes = await fetch(`${API_BASE}/api/inventory/transfers`, { headers });
       const transferData = await transferRes.json();
       if (Array.isArray(transferData)) setTransfers(transferData);
 
       // Fetch Suppliers
-      const supRes = await fetch('http://localhost:5000/api/suppliers', { headers });
+      const supRes = await fetch(`${API_BASE}/api/suppliers`, { headers });
       const supData = await supRes.json();
       const rawSuppliers = supData.success ? supData.data : (Array.isArray(supData) ? supData : []);
       setSuppliers(rawSuppliers);
@@ -352,14 +366,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       await fetchNotifications();
 
       // Fetch PRs
-      const prRes = await fetch('http://localhost:5000/api/purchase-requests', { headers });
+      const prRes = await fetch(`${API_BASE}/api/purchase-requests`, { headers });
       const prData = await prRes.json();
       if (prData.success) {
         setPrs(prData.data);
       }
 
       // Fetch projects
-      const projRes = await fetch('http://localhost:5000/api/projects', { headers });
+      const projRes = await fetch(`${API_BASE}/api/projects`, { headers });
       const projData = await projRes.json();
       if (projData.success) {
         setProjects(projData.data);
@@ -374,39 +388,31 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
       // Fetch Director-Approved BOMs so Main Store can compare planned quantities
       // against current stock and raise a shortage Purchase Request.
-      const bomRes = await fetch('http://localhost:5000/api/bom', { headers });
+      const bomRes = await fetch(`${API_BASE}/api/bom`, { headers });
       const bomData = await bomRes.json();
       if (bomData.success) {
-        setApprovedBoms((bomData.data || []).filter(b => b.status === 'Approved'));
+        // A project can have several approved versions - only the most
+        // recently approved one per project is the BOM in force.
+        const latestByProject = {};
+        (bomData.data || [])
+          .filter(b => b.status === 'Approved')
+          .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+          .forEach(b => {
+            const key = b.projectId?._id || b.projectId || b._id;
+            if (!latestByProject[key]) latestByProject[key] = b;
+          });
+        setApprovedBoms(Object.values(latestByProject));
       }
 
     } catch (err) {
-      setError('Could not connect to the backend server. Using fallback demo data.');
-      // Fallback
-      setMaterials([
-        { _id: '1', name: 'Portland Cement OPC', category: 'Cement', unit: 'bag', quantity: 150, minimumStock: 20, unitPrice: 1850, location: 'MainStore' },
-        { _id: '2', name: 'Deformed Steel Bars 12mm', category: 'Steel', unit: 'ton', quantity: 5, minimumStock: 10, unitPrice: 185000, location: 'MainStore' },
-        { _id: '3', name: 'Fine River Sand', category: 'Sand', unit: 'm3', quantity: 8, minimumStock: 15, unitPrice: 8500, location: 'MainStore' },
-      ]);
-      setGrns([
-        { grnNumber: 'GRN-2026-001', supplier: 'Lanka Cement', receivedDate: new Date().toISOString(), items: [{}, {}], status: 'Completed' }
-      ]);
-      setTransfers([
-        { materialName: 'Portland Cement OPC', quantity: 50, from: 'MainStore', to: 'SiteStore', issuedBy: 'Store Officer', date: new Date().toISOString() }
-      ]);
-      setNotifications([
-        { materialName: 'Deformed Steel Bars 12mm', currentQty: 5, minimumStock: 10, location: 'MainStore', alertLevel: 'Low' }
-      ]);
-      setPrs([
-        { _id: '1', projectName: 'Colombo Port Expansion', materials: [{ materialName: 'Portland Cement OPC', quantity: 300, unit: 'bag' }], urgency: 'Normal', status: 'Pending', createdAt: new Date().toISOString() }
-      ]);
-      setProjects([
-        { _id: '1', projectName: 'Colombo Port Expansion' },
-        { _id: '2', projectName: 'Marina Heights Development' }
-      ]);
-      setApprovedBoms([
-        { _id: '1', bomNumber: 'BOM-DEMO-001', version: 'v1.0', status: 'Approved', projectName: 'Colombo Port Expansion', approvedBy: 'Director', materials: [{ name: 'Portland Cement OPC', unit: 'bag', plannedQty: 300, category: 'Cement' }] }
-      ]);
+      setError('Could not connect to the backend server. Please check your network connection.');
+      setMaterials([]);
+      setGrns([]);
+      setTransfers([]);
+      setNotifications([]);
+      setPrs([]);
+      setProjects([]);
+      setApprovedBoms([]);
     } finally {
       if (!isBackgroundRefresh) setLoading(false);
     }
@@ -434,18 +440,21 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     setError(''); setSuccess('');
 
     if (!selectedGrnPO || grnForm.items.length === 0) {
+      toast.warning('Please select a Purchase Order to load its items before recording a GRN.');
       setError('Please select a Purchase Order to load its items before recording a GRN.');
       return;
     }
 
     const invalid = grnForm.items.some(item => !item.material || item.receivedQty === '' || item.receivedQty === null || Number(item.receivedQty) < 0);
     if (invalid) {
+      toast.error('Please enter a valid received quantity for all items.');
       setError('Please enter a valid received quantity for all items.');
       return;
     }
 
     const invalidExceedsOrdered = grnForm.items.some(item => Number(item.receivedQty) > Number(item.expectedQty));
     if (invalidExceedsOrdered) {
+      toast.error('Received quantity cannot exceed the ordered quantity.');
       setError('Received quantity cannot exceed the ordered quantity.');
       return;
     }
@@ -455,17 +464,18 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       (item.damagedQty === '' || item.damagedQty === null || Number(item.damagedQty) < 0 || Number(item.damagedQty) > Number(item.receivedQty))
     );
     if (invalidDamaged) {
+      toast.error('Please enter a valid damaged quantity for items marked Damaged.');
       setError('Please enter a valid damaged quantity (not exceeding received quantity) for items marked Damaged.');
       return;
     }
 
-    // Invoice fields are attached to the same form and are optional - only
-    // validate/send them if the officer actually entered an amount.
     if (invoiceForm.amount && Number(invoiceForm.amount) <= 0) {
+      toast.error('Invoice amount must be greater than zero.');
       setError('Invoice amount must be greater than zero.');
       return;
     }
 
+    setGrnSubmitting(true);
     try {
       const poIdForInvoice = selectedGrnPO;
       const supplierIdForInvoice = grnForm.supplierId;
@@ -474,18 +484,19 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         ...grnForm,
         receivedBy: user ? user.name : 'Store Officer'
       };
-      const res = await fetch('http://localhost:5000/api/inventory/grn', {
+      const res = await fetch(`${API_BASE}/api/inventory/grn`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (!res.ok) {
+        toast.error(data.message || 'Failed to submit GRN.');
         setError(data.message || 'Failed to submit GRN.');
         return;
       }
 
-      let successMsg = data.message || '✅ GRN processed successfully!';
+      let successMsg = data.message || 'GRN processed successfully!';
 
       if (invoiceForm.amount) {
         try {
@@ -498,7 +509,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           if (invoiceFile) fd.append('file', invoiceFile);
 
           const token = JSON.parse(localStorage.getItem('user'))?.token;
-          const invRes = await fetch('http://localhost:5000/api/invoices', {
+          const invRes = await fetch(`${API_BASE}/api/invoices`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` },
             body: fd
@@ -514,7 +525,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         }
       }
 
-      setSuccess(successMsg);
+      toast.success(successMsg);
+      setSuccess(`✅ ${successMsg}`);
       setGrnForm({
         supplier: '',
         supplierId: '',
@@ -527,25 +539,28 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       setInvoiceForm({ amount: '', invoiceDate: new Date().toISOString().substring(0, 10) });
       setInvoiceFile(null);
       fetchData();
+      setTimeout(() => scrollToElement('#grn-history-section'), 100);
     } catch (err) {
+      toast.error('Connection error occurred.');
       setError('Connection error occurred.');
+    } finally {
+      setGrnSubmitting(false);
     }
   };
 
-  // Stock Adjustment: the only sanctioned way to correct current stock
-  // outside of GRN/MIN/Usage transactions (e.g. after a physical count).
   const handleStockAdjustmentSubmit = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
 
     if (!adjustmentForm.materialId || adjustmentForm.physicalCount === '' || !adjustmentForm.reason.trim()) {
+      toast.warning('Please select a material, enter physical count, and provide a reason.');
       setError('Please select a material, enter the physical count, and provide a reason.');
       return;
     }
 
     setAdjustmentSubmitting(true);
     try {
-      const res = await fetch('http://localhost:5000/api/inventory/adjustments', {
+      const res = await fetch(`${API_BASE}/api/inventory/adjustments`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
@@ -557,25 +572,24 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        toast.success('Stock adjustment recorded successfully!');
         setSuccess('✅ Stock adjustment recorded successfully!');
         setAdjustmentForm({ materialId: '', physicalCount: '', reason: 'Count Correction', notes: '' });
         fetchData();
         fetchStockLedger();
+        setTimeout(() => scrollToElement('#stock-adjustment-history'), 100);
       } else {
+        toast.error(data.message || 'Failed to record stock adjustment.');
         setError(data.message || 'Failed to record stock adjustment.');
       }
     } catch (err) {
+      toast.error('Connection error occurred.');
       setError('Connection error occurred.');
     } finally {
       setAdjustmentSubmitting(false);
     }
   };
 
-  // Opens the Create Material Transfer Note form. With no argument it opens
-  // blank for a brand new ad hoc Main Store-initiated transfer. Passed a
-  // Pending Site Store request, it pre-fills the destination Site Store,
-  // materials and reference from that request so Main Store only reviews
-  // and confirms the transfer quantities rather than re-entering them.
   const openTransferForm = (sourceRequest) => {
     setError(''); setSuccess('');
     if (sourceRequest) {
@@ -587,12 +601,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         transferDate: new Date().toISOString().substring(0, 10),
         reference: sourceRequest.requestNo,
         notes: sourceRequest.notes || '',
-        // Pre-fill only the outstanding quantity per line - for a Partially
-        // Transferred request, part of it may already have been moved by an
-        // earlier transfer, and a fully-covered line is left out. requestedQty/
-        // alreadyFulfilled/availableAtSite are carried along purely for display
-        // in the review table below (Main Store can only send once every
-        // outstanding line here is fully in stock - see createTransferNote).
         items: sourceRequest.materials
           .map(m => ({
             materialName: m.materialName,
@@ -617,6 +625,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       });
     }
     setShowTransferForm(true);
+    setTimeout(() => scrollToElement('#transfer-form-section'), 50);
   };
 
   const handleTransferSiteStoreChange = (siteStoreId) => {
@@ -649,11 +658,13 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     setError(''); setSuccess('');
 
     if (!transferForm.siteStoreId || !transferForm.transferDate) {
+      toast.warning('Please select a Site Store and transfer date.');
       setError('Please select a Site Store and transfer date.');
       return;
     }
     const invalid = transferForm.items.some(item => !item.materialName || !item.quantity || Number(item.quantity) <= 0);
     if (invalid) {
+      toast.warning('Please select a material and enter a valid transfer quantity.');
       setError('Please select a material and enter a valid transfer quantity for every row.');
       return;
     }
@@ -662,6 +673,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       return mainMat && Number(item.quantity) > mainMat.quantity;
     });
     if (overStock) {
+      toast.error('One or more transfer quantities exceed available Main Store stock.');
       setError('One or more transfer quantities exceed available Main Store stock.');
       return;
     }
@@ -677,7 +689,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         materials: transferForm.items.map(item => ({ materialName: item.materialName, quantity: item.quantity, unit: item.unit }))
       };
       const ciphertext = encryptTransit(JSON.stringify(payload));
-      const res = await fetch('http://localhost:5000/api/material-transfer-notes', {
+      const res = await fetch(`${API_BASE}/api/material-transfer-notes`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ ciphertext })
@@ -688,13 +700,17 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         finalData = JSON.parse(decryptTransit(data.ciphertext));
       }
       if (res.ok && finalData.success) {
-        setSuccess(`✅ ${finalData.data.mtnNumber} created and materials transferred to Site Store!`);
+        toast.success(`${finalData.data.mtnNumber} issued successfully! Stock is in transit.`);
+        setSuccess(`✅ ${finalData.data.mtnNumber} issued - stock is in transit until the Site Store confirms receipt.`);
         setShowTransferForm(false);
         fetchData();
+        setTimeout(() => scrollToElement('#transfer-history-section'), 100);
       } else {
+        toast.error(finalData.message || 'Failed to create Material Transfer Note.');
         setError(finalData.message || 'Failed to create Material Transfer Note.');
       }
     } catch (err) {
+      toast.error('Could not connect to server to create Material Transfer Note.');
       setError('Could not connect to the backend server to create the Material Transfer Note.');
     } finally {
       setTransferSubmitting(false);
@@ -702,13 +718,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   };
 
   const handleRejectRequest = async (id) => {
+    if (!window.confirm('Are you sure you want to reject this Site Store request?')) return;
     const reason = window.prompt('Please enter the reason for rejection:');
     if (reason === null) return;
     setError(''); setSuccess('');
     try {
       const payload = { reason: reason || 'Rejected by Main Store' };
       const ciphertext = encryptTransit(JSON.stringify(payload));
-      const res = await fetch(`http://localhost:5000/api/material-requests/${id}/reject`, {
+      const res = await fetch(`${API_BASE}/api/material-requests/${id}/reject`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ ciphertext })
@@ -719,47 +736,55 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         finalData = JSON.parse(decryptTransit(data.ciphertext));
       }
       if (res.ok && finalData.success) {
+        toast.success('Site Store request rejected.');
         setSuccess('Request rejected.');
         fetchPendingRequests();
       } else {
+        toast.error(finalData.message || 'Failed to reject request.');
         setError(finalData.message || 'Failed to reject request.');
       }
     } catch (err) {
+      toast.error('Error rejecting request.');
       setError('Error rejecting request.');
     }
   };
 
-  // Opens the shortage comparison panel for one Director-approved BOM. The
-  // shortage/available figures come from the authoritative server-side
-  // comparison (GET /api/bom/:bomId/stock-check) rather than being
-  // recomputed here, so there is a single source of truth for BOM shortage
-  // logic shared with any other consumer of that endpoint. Any shortfall is
-  // pre-selected as an editable PR quantity; the officer can then adjust
-  // quantities before submitting.
-  const handleCompareBom = async (bom) => {
-    setError(''); setSuccess('');
+  const handleCompareBom = async (bom, keepMessages = false) => {
+    if (!keepMessages) { setError(''); setSuccess(''); }
+    setBomCompareLoading(true);
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/bom/${bom._id}/stock-check`, {
+      const res = await fetch(`${API_BASE}/api/bom/${bom._id}/stock-check`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
       if (!data.success) {
+        toast.error(data.message || 'Failed to compare BOM against Main Store stock.');
         setError(data.message || 'Failed to compare BOM against Main Store stock.');
         return;
       }
       const items = data.data.map(item => ({
+        materialId: item.materialId,
         name: item.name,
         category: item.category,
         unit: item.unit,
         plannedQty: item.plannedQty,
         available: item.available,
-        quantity: item.shortage
+        shortage: item.shortage,
+        status: item.status,
+        alreadyRequestedQty: item.alreadyRequestedQty || 0,
+        requestableQty: item.requestableQty || 0,
+        selected: item.requestableQty > 0,
+        quantity: item.requestableQty || 0
       }));
       setSelectedBom(bom);
       setShortageItems(items);
+      setTimeout(() => scrollToElement('#bom-compare-section'), 80);
     } catch (err) {
+      toast.error('Error connecting to server while comparing BOM stock.');
       setError('Error connecting to server while comparing BOM stock.');
+    } finally {
+      setBomCompareLoading(false);
     }
   };
 
@@ -767,59 +792,71 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     setShortageItems(prev => prev.map((it, i) => i === idx ? { ...it, quantity: val } : it));
   };
 
+  const handleShortageSelectChange = (idx, checked) => {
+    setShortageItems(prev => prev.map((it, i) => i === idx ? { ...it, selected: checked } : it));
+  };
+
   const handleCancelBomCompare = () => {
     setSelectedBom(null);
     setShortageItems([]);
   };
 
-  // Submits the (possibly manually adjusted) shortage list as a Purchase Request
-  // against the same approved BOM used for the comparison. This reuses the exact
-  // Create-PR endpoint/permission Main Store already has, so it lands directly in
-  // the Purchase Manager's Purchase Request queue with no further wiring needed.
   const handleSubmitBomShortagePR = async () => {
     setError(''); setSuccess('');
     if (!selectedBom) return;
 
-    const prItems = shortageItems
-      .filter(it => Number(it.quantity) > 0)
-      .map(it => ({
-        materialName: it.name,
-        quantity: Number(it.quantity),
-        unit: it.unit,
-        reason: `Shortage vs approved BOM ${selectedBom.bomNumber || ''} (${selectedBom.version || 'v1.0'})`
-      }));
+    const chosen = shortageItems.filter(it => it.selected && it.requestableQty > 0);
 
-    if (prItems.length === 0) {
-      setError('Select at least one material with a quantity greater than zero to raise a Purchase Request.');
+    if (chosen.length === 0) {
+      toast.warning('Select at least one shortage material to raise a Purchase Request.');
+      setError('Select at least one shortage material to raise a Purchase Request.');
       return;
     }
 
-    const projectName = selectedBom.projectId?.projectName || selectedBom.projectId?.name || selectedBom.projectName;
+    const invalid = chosen.find(it => !(Number(it.quantity) > 0) || Number(it.quantity) > it.requestableQty);
+    if (invalid) {
+      toast.error(`PR quantity for "${invalid.name}" must be between 1 and ${invalid.requestableQty}.`);
+      setError(`PR quantity for "${invalid.name}" must be between 1 and ${invalid.requestableQty} (the remaining shortage).`);
+      return;
+    }
+
+    const prItems = chosen.map(it => ({
+      materialId: it.materialId,
+      materialName: it.name,
+      quantity: Number(it.quantity)
+    }));
 
     const payload = {
-      projectName,
-      urgency: 'Critical',
-      notes: `Auto-generated shortage PR from Main Store, comparing approved BOM ${selectedBom.bomNumber || ''} (${selectedBom.version || 'v1.0'}) against current Main Store stock.`,
-      materials: prItems,
-      requestedBy: user ? user.name : 'Main Store Officer'
+      bomId: selectedBom._id,
+      urgency: 'Urgent',
+      notes: `Shortage PR from Main Store, comparing approved BOM ${selectedBom.bomNumber || ''} (${selectedBom.version || 'v1.0'}) against current Main Store stock.`,
+      materials: prItems
     };
 
+    setBomPrSubmitting(true);
     try {
-      const res = await fetch('http://localhost:5000/api/purchase-requests', {
+      const res = await fetch(`${API_BASE}/api/purchase-requests/from-bom`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setSuccess(`✅ Purchase Request submitted to Purchase Manager for: ${prItems.map(p => `${p.materialName} (${p.quantity})`).join(', ')}`);
-        handleCancelBomCompare();
-        fetchData();
+        const msg = `PR created for BOM ${selectedBom.bomNumber || ''} and sent to Purchase Manager`;
+        toast.success(msg);
+        setSuccess(`✅ ${msg}`);
+        await handleCompareBom(selectedBom, true);
+        fetchData(true);
+        setTimeout(() => scrollToElement('#bom-compare-section'), 100);
       } else {
+        toast.error(data.message || 'Failed to generate Purchase Request.');
         setError(data.message || 'Failed to generate Purchase Request.');
       }
     } catch (err) {
+      toast.error('Error generating Purchase Request from BOM comparison.');
       setError('Error generating Purchase Request from BOM comparison.');
+    } finally {
+      setBomPrSubmitting(false);
     }
   };
 
@@ -899,7 +936,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   // Notifications
   const handleMarkNotifRead = async (id) => {
     try {
-      await fetch(`http://localhost:5000/api/notifications/${id}/read`, {
+      await fetch(`${API_BASE}/api/notifications/${id}/read`, {
         method: 'PUT',
         headers: getHeaders()
       });
@@ -911,7 +948,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
   const handleMarkAllNotifsRead = async () => {
     try {
-      await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+      await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
         method: 'PUT',
         headers: getHeaders()
       });
@@ -973,6 +1010,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     e.preventDefault();
     setError(''); setSuccess('');
     if (!prForm.projectName || !prForm.materialName || !prForm.quantity || Number(prForm.quantity) <= 0) {
+      toast.warning('Please fill in all required PR fields.');
       setError('Please fill in all required PR fields.');
       return;
     }
@@ -990,15 +1028,18 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       requestedBy: user ? user.name : 'Store Officer'
     };
 
+    setPrSubmitting(true);
     try {
-      const res = await fetch('http://localhost:5000/api/purchase-requests', {
+      const res = await fetch(`${API_BASE}/api/purchase-requests`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setSuccess('✅ PR submitted to Project Manager');
+        const msg = `PR created for ${prForm.materialName} and sent to Purchase Manager`;
+        toast.success(msg);
+        setSuccess(`✅ ${msg}`);
         setShowPrForm(false);
         setPrForm({
           projectName: '',
@@ -1009,35 +1050,16 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           notes: ''
         });
         fetchData();
+        setTimeout(() => scrollToElement('#submitted-prs-section'), 100);
       } else {
+        toast.error(data.message || 'Failed to submit Purchase Request.');
         setError(data.message || 'Failed to submit Purchase Request.');
       }
     } catch (err) {
-      setSuccess('✅ PR submitted to Project Manager (Demo Mode)');
-      const mockPr = {
-        _id: String(Date.now()),
-        projectName: prForm.projectName,
-        materials: [{
-          materialName: prForm.materialName,
-          quantity: Number(prForm.quantity),
-          unit: prForm.unit,
-          reason: prForm.notes
-        }],
-        urgency: prForm.urgency,
-        status: 'Pending',
-        requestedBy: user ? user.name : 'Store Officer',
-        createdAt: new Date().toISOString()
-      };
-      setPrs(prev => [mockPr, ...prev]);
-      setShowPrForm(false);
-      setPrForm({
-        projectName: '',
-        materialName: '',
-        unit: 'bag',
-        quantity: '',
-        urgency: 'Normal',
-        notes: ''
-      });
+      toast.error('Failed to connect to server. Could not submit Purchase Request.');
+      setError('❌ Failed to connect to server. Could not submit Purchase Request.');
+    } finally {
+      setPrSubmitting(false);
     }
   };
 
@@ -1081,7 +1103,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     ...transferNotes.map(m => ({
       date: m.createdAt,
       icon: '🚚',
-      text: `${m.mtnNumber} transferred to ${m.siteStoreName}`
+      text: `${m.mtnNumber} ${m.status === 'In Transit' ? 'issued to' : 'received by'} ${m.siteStoreName}`
     })),
     ...prs.map(pr => ({
       date: pr.createdAt,
@@ -2063,18 +2085,20 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </div>
                 </div>
 
-                <button
+                <LoadingButton
                   type="submit"
-                  style={{ ...styles.orangeBtn, opacity: (!selectedGrnPO || grnForm.items.length === 0) ? 0.5 : 1, cursor: (!selectedGrnPO || grnForm.items.length === 0) ? 'not-allowed' : 'pointer' }}
+                  loading={grnSubmitting}
+                  loadingText="Recording GRN..."
                   disabled={!selectedGrnPO || grnForm.items.length === 0}
+                  style={{ ...styles.orangeBtn, opacity: (!selectedGrnPO || grnForm.items.length === 0) ? 0.5 : 1 }}
                 >
                   Record GRN & Update Inventory
-                </button>
+                </LoadingButton>
               </form>
             </div>
 
             {/* GRN History */}
-            <div style={styles.tableContainer}>
+            <div id="grn-history-section" style={styles.tableContainer}>
               <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>Recent GRNs</h3>
               <table style={styles.table}>
                 <thead>
@@ -2102,13 +2126,50 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         <td style={styles.td}>{formatDate(g.receivedDate || g.createdAt)}</td>
                         <td style={styles.td}>
                           {invoice ? (
-                            invoice.file?.url ? (
-                              <a href={`http://localhost:5000${invoice.file.url}`} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontWeight: '600', fontSize: '12px' }}>
-                                View Invoice
-                              </a>
-                            ) : (
-                              <span style={{ color: '#94a3b8', fontSize: '12px' }}>Recorded (no file)</span>
-                            )
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              {invoice.file?.url && invoice.fileExists !== false ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openUploadedFile(invoice.file.url, { fileType: 'invoice', toast })}
+                                  style={{ color: '#2563eb', fontWeight: '600', fontSize: '12px', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+                                >
+                                  👁 View Invoice
+                                </button>
+                              ) : (
+                                <span style={{ color: '#d97706', fontSize: '12px', fontWeight: 'bold' }}>⚠️ File missing</span>
+                              )}
+                              <label style={{ cursor: 'pointer', color: '#0d1b4b', fontSize: '11px', textDecoration: 'underline', fontWeight: '600' }}>
+                                📤 Re-upload File
+                                <input
+                                  type="file"
+                                  accept="image/*,application/pdf"
+                                  style={{ display: 'none' }}
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    try {
+                                      const token = JSON.parse(localStorage.getItem('user'))?.token;
+                                      const fd = new FormData();
+                                      fd.append('file', file);
+                                      const res = await fetch(`${API_BASE}/api/invoices/${invoice._id}/reupload`, {
+                                        method: 'PUT',
+                                        headers: { Authorization: `Bearer ${token}` },
+                                        body: fd
+                                      });
+                                      const d = await res.json();
+                                      if (d.success) {
+                                        alert('Invoice file re-uploaded successfully!');
+                                        fetchData(true);
+                                      } else {
+                                        alert(d.message || 'Failed to re-upload invoice');
+                                      }
+                                    } catch (err) {
+                                      alert('Re-upload failed: ' + err.message);
+                                    }
+                                  }}
+                                />
+                              </label>
+                            </div>
                           ) : (
                             <span style={{ color: '#94a3b8', fontSize: '12px' }}>Not attached</span>
                           )}
@@ -2273,7 +2334,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {materials.filter(m => m.location === 'MainStore' && materialStatus(m).tier !== 'NORMAL').map((m, i) => {
+                  {lowStockAlertsPagination.paginatedData.map((m, i) => {
                     const status = materialStatus(m);
                     return (
                       <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: 'rgba(239,68,68,0.08)' }}>
@@ -2297,6 +2358,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                                 notes: ''
                               });
                               setShowPrForm(true);
+                              setTimeout(() => scrollToElement('#pr-form-section'), 50);
                             }}
                             style={{
                               background: '#2563eb',
@@ -2316,7 +2378,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                       </tr>
                     );
                   })}
-                  {materials.filter(m => m.location === 'MainStore' && materialStatus(m).tier !== 'NORMAL').length === 0 && (
+                  {lowStockAlertsPagination.totalItems === 0 && (
                     <tr>
                       <td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>
                         All Main Store material stock levels are normal!
@@ -2325,11 +2387,17 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   )}
                 </tbody>
               </table>
+              <Pagination pagination={lowStockAlertsPagination} />
             </div>
 
             {/* PR Form Card */}
             {showPrForm && (
-              <div style={styles.formCard}>
+              <div id="pr-form-section" style={styles.formCard}>
+                {prForm.materialName && (
+                  <div style={{ background: '#e0f2fe', color: '#0369a1', padding: '10px 14px', borderRadius: '6px', marginBottom: '16px', fontWeight: 'bold', fontSize: '13px' }}>
+                    📦 Creating PR for material: {prForm.materialName} {prForm.projectName ? `(Project: ${prForm.projectName})` : ''}
+                  </div>
+                )}
                 <h3 style={{ color: '#0d1b4b', marginBottom: '20px', fontWeight: 'bold' }}>Create New Purchase Request</h3>
                 <form onSubmit={handlePrSubmit} style={{ display: 'grid', gap: '16px', maxWidth: '600px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
@@ -2394,9 +2462,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </div>
 
                   <div style={{ display: 'flex', gap: '10px' }}>
-                    <button type="submit" style={styles.orangeBtn}>
+                    <LoadingButton
+                      type="submit"
+                      loading={prSubmitting}
+                      loadingText="Submitting PR..."
+                      style={styles.orangeBtn}
+                    >
                       Submit Purchase Request
-                    </button>
+                    </LoadingButton>
                     <button type="button" onClick={() => setShowPrForm(false)} style={{ background: '#cbd5e1', color: '#333', border: 'none', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
                       Cancel
                     </button>
@@ -2406,7 +2479,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
             )}
 
             {/* Submitted PRs Registry */}
-            <div style={styles.tableContainer}>
+            <div id="submitted-prs-section" style={styles.tableContainer}>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                 <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>📋 Submitted PR Registry Archive</h3>
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -2577,36 +2650,39 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               {ledgerLoading ? (
                 <div style={styles.loadingText}>Loading adjustment history...</div>
               ) : (
-                <table style={styles.table}>
-                  <thead>
-                    <tr style={styles.tableHeaderRow}>
-                      <th style={styles.th}>Date</th>
-                      <th style={styles.th}>Material</th>
-                      <th style={styles.th}>Change</th>
-                      <th style={styles.th}>New Balance</th>
-                      <th style={styles.th}>Reason</th>
-                      <th style={styles.th}>Performed By</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stockLedger.filter(e => e.type === 'Adjustment').length === 0 ? (
-                      <tr><td colSpan="6" style={styles.emptyState}>No stock adjustments recorded yet.</td></tr>
-                    ) : (
-                      stockLedger.filter(e => e.type === 'Adjustment').map((e, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                          <td style={styles.td}>{formatDateTime(e.date)}</td>
-                          <td style={styles.tdBold}>{e.materialName} <span style={{ color: '#94a3b8', fontWeight: 'normal' }}>{e.unit}</span></td>
-                          <td style={{ ...styles.td, color: e.inQty ? '#2e7d32' : (e.outQty ? '#c62828' : '#64748b'), fontWeight: 'bold' }}>
-                            {e.inQty ? `+${e.inQty}` : (e.outQty ? `-${e.outQty}` : 'No change')}
-                          </td>
-                          <td style={styles.tdBold}>{e.balance}</td>
-                          <td style={styles.td}>{e.remarks}</td>
-                          <td style={styles.td}>{e.performedBy}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                <>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr style={styles.tableHeaderRow}>
+                        <th style={styles.th}>Date</th>
+                        <th style={styles.th}>Material</th>
+                        <th style={styles.th}>Change</th>
+                        <th style={styles.th}>New Balance</th>
+                        <th style={styles.th}>Reason</th>
+                        <th style={styles.th}>Performed By</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adjustmentsPagination.totalItems === 0 ? (
+                        <tr><td colSpan="6" style={styles.emptyState}>No stock adjustments recorded yet.</td></tr>
+                      ) : (
+                        adjustmentsPagination.paginatedData.map((e, i) => (
+                          <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
+                            <td style={styles.td}>{formatDateTime(e.date)}</td>
+                            <td style={styles.tdBold}>{e.materialName} <span style={{ color: '#94a3b8', fontWeight: 'normal' }}>{e.unit}</span></td>
+                            <td style={{ ...styles.td, color: e.inQty ? '#2e7d32' : (e.outQty ? '#c62828' : '#64748b'), fontWeight: 'bold' }}>
+                              {e.inQty ? `+${e.inQty}` : (e.outQty ? `-${e.outQty}` : 'No change')}
+                            </td>
+                            <td style={styles.tdBold}>{e.balance}</td>
+                            <td style={styles.td}>{e.remarks}</td>
+                            <td style={styles.td}>{e.performedBy}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                  <Pagination pagination={adjustmentsPagination} />
+                </>
               )}
             </div>
           </div>
@@ -2625,7 +2701,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
             </div>
 
             {showTransferForm && (
-              <div style={styles.formCard}>
+              <div id="transfer-form-section" style={styles.formCard}>
                 <h3 style={{ color: '#0d1b4b', marginBottom: '16px', fontWeight: 'bold' }}>
                   {transferForm.sourceRequestId ? `Transfer Materials for Request ${transferForm.reference}` : 'Create Material Transfer Note'}
                 </h3>
@@ -2801,9 +2877,15 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           </div>
                         )}
                         <div style={{ display: 'flex', gap: '10px' }}>
-                          <button type="submit" disabled={transferSubmitting || blocked} style={{ ...styles.orangeBtn, ...(blocked ? { background: '#94a3b8', cursor: 'not-allowed' } : {}) }}>
-                            {transferSubmitting ? 'Creating...' : 'Create Transfer'}
-                          </button>
+                          <LoadingButton
+                            type="submit"
+                            loading={transferSubmitting}
+                            loadingText="Creating..."
+                            disabled={blocked}
+                            style={{ ...styles.orangeBtn, ...(blocked ? { background: '#94a3b8', cursor: 'not-allowed' } : {}) }}
+                          >
+                            Create Transfer
+                          </LoadingButton>
                           <button type="button" onClick={() => setShowTransferForm(false)} style={{ background: '#cbd5e1', color: '#333', border: 'none', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
                             Cancel
                           </button>
@@ -2890,7 +2972,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               <Pagination pagination={pendingRequestsPagination} />
             </div>
 
-            <div style={{ ...styles.tableContainer, marginTop: '24px' }}>
+            <div id="transfer-history-section" style={{ ...styles.tableContainer, marginTop: '24px' }}>
               <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee' }}>Material Transfer Note History</h3>
               <table style={styles.table}>
                 <thead>
@@ -2901,12 +2983,13 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     <th style={styles.th}>Materials Transferred</th>
                     <th style={styles.th}>Transfer Date</th>
                     <th style={styles.th}>Status</th>
+                    <th style={styles.th}>Received By</th>
                   </tr>
                 </thead>
                 <tbody>
                   {transfersPagination.paginatedData.length === 0 ? (
                     <tr>
-                      <td colSpan="6" style={styles.emptyState}>No Material Transfer Notes created yet.</td>
+                      <td colSpan="7" style={styles.emptyState}>No Material Transfer Notes created yet.</td>
                     </tr>
                   ) : (
                     transfersPagination.paginatedData.map(m => (
@@ -2921,9 +3004,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         </td>
                         <td style={styles.td}>{m.transferDate ? formatDate(m.transferDate) : '-'}</td>
                         <td style={styles.td}>
-                          <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
-                            {m.status}
+                          <span style={{ background: m.status === 'In Transit' ? '#fef3c7' : '#e8f5e9', color: m.status === 'In Transit' ? '#b45309' : '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
+                            {m.status === 'Transferred' ? 'Received' : m.status}
                           </span>
+                        </td>
+                        <td style={styles.td}>
+                          {m.status === 'In Transit'
+                            ? <span style={{ color: '#94a3b8' }}>Awaiting Site Store</span>
+                            : <>{m.receivedBy || '-'}{m.receivedAt ? <div style={{ fontSize: '11px', color: '#64748b' }}>{formatDate(m.receivedAt)}</div> : null}</>}
                         </td>
                       </tr>
                     ))
@@ -2968,7 +3056,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         <td style={styles.td}>{(bom.materials || []).length} item(s)</td>
                         <td style={{ ...styles.td, whiteSpace: 'nowrap' }}>
                           <button
-                            onClick={() => setViewBom(bom)}
+                            onClick={() => { setViewBom(bom); setTimeout(() => scrollToElement('#bom-view-modal'), 50); }}
                             style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', marginRight: '8px' }}
                           >
                             👁 View
@@ -2988,8 +3076,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               <Pagination pagination={bomsPagination} />
             </div>
 
+            {bomCompareLoading && !selectedBom && (
+              <p style={{ marginTop: '16px', fontSize: '13px', color: '#64748b' }}>Checking Main Store stock...</p>
+            )}
+
             {selectedBom && (
-              <div style={{ ...styles.tableContainer, marginTop: '24px', padding: '20px' }}>
+              <div id="bom-compare-section" style={{ ...styles.tableContainer, marginTop: '24px', padding: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <h3 style={{ margin: 0, color: '#0d1b4b', fontWeight: '700' }}>
                     Stock Comparison — {selectedBom.bomNumber || selectedBom.version} ({selectedBom.projectId?.projectName || selectedBom.projectId?.name || selectedBom.projectName})
@@ -2999,43 +3091,63 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </button>
                 </div>
                 <p style={{ fontSize: '12px', color: '#64748b', marginTop: 0, marginBottom: '16px' }}>
-                  Quantities below default to the shortfall (Planned Qty − Available in Main Store). Set a row's quantity to 0 to exclude it, or edit the quantity before submitting — it cannot exceed the BOM's planned quantity.
+                  Shortage = Required Qty − Available in Main Store. Tick the shortage materials to include in the Purchase Request. The PR quantity defaults to the shortage and cannot exceed it. Materials already covered by an active PR are shown as "PR Requested".
                 </p>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={styles.table}>
                     <thead>
                       <tr style={styles.tableHeaderRow}>
+                        <th style={styles.th}>Select</th>
                         <th style={styles.th}>Material</th>
-                        <th style={styles.th}>Category</th>
-                        <th style={styles.th}>Planned Qty</th>
+                        <th style={styles.th}>Required Qty</th>
+                        <th style={styles.th}>Unit</th>
                         <th style={styles.th}>Available (Main Store)</th>
+                        <th style={styles.th}>Shortage</th>
+                        <th style={styles.th}>Stock Status</th>
+                        <th style={styles.th}>Already Requested</th>
                         <th style={styles.th}>PR Quantity</th>
-                        <th style={styles.th}>Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {shortageItems.map((it, idx) => (
                         <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
-                          <td style={{ ...styles.tdBold, color: '#0d1b4b' }}>{it.name}</td>
-                          <td style={styles.td}>{it.category}</td>
-                          <td style={styles.td}>{it.plannedQty} {it.unit}</td>
-                          <td style={styles.td}>{it.available} {it.unit}</td>
                           <td style={styles.td}>
                             <input
-                              type="number"
-                              min="0"
-                              max={it.plannedQty}
-                              value={it.quantity}
-                              onChange={e => handleShortageQtyChange(idx, e.target.value)}
-                              style={{ width: '90px', padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px' }}
+                              type="checkbox"
+                              checked={it.selected && it.requestableQty > 0}
+                              disabled={it.requestableQty <= 0}
+                              onChange={e => handleShortageSelectChange(idx, e.target.checked)}
                             />
                           </td>
+                          <td style={{ ...styles.tdBold, color: '#0d1b4b' }}>{it.name}</td>
+                          <td style={styles.td}>{it.plannedQty}</td>
+                          <td style={styles.td}>{it.unit}</td>
+                          <td style={styles.td}>{it.available}</td>
+                          <td style={{ ...styles.td, fontWeight: '700', color: it.shortage > 0 ? '#c62828' : '#2e7d32' }}>{it.shortage}</td>
                           <td style={styles.td}>
-                            {it.plannedQty - it.available > 0 ? (
+                            {it.status === 'Shortage' ? (
                               <span style={{ background: '#fde8e8', color: '#c62828', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Shortage</span>
                             ) : (
                               <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Sufficient</span>
                             )}
+                          </td>
+                          <td style={styles.td}>
+                            {it.alreadyRequestedQty > 0 ? (
+                              <span style={{ background: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>PR Requested ({it.alreadyRequestedQty})</span>
+                            ) : '-'}
+                          </td>
+                          <td style={styles.td}>
+                            {it.requestableQty > 0 ? (
+                              <input
+                                type="number"
+                                min="1"
+                                max={it.requestableQty}
+                                value={it.quantity}
+                                disabled={!it.selected}
+                                onChange={e => handleShortageQtyChange(idx, e.target.value)}
+                                style={{ width: '90px', padding: '6px 8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px' }}
+                              />
+                            ) : '-'}
                           </td>
                         </tr>
                       ))}
@@ -3043,18 +3155,29 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </table>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
-                  <button
-                    onClick={handleSubmitBomShortagePR}
-                    style={{ background: '#f59e0b', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' }}
-                  >
-                    🚀 Submit Purchase Request to Purchase Manager
-                  </button>
+                  {shortageItems.some(it => it.requestableQty > 0) ? (
+                    <LoadingButton
+                      onClick={handleSubmitBomShortagePR}
+                      loading={bomPrSubmitting}
+                      loadingText="Submitting PR..."
+                      variant="warning"
+                      style={{ padding: '10px 20px', fontSize: '14px', fontWeight: 'bold' }}
+                    >
+                      🚀 Submit Purchase Request to Purchase Manager
+                    </LoadingButton>
+                  ) : (
+                    <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '600' }}>
+                      {shortageItems.some(it => it.shortage > 0)
+                        ? 'All shortages for this BOM are already covered by an active Purchase Request.'
+                        : 'Main Store stock is sufficient for this BOM. No Purchase Request is needed.'}
+                    </span>
+                  )}
                 </div>
               </div>
             )}
 
             {viewBom && (
-              <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }} onClick={() => setViewBom(null)}>
+              <div id="bom-view-modal" style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }} onClick={() => setViewBom(null)}>
                 <div style={{ background: 'white', borderRadius: '10px', width: '700px', maxWidth: '90%', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 10px 25px rgba(0,0,0,0.3)' }} onClick={e => e.stopPropagation()}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 24px', borderBottom: '1px solid #e2e8f0' }}>
                     <div>
@@ -3132,6 +3255,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               ))}
             </div>
 
+            {/* Exportable reports (PDF / Excel) */}
+            <h3 style={{ color: '#0d1b4b', margin: '0 0 14px', textAlign: 'left' }}>📑 Detailed Reports &amp; Export</h3>
+            <div style={{ marginBottom: '30px' }}>
+              <ReportsCenter tabs={['inventory', 'procurement', 'usage', 'bom']} />
+            </div>
+
             {/* Monthly Usage Report */}
             {(() => {
               const filteredUsage = usageLogs.filter(u => {
@@ -3162,10 +3291,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         onChange={e => setSelectedMonth(e.target.value)}
                         style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
                       >
-                        <option value="2026-07">July 2026</option>
-                        <option value="2026-06">June 2026</option>
-                        <option value="2026-05">May 2026</option>
-                        <option value="2026-04">April 2026</option>
+                        {Array.from({ length: 12 }, (_, i) => {
+                          const d = new Date(new Date().getFullYear(), new Date().getMonth() - i, 1);
+                          const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                          return <option key={value} value={value}>{d.toLocaleString('en-US', { month: 'long', year: 'numeric' })}</option>;
+                        })}
                       </select>
                     </div>
                   </div>

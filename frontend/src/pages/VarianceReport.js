@@ -15,8 +15,10 @@ import {
 } from 'recharts';
 import { formatDateTime, formatDayMonth } from '../utils/dateUtils';
 import Pagination, { usePagination } from '../components/Pagination';
+import { useToast } from '../context/ToastContext';
 
 const VarianceReport = () => {
+  const toast = useToast();
   const [reportData, setReportData] = useState([]);
   const [timelineData, setTimelineData] = useState([]);
   const [totalWastageCost, setTotalWastageCost] = useState(0);
@@ -54,26 +56,10 @@ const VarianceReport = () => {
       }
     } catch (err) {
       setError(err.message || 'Failed to connect to backend.');
-      // Mock data for demo purposes if backend fails
-      const mockReport = [
-        { projectName: 'Colombo Port Expansion', materialName: 'Portland Cement', unit: 'bags', plannedQty: 300, actualQty: 315, varianceQty: 15, variancePct: 5.0, wastageQty: 15, wastageCost: 22500, severity: 'Moderate' },
-        { projectName: 'Colombo Port Expansion', materialName: 'TMT Steel 12mm', unit: 'ton', plannedQty: 10, actualQty: 12, varianceQty: 2, variancePct: 20.0, wastageQty: 2, wastageCost: 500000, severity: 'Significant' },
-        { projectName: 'Colombo Port Expansion', materialName: 'River Sand', unit: 'm3', plannedQty: 50, actualQty: 48, varianceQty: -2, variancePct: -4.0, wastageQty: 0, wastageCost: 0, severity: 'None' },
-        { projectName: 'Marina Heights', materialName: 'Portland Cement', unit: 'bags', plannedQty: 500, actualQty: 560, varianceQty: 60, variancePct: 12.0, wastageQty: 60, wastageCost: 90000, severity: 'Significant' },
-        { projectName: 'Marina Heights', materialName: 'TMT Steel 12mm', unit: 'ton', plannedQty: 15, actualQty: 15.5, varianceQty: 0.5, variancePct: 3.33, wastageQty: 0.5, wastageCost: 125000, severity: 'Moderate' },
-      ];
-      setReportData(mockReport);
-      setTotalWastageCost(737500);
-      setProjects(['Colombo Port Expansion', 'Marina Heights']);
-      
-      const mockTimeline = [
-        { projectName: 'Colombo Port Expansion', materialName: 'Portland Cement', actualQty: 100, usageDate: '2026-06-20', recordedBy: 'Mike Storekeeper' },
-        { projectName: 'Colombo Port Expansion', materialName: 'Portland Cement', actualQty: 150, usageDate: '2026-06-22', recordedBy: 'Mike Storekeeper' },
-        { projectName: 'Colombo Port Expansion', materialName: 'Portland Cement', actualQty: 65, usageDate: '2026-06-25', recordedBy: 'Mike Storekeeper' },
-        { projectName: 'Colombo Port Expansion', materialName: 'TMT Steel 12mm', actualQty: 5, usageDate: '2026-06-21', recordedBy: 'Mike Storekeeper' },
-        { projectName: 'Colombo Port Expansion', materialName: 'TMT Steel 12mm', actualQty: 7, usageDate: '2026-06-24', recordedBy: 'Mike Storekeeper' },
-      ];
-      setTimelineData(mockTimeline);
+      setReportData([]);
+      setTotalWastageCost(0);
+      setProjects([]);
+      setTimelineData([]);
     } finally {
       setLoading(false);
     }
@@ -251,6 +237,7 @@ const VarianceReport = () => {
     });
 
     doc.save(`ELS_Variance_Report_${selectedProject.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
+    toast.success('Variance Analysis PDF Report generated and downloaded');
   };
 
   // Excel Export
@@ -291,6 +278,7 @@ const VarianceReport = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Variance Report");
     XLSX.writeFile(wb, `ELS_Variance_Report_${selectedProject.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    toast.success('Variance Analysis Excel Spreadsheet generated and downloaded');
   };
 
   return (

@@ -5,10 +5,19 @@ import SupplierProfile from '../components/SupplierProfile';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
 import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
-import { createCheckoutSession } from '../services/paymentService';
+import { downloadPaymentReport, downloadPaymentReceipt } from '../services/paymentService';
+import ReportsCenter from './ReportsCenter';
+import { API_BASE } from '../config';
 import Pagination, { usePagination } from '../components/Pagination';
+import { scrollToElement } from '../utils/scrollToElement';
+import { useToast } from '../context/ToastContext';
+import LoadingButton from '../components/LoadingButton';
+import openUploadedFile from '../utils/openUploadedFile';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
+  const toast = useToast();
+  const [poSubmitting, setPoSubmitting] = useState(false);
+  const [supplierSubmitting, setSupplierSubmitting] = useState(false);
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -34,15 +43,28 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [poSearchTerm, setPoSearchTerm] = useState('');
   const [payingInvoiceId, setPayingInvoiceId] = useState(null);
-  const [payingPoId, setPayingPoId] = useState(null);
+  const [downloadingReport, setDownloadingReport] = useState(false);
 
-  // Manual payment modal state
-  const [payModalPO, setPayModalPO] = useState(null);
-  const [payMethod, setPayMethod] = useState('Stripe');
-  const [chequeNo, setChequeNo] = useState('');
-  const [bankName, setBankName] = useState('');
-  const [chequeDate, setChequeDate] = useState('');
-  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  // Offline (Cash / Cheque) payment being recorded against an approved invoice.
+  const emptyManualPay = { method: 'Cash', reference: '', bankName: '', chequeDate: '', paidAt: new Date().toISOString().substring(0, 10), notes: '' };
+  const [manualPayInvoice, setManualPayInvoice] = useState(null);
+  const [manualPayForm, setManualPayForm] = useState(emptyManualPay);
+  const [recordingPayment, setRecordingPayment] = useState(false);
+  const [manualPayError, setManualPayError] = useState('');
+  const [manualPayFieldErrors, setManualPayFieldErrors] = useState({});
+
+  const handleDownloadReport = async () => {
+    try {
+      setDownloadingReport(true);
+      setError('');
+      await downloadPaymentReport();
+      setMessage('✅ Payment report downloaded successfully!');
+    } catch (err) {
+      setError(err.message || 'Failed to download payment report.');
+    } finally {
+      setDownloadingReport(false);
+    }
+  };
 
   // PO Form State
   const [form, setForm] = useState({
@@ -109,6 +131,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const poPagination = usePagination(filteredOrders, 8, [poSearchTerm]);
   const prPagination = usePagination(purchaseRequests, 8, [purchaseRequests.length]);
   const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
+  const invoicesPagination = usePagination(invoices, 8, [invoices.length], { storageKey: 'po_invoices' });
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -133,7 +156,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       const headers = getHeaders();
 
       // Fetch POs
-      const poRes = await fetch('http://localhost:5000/api/purchase-orders', { headers });
+      const poRes = await fetch(`${API_BASE}/api/purchase-orders`, { headers });
       const poData = await poRes.json();
       let orderList = poData.success ? poData.data : [];
       if (!orderList || orderList.length === 0) {
@@ -146,7 +169,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       setOrders(orderList);
 
       // Fetch Suppliers
-      const supRes = await fetch('http://localhost:5000/api/suppliers', { headers });
+      const supRes = await fetch(`${API_BASE}/api/suppliers`, { headers });
       const supData = await supRes.json();
       let rawSuppliers = supData.success ? supData.data : (Array.isArray(supData) ? supData : []);
       if (!rawSuppliers || rawSuppliers.length === 0) {
@@ -159,12 +182,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       setSuppliers(rawSuppliers);
 
       // Fetch Pending PRs (not yet converted into a PO)
-      const prRes = await fetch('http://localhost:5000/api/purchase-requests?status=Pending', { headers });
+      const prRes = await fetch(`${API_BASE}/api/purchase-requests?status=Pending`, { headers });
       const prData = await prRes.json();
       if (prData.success) setPendingPRs(prData.data);
 
       // Fetch ALL PRs
-      const allPrRes = await fetch('http://localhost:5000/api/purchase-requests', { headers });
+      const allPrRes = await fetch(`${API_BASE}/api/purchase-requests`, { headers });
       const allPrData = await allPrRes.json();
       let prList = allPrData.success ? allPrData.data : [];
       if (!prList || prList.length === 0) {
@@ -178,28 +201,16 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       setPurchaseRequests(prList);
 
       // Fetch Invoices / Payments
-      const invRes = await fetch('http://localhost:5000/api/invoices', { headers });
+      const invRes = await fetch(`${API_BASE}/api/invoices`, { headers });
       const invData = await invRes.json();
       setInvoices(invData.success ? invData.data : []);
 
     } catch (err) {
-      setError('Could not connect to the backend server. Loading fallback demo data.');
-      setOrders([
-        { _id: '1', poNumber: 'PO-2026-001', supplier: 'Lanka Cement Ltd', items: [{ materialName: 'Portland Cement OPC', quantity: 300, unit: 'bags', unitPrice: 1850 }], totalAmount: 555000, status: 'Sent', createdAt: new Date().toISOString() },
-        { _id: '2', poNumber: 'PO-2026-002', supplier: 'Melwa Steel', items: [{ materialName: 'TMT Steel 12mm', quantity: 5, unit: 'ton', unitPrice: 185000 }], totalAmount: 925000, status: 'Delivered', createdAt: new Date(Date.now() - 86400000).toISOString() },
-        { _id: '3', poNumber: 'PO-2026-003', supplier: 'Mahaweli Sand Co.', items: [{ materialName: 'River Sand', quantity: 20, unit: 'm3', unitPrice: 8500 }], totalAmount: 170000, status: 'Pending', createdAt: new Date(Date.now() - 172800000).toISOString() },
-      ]);
-      setSuppliers([
-        { _id: '1', name: 'Lanka Cement Ltd', contactPerson: 'Nimal Perera', phone: '0711122334', email: 'nimal@lankacement.lk', category: 'Cement', status: 'Active' },
-        { _id: '2', name: 'Melwa Steel', contactPerson: 'Kamal Silva', phone: '0722233445', email: 'kamal@melwa.lk', category: 'Steel', status: 'Active' },
-      ]);
+      setError('Could not connect to the backend server. Please check your network connection.');
+      setOrders([]);
+      setSuppliers([]);
       setInvoices([]);
-      setPurchaseRequests([
-        { _id: '1', prNumber: 'PR-2026-001', projectName: 'Colombo Port Expansion', materials: [{ materialName: 'Portland Cement OPC', quantity: 150, unit: 'bags' }], urgency: 'Normal', status: 'Pending', notes: 'Need for foundation casting.', createdAt: new Date().toISOString() },
-        { _id: '2', prNumber: 'PR-2026-002', projectName: 'Marina Heights', materials: [{ materialName: 'TMT Steel 12mm', quantity: 8, unit: 'ton' }], urgency: 'Urgent', status: 'Approved', notes: 'Urgent column structure reinforcement.', createdAt: new Date(Date.now() - 86400000).toISOString() },
-        { _id: '3', prNumber: 'PR-2026-003', projectName: 'Highway Extension Project', materials: [{ materialName: 'River Sand', quantity: 30, unit: 'cube' }], urgency: 'Critical', status: 'Pending', notes: 'Urgent supply for concrete mixing.', createdAt: new Date(Date.now() - 172800000).toISOString() },
-        { _id: '4', prNumber: 'PR-2026-004', projectName: 'City Center Mall', materials: [{ materialName: 'Coarse Aggregate', quantity: 45, unit: 'cube' }], urgency: 'Normal', status: 'Rejected', notes: 'Excess materials on site.', createdAt: new Date(Date.now() - 259200000).toISOString() }
-      ]);
+      setPurchaseRequests([]);
     }
   };
 
@@ -207,7 +218,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     if (!hasSession()) return;
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/inventory/notifications', {
+      const res = await fetch(`${API_BASE}/api/inventory/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -215,7 +226,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         setNotifications(data.data);
       }
 
-      const countRes = await fetch('http://localhost:5000/api/notifications/count', {
+      const countRes = await fetch(`${API_BASE}/api/notifications/count`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const countData = await countRes.json();
@@ -236,7 +247,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const fetchPrNotifications = async () => {
     if (!hasSession()) return;
     try {
-      const res = await fetch('http://localhost:5000/api/notifications', { headers: getHeaders() });
+      const res = await fetch(`${API_BASE}/api/notifications`, { headers: getHeaders() });
       const data = await res.json();
       if (data.success) {
         setPrNotifications(data.data || []);
@@ -249,7 +260,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
   const handleMarkNotificationRead = async (notif) => {
     try {
-      await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+      await fetch(`${API_BASE}/api/notifications/${notif._id}/read`, {
         method: 'PUT',
         headers: getHeaders()
       });
@@ -263,7 +274,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
   const handleMarkAllNotificationsRead = async () => {
     try {
-      await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+      await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
         method: 'PUT',
         headers: getHeaders()
       });
@@ -288,56 +299,29 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     return () => clearInterval(interval);
   }, []);
 
-  // Handle the redirect back from Stripe Checkout (success or cancel)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const paymentResult = params.get('payment');
-    const sessionId = params.get('session_id');
-    if (!paymentResult) return;
-
-    const cleanUrl = () => {
-      window.history.replaceState({}, '', window.location.pathname);
-    };
-
-    if (paymentResult === 'success' && sessionId && hasSession()) {
-      (async () => {
-        try {
-          const res = await fetch('http://localhost:5000/api/payments/confirm-session', {
-            method: 'POST',
-            headers: getHeaders(),
-            body: JSON.stringify({ sessionId, purchaseOrderId: params.get('po') })
-          });
-          const data = await res.json();
-          if (data.success && data.paid) {
-            setActivePage('payment');
-            setMessage(`✅ Payment received for invoice ${data.data?.invoiceNumber || ''}!`);
-            fetchData();
-          } else {
-            setActivePage('payment');
-            setError('Payment could not be confirmed yet. Please refresh in a moment.');
-          }
-        } catch (err) {
-          setError('Could not confirm payment status with the server.');
-        } finally {
-          cleanUrl();
-        }
-      })();
-    } else if (paymentResult === 'cancelled') {
-      setActivePage('payment');
-      setError('Payment was cancelled.');
-      cleanUrl();
-    }
-  }, []);
-
-  const handlePayInvoice = async (invoiceId) => {
+  const handlePayInvoice = async (invoiceOrId) => {
     if (!hasSession()) return;
     setError(''); setMessage('');
+
+    const targetInvoice = typeof invoiceOrId === 'object'
+      ? invoiceOrId
+      : invoices.find(i => i._id === invoiceOrId);
+
+    const invoiceId = targetInvoice ? targetInvoice._id : invoiceOrId;
+    const poRef = targetInvoice?.po;
+    const purchaseOrderId = typeof poRef === 'object' ? poRef?._id : (poRef || null);
+    const amount = targetInvoice?.amount;
+
     setPayingInvoiceId(invoiceId);
     try {
-      const res = await fetch('http://localhost:5000/api/payments/create-checkout-session', {
+      const res = await fetch(`${API_BASE}/api/payments/create-checkout-session`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ invoiceId })
+        body: JSON.stringify({
+          invoiceId,
+          purchaseOrderId,
+          amount
+        })
       });
       const data = await res.json();
       if (data.success) {
@@ -358,10 +342,124 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     }
   };
 
+  const openManualPay = (invoice) => {
+    setManualPayInvoice(invoice);
+    setManualPayForm(emptyManualPay);
+    setManualPayError('');
+    setManualPayFieldErrors({});
+  };
+
+  // Records a Cash / Cheque payment for a Director-approved invoice.
+  const handleRecordPayment = async (e) => {
+    e.preventDefault();
+    if (!manualPayInvoice) return;
+    setManualPayError('');
+    setManualPayFieldErrors({});
+
+    const errors = {};
+    const method = manualPayForm.method;
+    const ref = (manualPayForm.reference || '').trim();
+    const bank = (manualPayForm.bankName || '').trim();
+    const paidAt = manualPayForm.paidAt;
+    const chequeDate = manualPayForm.chequeDate;
+    const notes = (manualPayForm.notes || '').trim();
+
+    // Payment Date validation
+    if (!paidAt) {
+      errors.paidAt = 'Payment date is required.';
+    } else {
+      const todayStr = new Date().toISOString().substring(0, 10);
+      if (paidAt > todayStr) {
+        errors.paidAt = 'Payment date cannot be in the future.';
+      } else if (manualPayInvoice.invoiceDate) {
+        const invDateStr = new Date(manualPayInvoice.invoiceDate).toISOString().substring(0, 10);
+        if (paidAt < invDateStr) {
+          errors.paidAt = `Payment date cannot be earlier than invoice date (${invDateStr}).`;
+        }
+      }
+    }
+
+    if (method === 'Cash') {
+      if (ref.length > 50) {
+        errors.reference = 'Voucher / Receipt No. cannot exceed 50 characters.';
+      } else if (ref && !/^[a-zA-Z0-9\-_/]+$/.test(ref)) {
+        errors.reference = 'Only letters, numbers, -, _ and / are allowed.';
+      }
+    } else if (method === 'Cheque') {
+      if (!ref) {
+        errors.reference = 'Cheque number is required.';
+      } else if (!/^\d{6}$/.test(ref)) {
+        errors.reference = 'Cheque number must be exactly 6 digits (e.g. 004512).';
+      }
+      if (!bank) {
+        errors.bankName = 'Bank name is required.';
+      }
+      if (!chequeDate) {
+        errors.chequeDate = 'Cheque date is required.';
+      }
+    }
+
+    if (notes.length > 500) {
+      errors.notes = 'Notes cannot exceed 500 characters.';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setManualPayFieldErrors(errors);
+      return;
+    }
+
+    setRecordingPayment(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/payments/record`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          invoiceId: manualPayInvoice._id,
+          method,
+          reference: ref,
+          chequeNumber: method === 'Cheque' ? ref : '',
+          bankName: method === 'Cheque' ? bank : '',
+          chequeDate: method === 'Cheque' ? chequeDate : undefined,
+          paidAt,
+          notes
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success(data.message || 'Payment recorded successfully!');
+        setMessage(`✅ ${data.message}`);
+        setError('');
+        setManualPayInvoice(null);
+        setManualPayForm(emptyManualPay);
+        setManualPayFieldErrors({});
+        fetchData();
+        setTimeout(() => scrollToElement('#payment-portal-section'), 100);
+      } else {
+        toast.error(data.message || 'Failed to record the payment.');
+        setManualPayError(data.message || 'Failed to record the payment.');
+      }
+    } catch (err) {
+      toast.error('Could not connect to the payment server.');
+      setManualPayError('Could not connect to the payment server.');
+    } finally {
+      setRecordingPayment(false);
+    }
+  };
+
+  const handleDownloadReceipt = async (invoice) => {
+    setError('');
+    try {
+      await downloadPaymentReceipt(invoice.po?._id || invoice.po);
+    } catch (err) {
+      setError(err.message || 'Failed to download the payment receipt.');
+    }
+  };
+
   const handlePrSelectChange = (prId) => {
     const selected = pendingPRs.find(pr => pr._id === prId);
     if (selected && selected.materials) {
       const items = selected.materials.map(m => ({
+        selected: true,
         materialName: m.materialName || m.name,
         quantity: m.quantity,
         unit: m.unit || 'bag',
@@ -369,11 +467,11 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       }));
       setForm({ ...form, prId, items });
     } else {
-      setForm({ ...form, prId, items: [{ materialName: '', quantity: '', unit: 'bag', unitPrice: '' }] });
+      setForm({ ...form, prId, items: [{ selected: true, materialName: '', quantity: '', unit: 'bag', unitPrice: '' }] });
     }
   };
 
-  const addItem = () => setForm({ ...form, items: [...form.items, { materialName: '', quantity: '', unit: 'bag', unitPrice: '' }] });
+  const addItem = () => setForm({ ...form, items: [...form.items, { selected: true, materialName: '', quantity: '', unit: 'bag', unitPrice: '' }] });
   const removeItem = (i) => setForm({ ...form, items: form.items.filter((_, idx) => idx !== i) });
   const updateItem = (index, field, value) => {
     const updated = [...form.items];
@@ -381,19 +479,38 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     setForm({ ...form, items: updated });
   };
 
-  const calcTotal = () => form.items.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0), 0);
+  const calcTotal = () => form.items
+    .filter(item => item.selected !== false)
+    .reduce((sum, item) => sum + (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0), 0);
 
   const handlePOSubmit = async (e) => {
     e.preventDefault();
     setError(''); setMessage('');
+
+    const selectedItems = form.items
+      .filter(item => item.selected !== false)
+      .map(({ selected, ...rest }) => rest);
+
+    if (selectedItems.length === 0) {
+      toast.warning('Please select at least one item.');
+      setError('Please select at least one item.');
+      return;
+    }
+
+    setPoSubmitting(true);
     try {
-      const res = await fetch('http://localhost:5000/api/purchase-orders', {
+      const res = await fetch(`${API_BASE}/api/purchase-orders`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ ...form, totalAmount: calcTotal() })
+        body: JSON.stringify({
+          ...form,
+          items: selectedItems,
+          totalAmount: calcTotal()
+        })
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        toast.success('Purchase Order created successfully!');
         setMessage('✅ Purchase Order created successfully!');
         setShowForm(false);
         setForm({
@@ -403,36 +520,68 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           expectedDeliveryDate: '',
           paymentTerms: '30 Days Credit',
           deliveryAddress: '',
-          items: [{ materialName: '', quantity: '', unit: 'bag', unitPrice: '' }]
+          items: [{ selected: true, materialName: '', quantity: '', unit: 'bag', unitPrice: '' }]
         });
         fetchData();
+        setTimeout(() => scrollToElement('#po-list-section'), 100);
       } else {
+        toast.error(data.message || 'Failed to create PO.');
         setError(data.message || 'Failed to create PO.');
       }
-    } catch {
-      setError('Connection failed. Mock PO saved.');
+    } catch (err) {
+      toast.error(err.message || 'Failed to create PO.');
+      setError(err.message || 'Failed to create PO.');
+    } finally {
+      setPoSubmitting(false);
     }
   };
 
   const handleUpdateStatus = async (id, status) => {
     setError(''); setMessage('');
     try {
-      const res = await fetch(`http://localhost:5000/api/purchase-orders/${id}/status`, {
+      const res = await fetch(`${API_BASE}/api/purchase-orders/${id}/status`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ status })
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        toast.success(`PO status updated to ${status}!`);
         setMessage(`✅ PO status updated to ${status}!`);
         fetchData();
       } else {
-        setError('Failed to update status.');
+        toast.error(data.message || 'Failed to update status.');
+        setError(data.message || 'Failed to update status.');
       }
-    } catch {
-      setMessage(`✅ PO status updated to ${status}! (Demo Mode)`);
-      setOrders(prev => prev.map(o => o._id === id ? { ...o, status } : o));
+    } catch (err) {
+      toast.error(err.message || 'Failed to update status.');
+      setError(err.message || 'Failed to update status.');
     }
+  };
+
+  // Statuses the Purchase Manager can move a PO to. Approved/Rejected are Director-only,
+  // Sent needs an Approved PO and Delivered needs a Sent PO (mirrors the backend rules).
+  const getPoStatusOptions = (current) => {
+    const options = [current, 'Pending'];
+    if (current === 'Approved') options.push('Sent');
+    if (current === 'Sent') options.push('Delivered');
+    options.push('Closed', 'Cancelled');
+    return [...new Set(options)];
+  };
+
+  // Payment state of a PO, derived from its supplier invoices so it matches the Payment Portal.
+  const getPoPaymentState = (po) => {
+    const poInvoices = invoices.filter(inv => (inv.po?._id || inv.po) === po._id && inv.status !== 'Rejected');
+    if (poInvoices.some(inv => inv.status === 'Approved')) {
+      return { label: '💳 Ready to pay', bg: '#ede9fe', color: '#5b21b6', ready: true };
+    }
+    if (poInvoices.some(inv => inv.status === 'Pending Approval')) {
+      return { label: 'Awaiting Director', bg: '#dbeafe', color: '#1d4ed8' };
+    }
+    if (poInvoices.length > 0 || po.paymentStatus === 'paid') {
+      return { label: '✓ Paid', bg: '#dcfce7', color: '#15803d' };
+    }
+    return { label: 'No invoice', bg: '#f1f5f9', color: '#475569' };
   };
 
   const handleConvertToPO = (pr) => {
@@ -443,34 +592,38 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       expectedDeliveryDate: '',
       paymentTerms: '30 Days Credit',
       deliveryAddress: '',
-      items: pr.materials.map(m => ({
-        materialName: m.materialName,
+      items: (pr.materials || []).map(m => ({
+        selected: true,
+        materialName: m.materialName || m.name,
         quantity: m.quantity,
         unit: m.unit || 'bags',
-        unitPrice: m.estimatedUnitCost ?? '' // prefilled from the approved BOM's cost estimate
+        unitPrice: m.estimatedUnitCost ?? ''
       }))
     });
     setShowForm(true);
     setActivePage('orders');
+    setTimeout(() => scrollToElement('#po-form-section'), 100);
   };
 
   const handleSendToSupplier = async (id, poNumber, supplierName) => {
     setError(''); setMessage('');
     try {
-      const res = await fetch(`http://localhost:5000/api/purchase-orders/${id}/send`, {
+      const res = await fetch(`${API_BASE}/api/purchase-orders/${id}/send`, {
         method: 'PUT',
         headers: getHeaders()
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        toast.success(`${poNumber} sent to ${supplierName} successfully!`);
         setMessage(`✅ ${poNumber} sent to ${supplierName} successfully!`);
         fetchData();
       } else {
+        toast.error(data.message || 'Failed to send PO.');
         setError(data.message || 'Failed to send PO.');
       }
-    } catch {
-      setMessage(`✅ ${poNumber} sent to ${supplierName} successfully! (Demo Mode)`);
-      setOrders(prev => prev.map(o => o._id === id ? { ...o, status: 'Sent', sentAt: new Date().toISOString() } : o));
+    } catch (err) {
+      toast.error(err.message || 'Failed to send PO.');
+      setError(err.message || 'Failed to send PO.');
     }
   };
 
@@ -478,26 +631,34 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     e.preventDefault();
     setError(''); setMessage('');
     if (!isValidPhone(supForm.phone)) {
+      toast.warning(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
       setError(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
       return;
     }
+    setSupplierSubmitting(true);
     try {
-      const res = await fetch('http://localhost:5000/api/suppliers/add', {
+      const res = await fetch(`${API_BASE}/api/suppliers/add`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify(supForm)
       });
       const data = await res.json();
       if (res.ok) {
+        toast.success('Supplier added successfully!');
         setMessage('✅ Supplier added successfully!');
         setShowSupplierForm(false);
         setSupForm({ name: '', contactPerson: '', phone: '', email: '', address: '', category: 'Cement', status: 'Active' });
         fetchData();
+        setTimeout(() => scrollToElement('#suppliers-list-section'), 100);
       } else {
+        toast.error(data.message || 'Failed to add supplier.');
         setError(data.message || 'Failed to add supplier.');
       }
     } catch {
+      toast.error('Connection failed.');
       setError('Connection failed.');
+    } finally {
+      setSupplierSubmitting(false);
     }
   };
 
@@ -505,19 +666,21 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     if (!window.confirm('Are you sure you want to deactivate this supplier?')) return;
     setError(''); setMessage('');
     try {
-      const res = await fetch(`http://localhost:5000/api/suppliers/${id}/deactivate`, {
+      const res = await fetch(`${API_BASE}/api/suppliers/${id}/deactivate`, {
         method: 'PUT',
         headers: getHeaders()
       });
       if (res.ok) {
+        toast.success('Supplier deactivated successfully!');
         setMessage('✅ Supplier deactivated successfully!');
         fetchData();
       } else {
+        toast.error('Failed to deactivate supplier.');
         setError('Failed to deactivate supplier.');
       }
-    } catch {
-      setMessage('✅ Supplier deactivated! (Demo Mode)');
-      setSuppliers(prev => prev.map(s => s._id === id ? { ...s, status: 'Inactive' } : s));
+    } catch (err) {
+      toast.error(err.message || 'Failed to deactivate supplier.');
+      setError(err.message || 'Failed to deactivate supplier.');
     }
   };
 
@@ -538,23 +701,28 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     e.preventDefault();
     setError(''); setMessage('');
     if (!isValidPhone(editSupForm.phone)) {
+      toast.warning(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
       setError(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
       return;
     }
     try {
-      const res = await fetch(`http://localhost:5000/api/suppliers/${id}`, {
+      const res = await fetch(`${API_BASE}/api/suppliers/${id}`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify(editSupForm)
       });
       if (res.ok) {
+        toast.success('Supplier updated successfully!');
         setMessage('✅ Supplier updated successfully!');
         setEditingSupplierId(null);
         fetchData();
+        setTimeout(() => scrollToElement('#suppliers-list-section'), 100);
       } else {
+        toast.error('Failed to update supplier.');
         setError('Failed to update supplier.');
       }
     } catch {
+      toast.error('Connection failed.');
       setError('Connection failed.');
     }
   };
@@ -833,6 +1001,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             { id: 'orders', label: 'Purchase Orders', icon: '📦' },
             { id: 'suppliers', label: 'Suppliers Registry', icon: '🏭' },
             { id: 'payment', label: 'Payment', icon: '💳' },
+            { id: 'reports', label: 'Reports', icon: '📑' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
             <div key={item.id} onClick={() => { setActivePage(item.id); setError(''); setMessage(''); }}
@@ -855,6 +1024,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             {activePage === 'orders' && 'Purchase Orders Catalog'}
             {activePage === 'suppliers' && 'Supplier Registry'}
             {activePage === 'payment' && 'Payment Portal'}
+            {activePage === 'reports' && 'Reports Center'}
             {activePage === 'settings' && 'User Settings & Preferences'}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -998,7 +1168,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           {message && <div style={{ background: '#e8f5e9', border: '1px solid #4caf50', color: '#2e7d32', padding: '10px 16px', borderRadius: '6px', marginBottom: '16px' }}>{message}</div>}
 
           {/* Stats Bar */}
-          {activePage === 'settings' ? null : activePage === 'suppliers' ? (
+          {activePage === 'settings' || activePage === 'reports' ? null : activePage === 'suppliers' ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
               {supplierStats.map((s, i) => (
                 <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
@@ -1177,7 +1347,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                 const reason = window.prompt(`Enter reason for declining Purchase Request for ${pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}:`);
                                 if (reason === null) return;
                                 try {
-                                  const res = await fetch(`http://localhost:5000/api/purchase-requests/${pr._id}/status`, {
+                                  const res = await fetch(`${API_BASE}/api/purchase-requests/${pr._id}/status`, {
                                     method: 'PUT',
                                     headers: getHeaders(),
                                     body: JSON.stringify({ status: 'Declined', reason })
@@ -1240,7 +1410,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
               {/* Create PO Form */}
               {showForm && (
-                <div style={{ background: 'white', borderRadius: '10px', padding: '28px', marginBottom: '24px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)', border: '1px solid #e2e8f0' }}>
+                <div id="po-form-section" style={{ background: 'white', borderRadius: '10px', padding: '28px', marginBottom: '24px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)', border: '1px solid #e2e8f0' }}>
                   <h3 style={{ margin: '0 0 4px', color: '#0d1b4b', fontSize: '18px' }}>Create New Purchase Order</h3>
                   <p style={{ margin: '0 0 20px', color: '#94a3b8', fontSize: '12px' }}>Fields marked * are required</p>
                   <form onSubmit={handlePOSubmit}>
@@ -1276,7 +1446,8 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     <div style={{ paddingBottom: '20px', marginBottom: '20px', borderBottom: '1px solid #f1f5f9' }}>
                       <h4 style={poSectionHeaderStyle}>Order Items Specification</h4>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: poItemGridCols, gap: '8px', padding: '0 2px 8px', fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: form.prId ? '36px ' + poItemGridCols : poItemGridCols, gap: '8px', padding: '0 2px 8px', fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.02em', alignItems: 'center' }}>
+                        {form.prId && <span style={{ textAlign: 'center' }}>Select</span>}
                         <span>Item</span>
                         <span>Qty</span>
                         <span>Unit</span>
@@ -1286,16 +1457,31 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       </div>
 
                       {form.items.map((item, index) => {
+                        const isSelected = item.selected !== false;
                         const lineTotal = (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0);
                         return (
-                          <div key={index} style={{ display: 'grid', gridTemplateColumns: poItemGridCols, gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+                          <div key={index} style={{ display: 'grid', gridTemplateColumns: form.prId ? '36px ' + poItemGridCols : poItemGridCols, gap: '8px', marginBottom: '8px', alignItems: 'center', opacity: isSelected ? 1 : 0.45 }}>
+                            {form.prId && (
+                              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={e => updateItem(index, 'selected', e.target.checked)}
+                                  style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#2563eb' }}
+                                  title="Include item in PO"
+                                />
+                              </div>
+                            )}
                             <input placeholder="Material Name" value={item.materialName}
-                              onChange={e => updateItem(index, 'materialName', e.target.value)} required
+                              disabled={!isSelected}
+                              onChange={e => updateItem(index, 'materialName', e.target.value)} required={isSelected}
                               className="po-field" style={poFieldStyle} />
                             <input type="number" placeholder="Qty" value={item.quantity} min="0"
-                              onChange={e => updateItem(index, 'quantity', e.target.value)} required
+                              disabled={!isSelected}
+                              onChange={e => updateItem(index, 'quantity', e.target.value)} required={isSelected}
                               className="po-field" style={{ ...poFieldStyle, textAlign: 'right' }} />
                             <select value={item.unit} onChange={e => updateItem(index, 'unit', e.target.value)}
+                              disabled={!isSelected}
                               className="po-field" style={poFieldStyle}>
                               {!['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].includes(item.unit) && item.unit && (
                                 <option value={item.unit}>{item.unit}</option>
@@ -1303,9 +1489,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               {['kg', 'ton', 'bag', 'bags', 'm3', 'litre', 'piece'].map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
                             <input type="number" placeholder="0.00" value={item.unitPrice} min="0"
-                              onChange={e => updateItem(index, 'unitPrice', e.target.value)} required
+                              disabled={!isSelected}
+                              onChange={e => updateItem(index, 'unitPrice', e.target.value)} required={isSelected}
                               className="po-field" style={{ ...poFieldStyle, textAlign: 'right' }} />
-                            <div style={{ textAlign: 'right', fontSize: '13px', fontWeight: '600', color: '#334155', padding: '10px 4px' }}>
+                            <div style={{ textAlign: 'right', fontSize: '13px', fontWeight: '600', color: isSelected ? '#334155' : '#94a3b8', padding: '10px 4px' }}>
                               {lineTotal.toLocaleString()}
                             </div>
                             {form.items.length > 1 ? (
@@ -1364,9 +1551,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     </div>
 
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 28px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', boxShadow: '0 2px 6px rgba(37, 99, 235,0.3)' }}>
+                      <LoadingButton
+                        type="submit"
+                        loading={poSubmitting}
+                        loadingText="Creating PO..."
+                        style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 28px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', boxShadow: '0 2px 6px rgba(37, 99, 235,0.3)' }}
+                      >
                         Submit Purchase Order
-                      </button>
+                      </LoadingButton>
                       <button type="button" onClick={() => setShowForm(false)}
                         style={{ background: 'white', color: '#475569', border: '1px solid #cbd5e1', padding: '12px 28px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>
                         Cancel
@@ -1377,7 +1569,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
               )}
 
               {/* Purchase Orders Table */}
-              <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+              <div id="po-list-section" style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
@@ -1407,7 +1599,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                 if (!supplierId) return;
                                 try {
                                   const token = JSON.parse(localStorage.getItem('user'))?.token;
-                                  const res = await fetch(`http://localhost:5000/api/purchase-orders/${po._id}/supplier`, {
+                                  const res = await fetch(`${API_BASE}/api/purchase-orders/${po._id}/supplier`, {
                                     method: 'PUT',
                                     headers: {
                                       'Content-Type': 'application/json',
@@ -1419,15 +1611,11 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                     setMessage('✅ Supplier assigned successfully!');
                                     fetchData();
                                   } else {
-                                    // Fallback for Demo Mode
-                                    const supName = suppliers.find(s => s._id === supplierId)?.name || 'Supplier';
-                                    setOrders(prev => prev.map(o => o._id === po._id ? { ...o, supplier: supName } : o));
-                                    setMessage('✅ Supplier assigned successfully! (Demo Mode)');
+                                    const data = await res.json().catch(() => ({}));
+                                    setError(data.message || 'Failed to assign supplier.');
                                   }
-                                } catch {
-                                  const supName = suppliers.find(s => s._id === supplierId)?.name || 'Supplier';
-                                  setOrders(prev => prev.map(o => o._id === po._id ? { ...o, supplier: supName } : o));
-                                  setMessage('✅ Supplier assigned successfully! (Demo Mode)');
+                                } catch (err) {
+                                  setError(err.message || 'Failed to assign supplier.');
                                 }
                               }}
                               style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '13px', maxWidth: '160px', outline: 'none' }}
@@ -1464,27 +1652,26 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           }}>{po.status}</span>
                         </td>
                         <td style={{ padding: '12px 16px' }}>
-                          <span style={{
-                            background: po.paymentStatus === 'paid' ? '#dcfce7' : po.paymentStatus === 'failed' ? '#fee2e2' : '#fef3c7',
-                            color: po.paymentStatus === 'paid' ? '#15803d' : po.paymentStatus === 'failed' ? '#991b1b' : '#b45309',
-                            padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold'
-                          }}>
-                            {po.paymentStatus === 'paid' ? '✓ Paid' : po.paymentStatus === 'failed' ? 'Failed' : 'Pending'}
-                          </span>
+                          {(() => {
+                            const pay = getPoPaymentState(po);
+                            return (
+                              <span
+                                onClick={pay.ready ? () => setActivePage('payment') : undefined}
+                                title={pay.ready ? 'Go to Payment Portal to pay this invoice' : undefined}
+                                style={{
+                                  background: pay.bg, color: pay.color,
+                                  padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold',
+                                  display: 'inline-block', cursor: pay.ready ? 'pointer' : 'default'
+                                }}>
+                                {pay.label}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td style={{ padding: '12px 16px' }}>
                           <div style={{ display: 'flex', gap: '6px', flexDirection: 'column', width: '130px' }}>
                             {po.status === 'Pending' && (
-                              <div style={{ display: 'flex', gap: '4px' }}>
-                                <button onClick={() => handleUpdateStatus(po._id, 'Approved')}
-                                  style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', flex: 1 }}>
-                                  Approve
-                                </button>
-                                <button onClick={() => handleUpdateStatus(po._id, 'Rejected')}
-                                  style={{ background: '#ef4444', color: 'white', border: 'none', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', flex: 1 }}>
-                                  Reject
-                                </button>
-                              </div>
+                              <span style={{ fontSize: '11px', color: '#b45309', fontWeight: '600' }}>Awaiting Director approval</span>
                             )}
                             {po.status === 'Approved' && (
                               <button onClick={() => handleSendToSupplier(po._id, po.poNumber, po.supplier)}
@@ -1492,34 +1679,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                 Send to Supplier
                               </button>
                             )}
-                            {['Approved', 'Sent', 'Delivered'].includes(po.status) && po.paymentStatus !== 'paid' && (
-                              <button
-                                onClick={() => {
-                                  setPayModalPO(po);
-                                  setPayMethod('Stripe');
-                                  setError('');
-                                }}
-                                style={{
-                                  background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                  color: 'white',
-                                  border: 'none',
-                                  padding: '6px 10px',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  fontSize: '11px',
-                                  fontWeight: 'bold',
-                                  marginTop: '2px'
-                                }}
-                              >
-                                💳 Pay Now
-                              </button>
-                            )}
                             <select
                               value={po.status} 
                               onChange={e => handleUpdateStatus(po._id, e.target.value)}
                               style={{ padding: '4px', fontSize: '11px', borderRadius: '4px', border: '1px solid #ddd', cursor: 'pointer', outline: 'none', background: 'white' }}
                             >
-                              {['Pending', 'Approved', 'Rejected', 'Sent', 'Delivered', 'Closed', 'Cancelled'].map(st => (
+                              {getPoStatusOptions(po.status).map(st => (
                                 <option key={st} value={st}>{st}</option>
                               ))}
                             </select>
@@ -1539,7 +1704,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             <div>
               {/* Add Supplier Form */}
               {showSupplierForm && (
-                <div style={{ background: 'white', borderRadius: '8px', padding: '24px', marginBottom: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', border: '1px solid #2563eb' }}>
+                <div id="supplier-form-section" style={{ background: 'white', borderRadius: '8px', padding: '24px', marginBottom: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', border: '1px solid #2563eb' }}>
                   <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>Add New Supplier</h3>
                   <form onSubmit={handleSupplierSubmit}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
@@ -1580,7 +1745,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Save Supplier</button>
+                      <LoadingButton
+                        type="submit"
+                        loading={supplierSubmitting}
+                        loadingText="Saving Supplier..."
+                        style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}
+                      >
+                        Save Supplier
+                      </LoadingButton>
                       <button type="button" onClick={() => setShowSupplierForm(false)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
                     </div>
                   </form>
@@ -1593,7 +1765,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   style={{ padding: '10px 16px', border: '1px solid #ddd', borderRadius: '6px', width: '320px', fontSize: '14px' }} />
               </div>
 
-              <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+              <div id="suppliers-list-section" style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
@@ -1685,7 +1857,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'payment' && (
-            <div>
+            <div id="payment-portal-section">
               <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
                 <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b' }}>
                   <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>💳 Supplier Invoice & Payment Status</h3>
@@ -1693,13 +1865,13 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
+                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status', 'Document', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {invoices.map((inv, i) => {
+                    {invoicesPagination.paginatedData.map((inv, i) => {
                       const status = inv.status;
                       const isOverdue = status !== 'Paid' && inv.dueDate && new Date(inv.dueDate) < now;
 
@@ -1726,10 +1898,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                       }
 
                       let payMethodDisplay = '-';
-                      if (inv.paymentMethod) {
+                      if (status === 'Paid' && inv.paymentMethod) {
                         payMethodDisplay = inv.paymentMethod + (inv.stripeSessionId ? ` (..${inv.stripeSessionId.slice(-6)})` : '');
                       } else if (status === 'Paid') {
-                        payMethodDisplay = 'Stripe (Direct)';
+                        payMethodDisplay = 'Stripe';
                       }
 
                       return (
@@ -1753,6 +1925,25 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               fontWeight: '600'
                             }}>{displayStatus}</span>
                           </td>
+                          <td style={{ padding: '14px 16px' }}>
+                            {inv.file?.url ? (
+                              inv.fileExists === false ? (
+                                <span style={{ color: '#d97706', fontSize: '11px', fontWeight: 'bold' }} title="Invoice file is missing on disk. Ask Store Officer to re-upload.">
+                                  ⚠️ File missing
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => openUploadedFile(inv.file.url, { fileType: 'invoice', toast })}
+                                  style={{ background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}
+                                >
+                                  👁 View
+                                </button>
+                              )
+                            ) : (
+                              <span style={{ fontSize: '11px', color: '#94a3b8' }}>No file</span>
+                            )}
+                          </td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>
                             {inv.paidAt ? formatDate(inv.paidAt) : '-'}
                           </td>
@@ -1760,9 +1951,23 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                             {payMethodDisplay}
                           </td>
                           <td style={{ padding: '14px 16px' }}>
-                            {status === 'Approved' ? (
+                            {status === 'Paid' ? (
                               <button
-                                onClick={() => handlePayInvoice(inv._id)}
+                                onClick={() => handleDownloadReceipt(inv)}
+                                style={{ background: '#e8f5e9', color: '#2e7d32', border: '1px solid #a5d6a7', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              >
+                                🧾 Receipt
+                              </button>
+                            ) : status === 'Approved' ? (
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              <button
+                                onClick={() => openManualPay(inv)}
+                                style={{ background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', padding: '7px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              >
+                                💵 Cash / Cheque
+                              </button>
+                              <button
+                                onClick={() => handlePayInvoice(inv)}
                                 disabled={payingInvoiceId === inv._id}
                                 style={{
                                   background: payingInvoiceId === inv._id ? '#9fa8da' : '#635bff',
@@ -1775,8 +1980,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                                   cursor: payingInvoiceId === inv._id ? 'not-allowed' : 'pointer'
                                 }}
                               >
-                                {payingInvoiceId === inv._id ? 'Redirecting…' : '💳 Pay'}
+                                {payingInvoiceId === inv._id ? 'Redirecting…' : '💳 Stripe'}
                               </button>
+                              </div>
                             ) : (
                               <span style={{ color: '#bbb', fontSize: '12px' }}>-</span>
                             )}
@@ -1793,9 +1999,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={invoicesPagination} />
               </div>
             </div>
           )}
+
+          {activePage === 'reports' && <ReportsCenter tabs={['procurement', 'payment', 'inventory']} />}
 
           {activePage === 'settings' && <SettingsPage user={user} onLogout={onLogout} onUserUpdate={onUserUpdate} />}
 
@@ -1807,118 +2016,149 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       </div>
 
       {renderPOStatsModal()}
-      {(() => {
-        if (!payModalPO) return null;
-        return (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-            <div style={{ background: 'white', padding: '28px', borderRadius: '10px', width: '480px', maxWidth: '90%', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
-              <h2 style={{ marginTop: 0, color: '#0d1b4b', fontSize: '18px', marginBottom: '16px' }}>
-                Payment Options - PO: {payModalPO.poNumber}
-              </h2>
-              <div style={{ background: '#f8fafc', padding: '12px 16px', borderRadius: '6px', marginBottom: '20px', fontSize: '13px' }}>
-                <div><strong>Supplier:</strong> {typeof payModalPO.supplier === 'object' ? (payModalPO.supplier?.name || payModalPO.supplier?.supplierId || '—') : (payModalPO.supplier || '—')}</div>
-                <div><strong>Amount:</strong> LKR {payModalPO.totalAmount?.toLocaleString()}</div>
-              </div>
 
-              <label style={{ display: 'block', fontWeight: 'bold', fontSize: '13px', marginBottom: '8px' }}>Select Payment Method:</label>
-              <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
-                {[
-                  { id: 'Stripe', label: '💳 Card (Stripe)' },
-                  { id: 'Cash', label: '💵 Cash' },
-                  { id: 'Cheque', label: '📜 Cheque' }
-                ].map(m => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setPayMethod(m.id)}
-                    style={{
-                      flex: 1,
-                      padding: '10px 12px',
-                      borderRadius: '6px',
-                      border: payMethod === m.id ? '2px solid #2563eb' : '1px solid #cbd5e1',
-                      background: payMethod === m.id ? '#eff6ff' : 'white',
-                      color: payMethod === m.id ? '#1e40af' : '#475569',
-                      fontWeight: 'bold',
-                      fontSize: '13px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
+      {manualPayInvoice && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <form onSubmit={handleRecordPayment} style={{ background: 'white', borderRadius: '12px', width: '460px', maxWidth: '92vw', padding: '26px', boxShadow: '0 10px 25px rgba(0,0,0,0.3)', borderTop: '6px solid #0d1b4b', textAlign: 'left', color: '#0f172a' }}>
+            <h3 style={{ margin: '0 0 4px', color: '#0d1b4b', fontSize: '17px' }}>Record Payment</h3>
+            <p style={{ margin: '0 0 16px', color: '#64748b', fontSize: '13px' }}>
+              Invoice <strong>{manualPayInvoice.invoiceNumber}</strong> · {manualPayInvoice.supplier?.name || 'Supplier'} · PO {manualPayInvoice.po?.poNumber || '-'}
+            </p>
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', fontSize: '13px' }}>
+              Amount to pay: <strong style={{ fontSize: '16px', color: '#0d1b4b' }}>LKR {Number(manualPayInvoice.amount).toLocaleString()}</strong>
+              <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>Approved by {manualPayInvoice.approvedBy || 'Director'}</div>
+            </div>
 
-              {payMethod === 'Cheque' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Cheque Number</label>
-                    <input type="text" placeholder="e.g. CHQ-88912" value={chequeNo} onChange={e => setChequeNo(e.target.value)} style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', marginTop: '4px' }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Bank Name</label>
-                    <input type="text" placeholder="e.g. Commercial Bank" value={bankName} onChange={e => setBankName(e.target.value)} style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', marginTop: '4px' }} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Cheque Date</label>
-                    <input type="date" value={chequeDate} onChange={e => setChequeDate(e.target.value)} style={{ width: '100%', padding: '8px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '13px', marginTop: '4px' }} />
-                  </div>
-                </div>
-              )}
+            {manualPayError && <div style={{ background: '#ffebee', border: '1px solid #ef5350', color: '#c62828', padding: '8px 12px', borderRadius: '6px', marginBottom: '12px', fontSize: '13px' }}>{manualPayError}</div>}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button type="button" onClick={() => setPayModalPO(null)} style={{ padding: '8px 16px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}>
-                  Cancel
-                </button>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Payment Method *</label>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+              {['Cash', 'Cheque'].map(mth => (
                 <button
                   type="button"
-                  disabled={isSubmittingPayment}
-                  onClick={async () => {
-                    if (!payModalPO) return;
-                    setError(''); setMessage('');
-                    setIsSubmittingPayment(true);
-                    try {
-                      if (payMethod === 'Stripe') {
-                        await createCheckoutSession(payModalPO._id);
-                      } else {
-                        const res = await fetch('http://localhost:5000/api/payments/manual', {
-                          method: 'POST',
-                          headers: getHeaders(),
-                          body: JSON.stringify({
-                            purchaseOrderId: payModalPO._id,
-                            method: payMethod,
-                            amount: payModalPO.totalAmount,
-                            chequeNumber: chequeNo,
-                            bankName,
-                            chequeDate
-                          })
-                        });
-                        const data = await res.json();
-                        if (data.success) {
-                          setMessage(`✅ ${payMethod} payment recorded successfully for PO ${payModalPO.poNumber}!`);
-                          setPayModalPO(null);
-                          setChequeNo('');
-                          setBankName('');
-                          setChequeDate('');
-                          fetchData();
-                        } else {
-                          setError(data.message || 'Failed to record payment.');
-                        }
-                      }
-                    } catch (err) {
-                      setError(err.message || 'Payment execution failed.');
-                    } finally {
-                      setIsSubmittingPayment(false);
-                    }
-                  }}
-                  style={{ padding: '8px 20px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}
+                  key={mth}
+                  onClick={() => setManualPayForm({ ...manualPayForm, method: mth })}
+                  style={{ flex: 1, padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: '700', fontSize: '13px', border: manualPayForm.method === mth ? '2px solid #ff9800' : '1px solid #cbd5e1', background: manualPayForm.method === mth ? '#fff7ed' : 'white', color: '#0d1b4b' }}
                 >
-                  {isSubmittingPayment ? 'Processing...' : payMethod === 'Stripe' ? 'Proceed to Stripe' : 'Confirm Payment'}
+                  {mth === 'Cash' ? '💵 Cash' : '🏦 Cheque'}
                 </button>
-              </div>
+              ))}
             </div>
-          </div>
-        );
-      })()}
+
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>
+              {manualPayForm.method === 'Cheque' ? 'Cheque Number *' : 'Voucher / Receipt No.'}
+            </label>
+            <input
+              type="text"
+              value={manualPayForm.reference}
+              onChange={e => {
+                setManualPayForm({ ...manualPayForm, reference: e.target.value });
+                if (manualPayFieldErrors.reference) setManualPayFieldErrors({ ...manualPayFieldErrors, reference: null });
+              }}
+              placeholder={manualPayForm.method === 'Cheque' ? 'e.g. 004512' : 'Optional (e.g. VCH-001)'}
+              style={{ width: '100%', padding: '9px 12px', border: `1px solid ${manualPayFieldErrors.reference ? '#ef4444' : '#cbd5e1'}`, borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
+            />
+            {manualPayFieldErrors.reference && (
+              <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '2px', marginBottom: '10px', display: 'block', fontWeight: '600' }}>
+                {manualPayFieldErrors.reference}
+              </span>
+            )}
+
+            {manualPayForm.method === 'Cheque' && (
+              <>
+                <div style={{ marginTop: '12px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Bank Name *</label>
+                  <input
+                    type="text"
+                    value={manualPayForm.bankName}
+                    onChange={e => {
+                      setManualPayForm({ ...manualPayForm, bankName: e.target.value });
+                      if (manualPayFieldErrors.bankName) setManualPayFieldErrors({ ...manualPayFieldErrors, bankName: null });
+                    }}
+                    placeholder="e.g. Commercial Bank"
+                    style={{ width: '100%', padding: '9px 12px', border: `1px solid ${manualPayFieldErrors.bankName ? '#ef4444' : '#cbd5e1'}`, borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
+                  />
+                  {manualPayFieldErrors.bankName && (
+                    <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '2px', display: 'block', fontWeight: '600' }}>
+                      {manualPayFieldErrors.bankName}
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ marginTop: '12px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>
+                    Cheque Date * <span style={{ fontWeight: 'normal', color: '#64748b' }}>(Post-dated cheques allowed)</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={manualPayForm.chequeDate}
+                    onChange={e => {
+                      setManualPayForm({ ...manualPayForm, chequeDate: e.target.value });
+                      if (manualPayFieldErrors.chequeDate) setManualPayFieldErrors({ ...manualPayFieldErrors, chequeDate: null });
+                    }}
+                    style={{ width: '100%', padding: '9px 12px', border: `1px solid ${manualPayFieldErrors.chequeDate ? '#ef4444' : '#cbd5e1'}`, borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
+                  />
+                  {manualPayFieldErrors.chequeDate && (
+                    <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '2px', display: 'block', fontWeight: '600' }}>
+                      {manualPayFieldErrors.chequeDate}
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
+
+            <div style={{ marginTop: '12px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Payment Date *</label>
+              <input
+                type="date"
+                value={manualPayForm.paidAt}
+                max={new Date().toISOString().substring(0, 10)}
+                onChange={e => {
+                  setManualPayForm({ ...manualPayForm, paidAt: e.target.value });
+                  if (manualPayFieldErrors.paidAt) setManualPayFieldErrors({ ...manualPayFieldErrors, paidAt: null });
+                }}
+                required
+                style={{ width: '100%', padding: '9px 12px', border: `1px solid ${manualPayFieldErrors.paidAt ? '#ef4444' : '#cbd5e1'}`, borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
+              />
+              {manualPayFieldErrors.paidAt && (
+                <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '2px', display: 'block', fontWeight: '600' }}>
+                  {manualPayFieldErrors.paidAt}
+                </span>
+              )}
+            </div>
+
+            <div style={{ marginTop: '12px', marginBottom: '18px' }}>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>
+                Notes <span style={{ fontWeight: 'normal', color: '#64748b' }}>(Max 500 characters)</span>
+              </label>
+              <textarea
+                value={manualPayForm.notes}
+                maxLength={500}
+                onChange={e => {
+                  setManualPayForm({ ...manualPayForm, notes: e.target.value });
+                  if (manualPayFieldErrors.notes) setManualPayFieldErrors({ ...manualPayFieldErrors, notes: null });
+                }}
+                placeholder="Optional payment reference or transaction notes..."
+                style={{ width: '100%', padding: '9px 12px', border: `1px solid ${manualPayFieldErrors.notes ? '#ef4444' : '#cbd5e1'}`, borderRadius: '6px', fontSize: '13px', height: '60px', boxSizing: 'border-box' }}
+              />
+              {manualPayFieldErrors.notes && (
+                <span style={{ color: '#ef4444', fontSize: '11px', marginTop: '2px', display: 'block', fontWeight: '600' }}>
+                  {manualPayFieldErrors.notes}
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button type="button" onClick={() => setManualPayInvoice(null)} disabled={recordingPayment} style={{ background: '#f1f5f9', color: '#0d1b4b', border: '1px solid #cbd5e1', padding: '9px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
+                Cancel
+              </button>
+              <LoadingButton type="submit" loading={recordingPayment} loadingText="Recording Payment..." style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '9px 18px', borderRadius: '6px', fontWeight: '700', fontSize: '13px' }}>
+                Record Payment
+              </LoadingButton>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };

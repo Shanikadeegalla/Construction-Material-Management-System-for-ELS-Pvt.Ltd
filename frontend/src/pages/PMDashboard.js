@@ -3,9 +3,15 @@ import SettingsPage from './SettingsPage';
 import { Calendar } from 'lucide-react';
 import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
+import { API_BASE } from '../config';
 import Pagination, { usePagination } from '../components/Pagination';
+import { scrollToElement } from '../utils/scrollToElement';
+import { useToast } from '../context/ToastContext';
+import LoadingButton from '../components/LoadingButton';
+import openUploadedFile from '../utils/openUploadedFile';
 
 const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
+  const toast = useToast();
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -18,6 +24,8 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [boms, setBoms] = useState([]);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [projectSubmitting, setProjectSubmitting] = useState(false);
+  const [bomSubmitting, setBomSubmitting] = useState(false);
   const [modal, setModal] = useState(null);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [transfers, setTransfers] = useState([]);
@@ -82,7 +90,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const fetchRequests = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/purchase-requests', {
+      const res = await fetch(`${API_BASE}/api/purchase-requests`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -99,7 +107,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const fetchBoms = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/bom', {
+      const res = await fetch(`${API_BASE}/api/bom`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -118,7 +126,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchNotifications = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/inventory/notifications', {
+      const res = await fetch(`${API_BASE}/api/inventory/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -131,7 +139,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       }
       setNotifications(notifList);
 
-      const countRes = await fetch('http://localhost:5000/api/notifications/count', {
+      const countRes = await fetch(`${API_BASE}/api/notifications/count`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const countData = await countRes.json();
@@ -153,7 +161,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchBomNotifications = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/notifications', {
+      const res = await fetch(`${API_BASE}/api/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -170,7 +178,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const handleMarkAllNotificationsRead = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+      await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -184,7 +192,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const handleMarkNotificationRead = async (notif) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+      await fetch(`${API_BASE}/api/notifications/${notif._id}/read`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -201,7 +209,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const fetchProjects = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/projects', {
+      const res = await fetch(`${API_BASE}/api/projects`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -224,7 +232,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     setNextProjectIdLoading(true);
     try {
       const query = startDate ? `?startDate=${encodeURIComponent(startDate)}` : '';
-      const res = await fetch(`http://localhost:5000/api/projects/next-id${query}`, {
+      const res = await fetch(`${API_BASE}/api/projects/next-id${query}`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -247,7 +255,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const fetchTransfers = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/inventory/transfers', {
+      const res = await fetch(`${API_BASE}/api/inventory/transfers`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -292,16 +300,19 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     if (projectForm.startDate && projectForm.expectedEndDate) {
       if (new Date(projectForm.expectedEndDate) < new Date(projectForm.startDate)) {
+        toast.error('Expected End Date cannot be earlier than Start Date');
         setMessage('⚠️ Error: Expected End Date cannot be earlier than Start Date');
         return;
       }
     }
 
     if (!projectForm.budget || Number(projectForm.budget) <= 0 || isNaN(Number(projectForm.budget))) {
+      toast.error('Budget must be a positive number greater than zero');
       setMessage('⚠️ Error: Budget must be a positive number greater than zero');
       return;
     }
 
+    setProjectSubmitting(true);
     const formData = new FormData();
     formData.append('projectName', projectForm.projectName);
     formData.append('clientName', projectForm.clientName);
@@ -316,11 +327,11 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      let url = 'http://localhost:5000/api/projects';
+      let url = `${API_BASE}/api/projects`;
       let method = 'POST';
 
       if (editingProjectId) {
-        url = `http://localhost:5000/api/projects/${editingProjectId}`;
+        url = `${API_BASE}/api/projects/${editingProjectId}`;
         method = 'PUT';
       }
 
@@ -334,6 +345,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
       const data = await res.json();
       if (data.success) {
+        toast.success(`Project saved with ID: ${data.data.projectId}`);
         setMessage(`✅ Success! Project saved with ID: ${data.data.projectId}`);
         setProjectForm({
           projectName: '',
@@ -355,17 +367,23 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
         if (specsInput) specsInput.value = '';
 
         fetchProjects();
+        setTimeout(() => scrollToElement('#pm-projects-list'), 100);
       } else {
+        toast.error(data.message || 'Failed to save project.');
         setMessage(`⚠️ Error: ${data.message}`);
       }
     } catch (err) {
+      toast.error('Connection refused. Failed to save project.');
       setMessage('⚠️ Connection refused. Failed to save project.');
+    } finally {
+      setProjectSubmitting(false);
     }
   };
 
   const handleDocumentDownload = async (url, filename) => {
     try {
       const res = await fetch(url);
+      if (!res.ok) throw new Error(`File not found on server (${res.status})`);
       const blob = await res.blob();
       const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -376,7 +394,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       a.remove();
       window.URL.revokeObjectURL(blobUrl);
     } catch (err) {
-      window.open(url, '_blank');
+      alert(`Unable to download file: ${err.message || 'File not available'}`);
     }
   };
 
@@ -395,7 +413,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchMaterialMaster = async () => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch('http://localhost:5000/api/item-master?status=Active', {
+      const res = await fetch(`${API_BASE}/api/item-master?status=Active`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -412,7 +430,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/versions/${projId}`, {
+      const res = await fetch(`${API_BASE}/api/bom/versions/${projId}`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -458,7 +476,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`http://localhost:5000/api/bom/versions/${projId}`, {
+      const res = await fetch(`${API_BASE}/api/bom/versions/${projId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -522,7 +540,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (!projId) return;
 
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/versions/${projId}`, {
+      const res = await fetch(`${API_BASE}/api/bom/versions/${projId}`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -657,9 +675,15 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     setSuggestions(getMatchingMaterials('', category));
   };
 
-  const handleAddMaterialRow = () => {
-    setBomMaterials([...bomMaterials, { ...emptyBomMaterialRow }]);
-  };
+  // Keeps one blank row at the bottom of the table: as soon as the last row has a
+  // material picked from the master list, a fresh empty row is appended below it.
+  // The trailing blank row is ignored on submit and in the summary.
+  useEffect(() => {
+    const last = bomMaterials[bomMaterials.length - 1];
+    if (last && last.name.trim() && (last.materialId || last.unit)) {
+      setBomMaterials(prev => [...prev, { ...emptyBomMaterialRow }]);
+    }
+  }, [bomMaterials]);
 
   const handleRemoveMaterialRow = (idx) => {
     if (bomMaterials.length === 1) return;
@@ -718,37 +742,38 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     
     if (!bomProjectId) {
+      toast.warning('Please select a project.');
       setMessage('⚠️ Please select a project.');
       return;
     }
 
-    const invalid = bomMaterials.some(m => !m.name.trim() || m.plannedQty <= 0);
+    const filledMaterials = bomMaterials.filter(m => m.name.trim());
+    const invalid = filledMaterials.length === 0 || filledMaterials.some(m => m.plannedQty <= 0);
     if (invalid) {
+      toast.warning('Please provide valid names and positive quantities for all materials.');
       setMessage('⚠️ Please provide valid names and positive quantities for all materials.');
       return;
     }
 
-    // Every row must reference an active Master Material - either selected
-    // directly from the dropdown (materialId set) or matching one by name
-    // (covers reloading an existing draft BOM). Free-typed names that don't
-    // exist in the master list must never reach the backend.
-    const unmatched = bomMaterials.some(m => {
+    const unmatched = filledMaterials.some(m => {
       if (m.materialId) return false;
       return !materialMaster.some(mm => mm.materialName.toLowerCase().trim() === m.name.toLowerCase().trim());
     });
     if (unmatched) {
+      toast.warning('Please select every material from the Master Material dropdown.');
       setMessage('⚠️ Please select every material from the Master Material dropdown - manual entries are not allowed.');
       return;
     }
 
+    setBomSubmitting(true);
     try {
-      const res = await fetch('http://localhost:5000/api/bom', {
+      const res = await fetch(`${API_BASE}/api/bom`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
           projectId: bomProjectId,
           status: status,
-          materials: bomMaterials.map(m => ({
+          materials: filledMaterials.map(m => ({
             materialId: m.materialId || (materialMaster.find(mm => mm.materialName.toLowerCase().trim() === m.name.toLowerCase().trim())?._id || null),
             name: m.name,
             unit: m.unit,
@@ -762,6 +787,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
+        toast.success(`BOM v${data.data?.version || '1.0'} submitted to Director successfully!`);
         setMessage('✅ BOM submitted to Director successfully!');
         setCurrentBomMeta({
           bomNumber: data.data?.bomNumber,
@@ -773,27 +799,21 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
         setBomProjectId('');
         setBomMaterials([{ ...emptyBomMaterialRow }]);
         setCurrentBomMeta(null);
+        setShowBOMForm(false);
         fetchBoms();
         if (bomProjectId) {
           fetchBOMVersions(bomProjectId);
         }
+        setTimeout(() => scrollToElement('#pm-bom-list'), 100);
       } else {
+        toast.error(data.message || 'Failed to submit BOM.');
         setMessage(`❌ Failed: ${data.message}`);
       }
-    } catch {
-      setMessage('✅ BOM submitted successfully! (Demo mode)');
-      const newMockBom = {
-        _id: String(Date.now()),
-        projectId: { _id: bomProjectId, name: 'Project Name' },
-        version: 'v1.0',
-        createdBy: user?.name || 'Project Manager',
-        status: 'Submitted',
-        materials: bomMaterials,
-        createdAt: new Date().toISOString()
-      };
-      setBoms(prev => [newMockBom, ...prev]);
-      setBomProjectId('');
-      setBomMaterials([{ ...emptyBomMaterialRow }]);
+    } catch (err) {
+      toast.error('Error submitting BOM. Server connection failed.');
+      setMessage(`❌ Error submitting BOM: ${err.message || 'Server connection failed'}`);
+    } finally {
+      setBomSubmitting(false);
     }
   };
 
@@ -862,7 +882,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
             </button>
           </div>
         ) : (
-        <div style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
+        <div id="pm-project-form" style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #0d1b4b', paddingBottom: '10px', marginBottom: '20px' }}>
             <h3 style={{ margin: 0, color: '#0d1b4b', fontWeight: '700' }}>
               {editingProjectId ? '📝 Edit Project Details' : '🏗️ Create New Construction Project'}
@@ -1054,12 +1074,14 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
 
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button
+              <LoadingButton
                 type="submit"
+                loading={projectSubmitting}
+                loadingText="Saving Project..."
                 style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '14px', boxShadow: '0 4px 10px rgba(37, 99, 235,0.15)' }}
               >
                 {editingProjectId ? 'Update Project' : 'Create Project'}
-              </button>
+              </LoadingButton>
               {editingProjectId && (
                 <button
                   type="button"
@@ -1094,7 +1116,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
         )}
 
         {/* Project List Table */}
-        <div style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
+        <div id="pm-projects-list" style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
           <h3 style={{ margin: '0 0 20px', color: '#0d1b4b', borderBottom: '2px solid #0d1b4b', paddingBottom: '10px', fontWeight: '700' }}>📋 Construction Projects Registry</h3>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -1635,7 +1657,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           {activePage === 'bom' && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '30px' }}>
               {/* Create BOM Form */}
-              <div style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
+              <div id="pm-bom-form" style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                   <h3 style={{ margin: 0, color: '#0d1b4b', fontWeight: '700' }}>🏗️ Bill of Materials (BOM)</h3>
                   {!showBOMForm ? (
@@ -1849,7 +1871,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                                     }
                                   }}
                                   style={{ width: '100%', padding: '8px 28px 8px 8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '13px' }}
-                                  required
+                                  required={idx === 0}
                                 />
                                 <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: '11px', color: '#94a3b8', pointerEvents: 'none' }}>▼</span>
                               </div>
@@ -1989,7 +2011,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div>
                       <h4 style={{ color: '#0d1b4b', margin: '0 0 12px', fontSize: '14px', fontWeight: '700', borderBottom: '1px solid #cbd5e1', paddingBottom: '6px' }}>💰 ESTIMATED SUMMARY</h4>
                       <div style={{ fontSize: '13px', marginBottom: '8px', color: '#475569' }}>
-                        Total Material Items: <strong style={{ color: '#0d1b4b' }}>{bomMaterials.length}</strong>
+                        Total Material Items: <strong style={{ color: '#0d1b4b' }}>{bomMaterials.filter(m => m.name).length}</strong>
                       </div>
                       <div style={{ fontSize: '14px', color: '#2e7d32', fontWeight: '700' }}>
                         Total Cost: LKR {bomMaterials.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0).toLocaleString()}
@@ -2038,24 +2060,28 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-                    <button
-                      type="button"
-                      onClick={() => handleSubmitBOM()}
-                      disabled={bomMaterials.length === 0 || !bomMaterials[0].name}
-                      style={{
-                        background: (bomMaterials.length === 0 || !bomMaterials[0].name) ? '#cbd5e1' : '#2563eb',
-                        color: 'white',
-                        border: 'none',
-                        padding: '12px 24px',
-                        borderRadius: '6px',
-                        cursor: (bomMaterials.length === 0 || !bomMaterials[0].name) ? 'not-allowed' : 'pointer',
-                        fontWeight: '700',
-                        fontSize: '14px',
-                        boxShadow: (bomMaterials.length === 0 || !bomMaterials[0].name) ? 'none' : '0 4px 10px rgba(37, 99, 235,0.15)'
-                      }}
-                    >
-                      🚀 Submit to Director
-                    </button>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <LoadingButton
+                        type="button"
+                        loading={bomSubmitting}
+                        loadingText="Submitting BOM..."
+                        onClick={() => handleSubmitBOM()}
+                        disabled={bomMaterials.length === 0 || !bomMaterials[0].name}
+                        style={{
+                          background: (bomMaterials.length === 0 || !bomMaterials[0].name) ? '#cbd5e1' : '#2563eb',
+                          color: 'white',
+                          border: 'none',
+                          padding: '12px 24px',
+                          borderRadius: '6px',
+                          cursor: (bomMaterials.length === 0 || !bomMaterials[0].name) ? 'not-allowed' : 'pointer',
+                          fontWeight: '700',
+                          fontSize: '14px',
+                          boxShadow: (bomMaterials.length === 0 || !bomMaterials[0].name) ? 'none' : '0 4px 10px rgba(37, 99, 235,0.15)'
+                        }}
+                      >
+                        🚀 Submit to Director
+                      </LoadingButton>
+                    </div>
                   </div>
                 </form>
               </>
@@ -2063,7 +2089,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
 
               {/* View BOM Status List */}
-              <div style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
+              <div id="pm-bom-list" style={{ background: 'white', borderRadius: '8px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
                 <h3 style={{ margin: '0 0 20px', color: '#0d1b4b', borderBottom: '2px solid #0d1b4b', paddingBottom: '10px', fontWeight: '700' }}>📋 Bill of Materials (BOM) Status Registry</h3>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -2299,7 +2325,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           docs && docs.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {docs.map((doc, i) => {
-                const url = `http://localhost:5000${doc.filePath}`;
+                const url = `${API_BASE}${doc.filePath}`;
                 const isPdf = doc.filePath.toLowerCase().endsWith('.pdf');
                 const isImage = /\.(jpe?g|png)$/i.test(doc.filePath);
                 const icon = isPdf ? '📄' : isImage ? '🖼️' : '📎';
@@ -2311,7 +2337,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                       <button
                         type="button"
-                        onClick={() => window.open(url, '_blank')}
+                        onClick={() => openUploadedFile(url, { fileType: isPdf ? 'drawing' : 'specification', toast })}
                         style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
                       >
                         👁 View

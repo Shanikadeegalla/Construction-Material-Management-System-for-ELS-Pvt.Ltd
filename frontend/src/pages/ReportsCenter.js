@@ -4,6 +4,8 @@ import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { formatDate, formatDateTime } from '../utils/dateUtils';
 import { API_BASE } from '../config';
+import { useToast } from '../context/ToastContext';
+import Pagination, { usePagination } from '../components/Pagination';
 
 const num = (v) => Number(v) || 0;
 const money = (v) => num(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -48,6 +50,7 @@ const badgeColors = {
 };
 
 function ReportsCenter({ tabs }) {
+  const toast = useToast();
   const visibleTabs = REPORT_TABS.filter(t => !tabs || tabs.includes(t.id));
   const [activeTab, setActiveTab] = useState(visibleTabs[0]?.id || 'inventory');
   const [subView, setSubView] = useState({ inventory: 'levels', procurement: 'pos' });
@@ -389,6 +392,7 @@ function ReportsCenter({ tabs }) {
       alternateRowStyles: { fillColor: [248, 250, 252] }
     });
     doc.save(`${fileStem}.pdf`);
+    toast.success(`PDF Report "${report.title}" generated and downloaded`);
   };
 
   const exportExcel = () => {
@@ -405,11 +409,19 @@ function ReportsCenter({ tabs }) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Report');
     XLSX.writeFile(wb, `${fileStem}.xlsx`);
+    toast.success(`Excel Spreadsheet "${report.title}" generated and downloaded`);
   };
 
   const subViews = SUB_VIEWS[activeTab];
   const statusOptions = report.filters?.status;
   const locationOptions = report.filters?.location;
+
+  const reportPagination = usePagination(
+    report.rows,
+    10,
+    [activeTab, subView[activeTab], search, project, status, location, from, to],
+    { storageKey: `report_${activeTab}_${subView[activeTab] || 'default'}` }
+  );
 
   return (
     <div>
@@ -491,7 +503,15 @@ function ReportsCenter({ tabs }) {
         {loading ? (
           <div style={styles.empty}>Loading report...</div>
         ) : report.rows.length === 0 ? (
-          <div style={styles.empty}>No records match the selected filters.</div>
+          <div style={styles.empty}>
+            No records match the selected filters.
+            <button
+              onClick={() => { setSearch(''); setProject('All'); setStatus('All'); setLocation('All'); setFrom(''); setTo(''); }}
+              style={{ marginLeft: '12px', padding: '4px 10px', fontSize: '12px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+            >
+              Clear Filters
+            </button>
+          </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -503,7 +523,7 @@ function ReportsCenter({ tabs }) {
                 </tr>
               </thead>
               <tbody>
-                {report.rows.map((r, i) => (
+                {reportPagination.paginatedData.map((r, i) => (
                   <tr key={r._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
                     {report.columns.map(c => {
                       const value = c.get(r);
@@ -520,6 +540,10 @@ function ReportsCenter({ tabs }) {
                 ))}
               </tbody>
             </table>
+            <Pagination
+              pagination={reportPagination}
+              onClearFilters={() => { setSearch(''); setProject('All'); setStatus('All'); setLocation('All'); setFrom(''); setTo(''); }}
+            />
           </div>
         )}
       </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import VarianceReport from './VarianceReport';
+import ReportsCenter from './ReportsCenter';
 import SettingsPage from './SettingsPage';
 import { Calendar } from 'lucide-react';
 import { formatDate, formatDateLong, formatDayMonth, formatFullDate, formatShortDate, formatTime, formatDateTime } from '../utils/dateUtils';
@@ -19,8 +20,14 @@ import {
   ResponsiveContainer,
   Cell
 } from 'recharts';
+import { API_BASE } from '../config';
+import { scrollToElement } from '../utils/scrollToElement';
+import { useToast } from '../context/ToastContext';
+import LoadingButton from '../components/LoadingButton';
+import openUploadedFile from '../utils/openUploadedFile';
 
 const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
+  const toast = useToast();
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -97,7 +104,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const fetchNotifications = async () => {
     if (!hasSession()) return;
     try {
-      const res = await fetch('http://localhost:5000/api/notifications', {
+      const res = await fetch(`${API_BASE}/api/notifications`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -129,7 +136,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 0. Fetch Projects
     try {
-      const res = await fetch('http://localhost:5000/api/projects', { headers });
+      const res = await fetch(`${API_BASE}/api/projects`, { headers });
       const data = await res.json();
       let projList = data.success ? data.data : [];
       if (!projList || projList.length < 5) {
@@ -154,7 +161,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 1. Fetch BOMs
     try {
-      const res = await fetch('http://localhost:5000/api/bom', { headers });
+      const res = await fetch(`${API_BASE}/api/bom`, { headers });
       const data = await res.json();
       let bomList = data.success ? data.data : [];
       if (!bomList || bomList.length < 3) {
@@ -177,7 +184,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 2. Fetch POs (for Budget Utilized calculation)
     try {
-      const res = await fetch('http://localhost:5000/api/purchase-orders', { headers });
+      const res = await fetch(`${API_BASE}/api/purchase-orders`, { headers });
       const data = await res.json();
       let poList = data.success ? data.data : [];
       if (!poList || poList.length === 0) {
@@ -196,7 +203,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 2b. Fetch invoices awaiting payment approval
     try {
-      const res = await fetch('http://localhost:5000/api/invoices', { headers });
+      const res = await fetch(`${API_BASE}/api/invoices`, { headers });
       const data = await res.json();
       setInvoices(data.success ? data.data : []);
     } catch {
@@ -205,7 +212,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 3. Fetch Variance (for overall variance stat)
     try {
-      const res = await fetch('http://localhost:5000/api/material-usage/variance', { headers });
+      const res = await fetch(`${API_BASE}/api/material-usage/variance`, { headers });
       const data = await res.json();
       let varList = data.success ? (data.report || []) : [];
       if (!varList || varList.length === 0) {
@@ -224,7 +231,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 4. Fetch Inventory (for stock levels analytics)
     try {
-      const res = await fetch('http://localhost:5000/api/inventory', { headers });
+      const res = await fetch(`${API_BASE}/api/inventory`, { headers });
       const data = await res.json();
       let invList = Array.isArray(data) ? data : [];
       if (!invList || invList.length === 0) {
@@ -245,7 +252,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 5. Fetch Usages (for usage trends analytics)
     try {
-      const res = await fetch('http://localhost:5000/api/material-usage', { headers });
+      const res = await fetch(`${API_BASE}/api/material-usage`, { headers });
       const data = await res.json();
       let usageList = data.success ? (data.data || []) : [];
       if (!usageList || usageList.length === 0) {
@@ -264,7 +271,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 6. Fetch Site Store Inventory
     try {
-      const res = await fetch('http://localhost:5000/api/admin/projects-overview', { headers });
+      const res = await fetch(`${API_BASE}/api/admin/projects-overview`, { headers });
       const data = await res.json();
       let siteList = data.success && Array.isArray(data.data) ? data.data : [];
       if (!siteList || siteList.length === 0) {
@@ -297,47 +304,52 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/${id}/approve`, {
+      const res = await fetch(`${API_BASE}/api/bom/${id}/approve`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ note: noteText })
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('BOM approved successfully!');
         setMessage('✅ BOM approved successfully!');
         setDirectorNote('');
         fetchData();
+        setTimeout(() => scrollToElement('#bom-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('✅ BOM Approved successfully! (Demo Mode)');
-      setBoms(prev => prev.map(b => b._id === id ? { ...b, status: 'Approved', approvedBy: user?.name || 'Director', rejectionReason: noteText } : b));
+      toast.error(err.message || 'Action failed');
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setDirectorNote('');
     }
   };
 
   const rejectBOMWithReason = async (id, reason) => {
+    if (!window.confirm('Are you sure you want to reject this BOM?')) return;
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/${id}/reject`, {
+      const res = await fetch(`${API_BASE}/api/bom/${id}/reject`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ rejectionReason: reason })
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('BOM rejected and note sent to PM.');
         setMessage('❌ BOM rejected and note sent to PM.');
         setShowViewModal(false);
         setDirectorNote('');
         fetchData();
+        setTimeout(() => scrollToElement('#bom-approvals-section'), 100);
       } else {
-        alert(`Failed to reject BOM: ${data.message}`);
+        throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('❌ BOM Rejected (Demo Mode)');
-      setBoms(prev => prev.map(b => b._id === id ? { ...b, status: 'Rejected', rejectionReason: reason, approvedBy: user?.name || 'Director' } : b));
+      toast.error(err.message || 'Action failed');
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setShowViewModal(false);
       setDirectorNote('');
     }
@@ -355,22 +367,24 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/${selectedBomId}/reject`, {
+      const res = await fetch(`${API_BASE}/api/bom/${selectedBomId}/reject`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ rejectionReason })
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('BOM rejected and sent back to PM.');
         setMessage('❌ BOM rejected and sent back to PM.');
         setShowRejectModal(false);
         fetchData();
+        setTimeout(() => scrollToElement('#bom-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('❌ BOM Rejected and note sent to PM. (Demo Mode)');
-      setBoms(prev => prev.map(b => b._id === selectedBomId ? { ...b, status: 'Rejected', rejectionReason, approvedBy: user?.name || 'Director' } : b));
+      toast.error(err.message || 'Action failed');
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setShowRejectModal(false);
     }
   };
@@ -379,22 +393,24 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/purchase-orders/${poId}/approve`, {
+      const res = await fetch(`${API_BASE}/api/purchase-orders/${poId}/approve`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({})
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('Purchase Order approved successfully!');
         setMessage('✅ Purchase Order approved successfully!');
         setShowViewPOModal(false);
         fetchData();
+        setTimeout(() => scrollToElement('#po-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('✅ Purchase Order approved successfully! (Demo Mode)');
-      setPos(prev => prev.map(p => p._id === poId ? { ...p, status: 'Approved', approvedBy: user?.name || 'Director' } : p));
+      toast.error(err.message || 'Action failed');
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setShowViewPOModal(false);
     }
   };
@@ -421,23 +437,25 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/purchase-orders/${poId}/reject`, {
+      const res = await fetch(`${API_BASE}/api/purchase-orders/${poId}/reject`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ rejectionReason: poActionNote })
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('Purchase Order rejected and note sent to Purchase Manager.');
         setMessage('❌ Purchase Order rejected and note sent to Purchase Manager.');
         setPoActionModal(null);
         setShowViewPOModal(false);
         fetchData();
+        setTimeout(() => scrollToElement('#po-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('❌ Purchase Order rejected. (Demo Mode)');
-      setPos(prev => prev.map(p => p._id === poId ? { ...p, status: 'Rejected', rejectionReason: poActionNote, approvedBy: user?.name || 'Director' } : p));
+      toast.error(err.message || 'Action failed');
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setPoActionModal(null);
       setShowViewPOModal(false);
     }
@@ -447,21 +465,23 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/invoices/${invoiceId}/approve-payment`, {
+      const res = await fetch(`${API_BASE}/api/invoices/${invoiceId}/approve-payment`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({})
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('Invoice approved for payment!');
         setMessage('✅ Invoice approved for payment!');
         fetchData();
+        setTimeout(() => scrollToElement('#invoice-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('✅ Invoice approved for payment! (Demo Mode)');
-      setInvoices(prev => prev.map(inv => inv._id === invoiceId ? { ...inv, status: 'Approved', approvedBy: user?.name || 'Director' } : inv));
+      toast.error(err.message || 'Action failed');
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
     }
   };
 
@@ -482,22 +502,24 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     setMessage('');
     setError('');
     try {
-      const res = await fetch(`http://localhost:5000/api/invoices/${invoiceId}/reject-payment`, {
+      const res = await fetch(`${API_BASE}/api/invoices/${invoiceId}/reject-payment`, {
         method: 'PUT',
         headers: getHeaders(),
         body: JSON.stringify({ rejectionReason: invoiceActionNote })
       });
       const data = await res.json();
       if (data.success) {
+        toast.success('Invoice payment rejected and note sent to Main Store.');
         setMessage('❌ Invoice payment rejected and note sent to Main Store.');
         setInvoiceActionModal(null);
         fetchData();
+        setTimeout(() => scrollToElement('#invoice-approvals-section'), 100);
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
-      setMessage('❌ Invoice payment rejected. (Demo Mode)');
-      setInvoices(prev => prev.map(inv => inv._id === invoiceId ? { ...inv, status: 'Rejected', rejectionReason: invoiceActionNote, approvedBy: user?.name || 'Director' } : inv));
+      toast.error(err.message || 'Action failed');
+      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
       setInvoiceActionModal(null);
     }
   };
@@ -664,7 +686,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     if (!viewingBom || !viewingBom.projectId?._id) return;
     
     try {
-      const res = await fetch(`http://localhost:5000/api/bom/versions/${viewingBom.projectId._id}`, {
+      const res = await fetch(`${API_BASE}/api/bom/versions/${viewingBom.projectId._id}`, {
         headers: getHeaders()
       });
       const data = await res.json();
@@ -742,142 +764,137 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       title = 'Active Projects Profile';
       tableHeaders = ['Project Name', 'Project Manager', 'Status', 'Budget', 'Progress %'];
       
-      const dummyActiveProjects = [
-        { _id: 'd1', projectName: 'Colombo Port Expansion', createdBy: { name: 'John PM' }, status: 'Active', budget: 750000000, progress: 65 },
-        { _id: 'd2', projectName: 'Marina Heights', createdBy: { name: 'Sarah PM' }, status: 'Active', budget: 350000000, progress: 48 },
-        { _id: 'd3', projectName: 'Kandy Highway Flyover', createdBy: { name: 'David PM' }, status: 'Active', budget: 1200000000, progress: 30 }
-      ];
-      const mergedProjects = projects.length > 0 ? projects : dummyActiveProjects;
-      const filtered = mergedProjects.filter(p => 
+      const filtered = projects.filter(p => 
         (p.status === 'Active' || p.status === 'active') && 
         ((p.projectName || '').toLowerCase().includes(query) || (p.createdBy?.name || '').toLowerCase().includes(query))
       );
       
-      tableRows = filtered.map((p, idx) => {
-        const progress = p.progress || 65;
-        return (
-          <tr key={p._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{p.projectName}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{p.createdBy?.name || 'Project Manager'}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px' }}>
-              <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', border: '1px solid rgba(46, 125, 50, 0.2)' }}>Active</span>
-            </td>
-            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>LKR {Number(p.budget).toLocaleString()}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ width: '80px', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ width: `${progress}%`, height: '100%', background: 'linear-gradient(90deg, #2563eb, #3b82f6)' }}></div>
+      tableRows = filtered.length === 0 ? (
+        <tr>
+          <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No active projects found.</td>
+        </tr>
+      ) : (
+        filtered.map((p, idx) => {
+          const progress = p.progress || 0;
+          return (
+            <tr key={p._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+              <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{p.projectName}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{p.createdBy?.name || 'Project Manager'}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px' }}>
+                <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', border: '1px solid rgba(46, 125, 50, 0.2)' }}>Active</span>
+              </td>
+              <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>LKR {Number(p.budget || 0).toLocaleString()}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ width: '80px', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                    <div style={{ width: `${progress}%`, height: '100%', background: 'linear-gradient(90deg, #2563eb, #3b82f6)' }}></div>
+                  </div>
+                  <span style={{ fontWeight: '600', color: '#475569' }}>{progress}%</span>
                 </div>
-                <span style={{ fontWeight: '600', color: '#475569' }}>{progress}%</span>
-              </div>
-            </td>
-          </tr>
-        );
-      });
+              </td>
+            </tr>
+          );
+        })
+      );
     } else if (modal === 'pending-boms') {
       title = 'BOMs Awaiting Approval';
       tableHeaders = ['Project', 'PM Name', 'Version', 'Submitted Date', 'Actions'];
       
-      const dummyPendingBoms = [
-        { _id: 'db1', projectName: 'Colombo Port Expansion', createdBy: { name: 'John PM' }, version: 'v1.4', createdAt: new Date().toISOString(), status: 'Pending' },
-        { _id: 'db2', projectName: 'Kandy Highway Flyover', createdBy: { name: 'David PM' }, version: 'v1.0', createdAt: new Date(Date.now() - 86400000).toISOString(), status: 'Pending' },
-        { _id: 'db3', projectName: 'Marina Heights', createdBy: { name: 'Sarah PM' }, version: 'v2.1', createdAt: new Date(Date.now() - 172800000).toISOString(), status: 'Pending' }
-      ];
-      
       const pendingBoms = boms.filter(b => b.status === 'Submitted' || b.status === 'Pending');
-      const mergedBoms = pendingBoms.length > 0 ? pendingBoms : dummyPendingBoms;
-      const filtered = mergedBoms.filter(b => 
+      const filtered = pendingBoms.filter(b => 
         (b.projectName || b.projectId?.projectName || '').toLowerCase().includes(query) || 
         (b.createdBy?.name || b.createdBy || '').toLowerCase().includes(query)
       );
 
-      tableRows = filtered.map((b, idx) => {
-        const pmName = b.createdBy?.name || b.createdBy || b.submittedBy || 'Project Manager';
-        const projName = b.projectId?.projectName || b.projectId?.name || b.projectName || 'Main Project';
-        return (
-          <tr key={b._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{projName}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{pmName}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: 'bold' }}>{b.version || 'v1.0'}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#64748b' }}>{formatDate(b.submittedAt || b.createdAt)}</td>
-            <td style={{ padding: '14px 16px', fontSize: '13px' }}>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                <button 
-                  onClick={() => { setModal(null); openViewModal(b); }}
-                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                >
-                  👁 View
-                </button>
-                <button 
-                  onClick={() => { handleApprove(b._id); }}
-                  style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                >
-                  ✓ Approve
-                </button>
-                <button 
-                  onClick={() => { handleRejectClick(b._id); }}
-                  style={{ background: '#c62828', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                >
-                  ✕ Reject
-                </button>
-              </div>
-            </td>
-          </tr>
-        );
-      });
+      tableRows = filtered.length === 0 ? (
+        <tr>
+          <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No BOMs awaiting approval.</td>
+        </tr>
+      ) : (
+        filtered.map((b, idx) => {
+          const pmName = b.createdBy?.name || b.createdBy || b.submittedBy || 'Project Manager';
+          const projName = b.projectId?.projectName || b.projectId?.name || b.projectName || 'Main Project';
+          return (
+            <tr key={b._id || idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+              <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{projName}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{pmName}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: 'bold' }}>{b.version || 'v1.0'}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px', color: '#64748b' }}>{formatDate(b.submittedAt || b.createdAt)}</td>
+              <td style={{ padding: '14px 16px', fontSize: '13px' }}>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button 
+                    onClick={() => { setModal(null); openViewModal(b); }}
+                    style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                  >
+                    👁 View
+                  </button>
+                  <button 
+                    onClick={() => { handleApprove(b._id); }}
+                    style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                  >
+                    ✓ Approve
+                  </button>
+                  <button 
+                    onClick={() => { handleRejectClick(b._id); }}
+                    style={{ background: '#c62828', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                  >
+                    ✕ Reject
+                  </button>
+                </div>
+              </td>
+            </tr>
+          );
+        })
+      );
     } else if (modal === 'budget-utilized') {
       title = 'Project Budget Utilization';
       tableHeaders = ['Project Name', 'Allocated Budget', 'Spent', 'Remaining', 'Utilization %'];
       
       const breakdown = getBudgetBreakdown();
-      const dummyBudgetBreakdown = [
-        { projectName: 'Colombo Port Expansion', budget: 750000000, spent: 487500000, remaining: 262500000, percent: '65.0' },
-        { projectName: 'Marina Heights', budget: 350000000, spent: 168000000, remaining: 182000000, percent: '48.0' },
-        { projectName: 'Kandy Highway Flyover', budget: 1200000000, spent: 360000000, remaining: 840000000, percent: '30.0' }
-      ];
-      
-      const mergedBreakdown = (breakdown.length > 0 && breakdown.some(b => b.spent > 1480000)) ? breakdown : dummyBudgetBreakdown;
-      const filtered = mergedBreakdown.filter(item => item.projectName.toLowerCase().includes(query));
+      const filtered = breakdown.filter(item => item.projectName.toLowerCase().includes(query));
 
-      tableRows = filtered.map((item, idx) => (
-        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{item.projectName}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>LKR {item.budget.toLocaleString()}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#c62828', fontWeight: '600' }}>LKR {item.spent.toLocaleString()}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#2e7d32', fontWeight: '600' }}>LKR {item.remaining.toLocaleString()}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{ width: '80px', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
-                <div style={{ width: `${Math.min(Number(item.percent), 100)}%`, height: '100%', background: Number(item.percent) > 90 ? '#ef4444' : Number(item.percent) > 50 ? '#f59e0b' : '#2e7d32' }}></div>
-              </div>
-              <span style={{ fontWeight: '700', color: '#475569' }}>{item.percent}%</span>
-            </div>
-          </td>
+      tableRows = filtered.length === 0 ? (
+        <tr>
+          <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No project budget data found.</td>
         </tr>
-      ));
+      ) : (
+        filtered.map((item, idx) => (
+          <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{item.projectName}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0f172a' }}>LKR {item.budget.toLocaleString()}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#c62828', fontWeight: '600' }}>LKR {item.spent.toLocaleString()}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#2e7d32', fontWeight: '600' }}>LKR {item.remaining.toLocaleString()}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '80px', height: '8px', background: '#e2e8f0', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(Number(item.percent), 100)}%`, height: '100%', background: Number(item.percent) > 90 ? '#ef4444' : Number(item.percent) > 50 ? '#f59e0b' : '#2e7d32' }}></div>
+                </div>
+                <span style={{ fontWeight: '700', color: '#475569' }}>{item.percent}%</span>
+              </div>
+            </td>
+          </tr>
+        ))
+      );
     } else if (modal === 'material-variance') {
       title = 'Material Variance Analysis';
       tableHeaders = ['Project Name', 'Material', 'Planned Qty', 'Actual Qty', 'Variance %'];
       
-      const dummyVariance = [
-        { projectName: 'Colombo Port Expansion', materialName: 'Portland Cement', unit: 'bags', plannedQty: 50000, actualQty: 53500, varianceQty: 3500, variancePct: 7.0 },
-        { projectName: 'Colombo Port Expansion', materialName: 'TMT Steel 12mm', unit: 'ton', plannedQty: 1200, actualQty: 1440, varianceQty: 240, variancePct: 20.0 },
-        { projectName: 'Marina Heights', materialName: 'River Sand', unit: 'cube', plannedQty: 8500, actualQty: 8200, varianceQty: -300, variancePct: -3.5 },
-        { projectName: 'Kandy Highway Flyover', materialName: 'ReadyMix Concrete', unit: 'm3', plannedQty: 15000, actualQty: 16800, varianceQty: 1800, variancePct: 12.0 }
-      ];
-      
-      const mergedVariance = varianceReportData.length > 0 ? varianceReportData : dummyVariance;
-      const filtered = mergedVariance.filter(item => 
+      const filtered = varianceReportData.filter(item => 
         (item.projectName || '').toLowerCase().includes(query) || 
         (item.materialName || '').toLowerCase().includes(query)
       );
 
-      tableRows = filtered.map((item, idx) => (
-        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{item.projectName}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{item.materialName}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{item.plannedQty} {item.unit}</td>
-          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{item.actualQty} {item.unit}</td>
+      tableRows = filtered.length === 0 ? (
+        <tr>
+          <td colSpan="5" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '14px' }}>No material variance records found.</td>
+        </tr>
+      ) : (
+        filtered.map((item, idx) => (
+          <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+            <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{item.projectName}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#334155' }}>{item.materialName}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px' }}>{item.plannedQty} {item.unit}</td>
+            <td style={{ padding: '14px 16px', fontSize: '13px' }}>{item.actualQty} {item.unit}</td>
           <td style={{ padding: '14px 16px', fontSize: '13px' }}>
             <span style={{ 
               background: Number(item.variancePct) > 15 ? '#fde8e8' : Number(item.variancePct) > 0 ? '#e8f5e9' : '#e0f2fe',
@@ -891,7 +908,8 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             </span>
           </td>
         </tr>
-      ));
+      ))
+      );
     }
 
     return (
@@ -1044,6 +1062,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             { id: 'po-approvals', label: 'PO Approvals', icon: '🧾' },
             { id: 'payment-approvals', label: 'Payment Approvals', icon: '💰' },
             { id: 'reports', label: 'Variance Reports', icon: '📊' },
+            { id: 'reports-center', label: 'Reports Center', icon: '🗂️' },
             { id: 'analytics', label: 'Analytics Chart', icon: '📈' },
             { id: 'settings', label: 'Settings', icon: '⚙️' },
           ].map(item => (
@@ -1068,6 +1087,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             {activePage === 'po-approvals' && 'Purchase Order Approval Registry'}
             {activePage === 'payment-approvals' && 'Invoice & Payment Approval Registry'}
             {activePage === 'reports' && 'Project Material Variance Reports'}
+            {activePage === 'reports-center' && 'Reports Center'}
             {activePage === 'analytics' && 'Operational Analytics'}
             {activePage === 'settings' && 'Settings & Preferences'}
           </h2>
@@ -1087,7 +1107,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <span>Notifications</span>
                     <span onClick={async () => {
                       try {
-                        await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+                        await fetch(`${API_BASE}/api/notifications/mark-all-read`, {
                           method: 'PUT',
                           headers: getHeaders()
                         });
@@ -1106,7 +1126,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                       <div key={idx} 
                         onClick={async () => {
                           if (!notif.isRead) {
-                            await fetch(`http://localhost:5000/api/notifications/${notif._id}/read`, {
+                            await fetch(`${API_BASE}/api/notifications/${notif._id}/read`, {
                               method: 'PUT',
                               headers: getHeaders()
                             });
@@ -1319,7 +1339,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'approvals' && (
-            <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+            <div id="bom-approvals-section" style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>BOM Verification Registry</h3>
               </div>
@@ -1387,7 +1407,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'po-approvals' && (
-            <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+            <div id="po-approvals-section" style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>Purchase Order Verification Registry</h3>
               </div>
@@ -1459,7 +1479,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'payment-approvals' && (
-            <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+            <div id="invoice-approvals-section" style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>Supplier Invoice & Payment Registry</h3>
               </div>
@@ -1492,8 +1512,30 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                             }}>{inv.status}</span>
                           </td>
                           <td style={{ padding: '14px 16px' }}>
-                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                              {isPending ? (
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
+                              {inv.file?.url ? (
+                                inv.fileExists === false ? (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    style={{ ...poTableBtnBase, background: '#d97706', opacity: 0.8, cursor: 'not-allowed' }}
+                                    title="Invoice file is missing on disk. Ask Store Officer to re-upload."
+                                  >
+                                    ⚠️ File missing
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => openUploadedFile(inv.file.url, { fileType: 'invoice', toast })}
+                                    style={{ ...poTableBtnBase, background: '#0d1b4b', cursor: 'pointer' }}
+                                  >
+                                    👁 View
+                                  </button>
+                                )
+                              ) : (
+                                <span style={{ fontSize: '12px', color: '#94a3b8' }}>No file</span>
+                              )}
+                              {isPending && (
                                 <>
                                   <button onClick={() => openInvoiceActionModal(inv._id, 'approve')}
                                     style={{ ...poTableBtnBase, background: '#2e7d32' }}>
@@ -1504,8 +1546,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                                     ✕ Reject
                                   </button>
                                 </>
-                              ) : (
-                                <span style={{ fontSize: '12px', color: '#94a3b8' }}>-</span>
                               )}
                             </div>
                           </td>
@@ -1528,6 +1568,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           )}
 
           {activePage === 'reports' && <VarianceReport />}
+          {activePage === 'reports-center' && <ReportsCenter />}
           {activePage === 'analytics' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               {/* Row 1: Project Counts & Inventory Stock Levels */}
