@@ -5,8 +5,11 @@ import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime
 import DateInput from '../components/DateInput';
 import SettingsPage from './SettingsPage';
 import { API_BASE } from '../config';
+import useToastSetter from '../hooks/useToastSetter';
+import LoadingButton from '../components/LoadingButton';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import Pagination, { usePagination } from '../components/Pagination';
+import MaterialsViewButton from '../components/MaterialsViewButton';
 
 function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -22,8 +25,10 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [materials, setMaterials] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [error, setErrorState] = useState('');
+  const setError = useToastSetter(setErrorState, 'error');
+  const [success, setSuccessState] = useState('');
+  const setSuccess = useToastSetter(setSuccessState, 'success');
 
   // Site Inventory screen filters
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
@@ -1103,18 +1108,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ ...styles.td, fontWeight: 'bold' }}>{m.minNumber}</td>
                         <td style={styles.td}>
-                          {(m.materials || []).map((mat, i) => (
-                            <div key={i} style={{ marginBottom: '4px' }}>
-                              {mat.materialName} ({mat.quantity} {mat.unit})
-                              {mat.exceedsBom && (
-                                <div>
-                                  <span style={{ background: '#ffedd5', color: '#c2410c', padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', fontSize: '10px', display: 'inline-block', marginTop: '2px' }}>
-                                    ⚠️ Exceeds BOM plan by {mat.exceedAmount} {mat.unit}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                          <MaterialsViewButton items={m.materials} title={m.minNumber} subtitle="Materials Requested" />
                         </td>
                         <td style={styles.td}>
                           <span style={{
@@ -1268,9 +1262,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={styles.tdBold}>{m.minNumber}</td>
                         <td style={styles.td}>
-                          {(m.materials || []).map((mat, i) => (
-                            <div key={i}>{mat.materialName} ({mat.quantity} {mat.unit})</div>
-                          ))}
+                          <MaterialsViewButton items={m.materials} title={m.minNumber} subtitle="In-Transit Materials" />
                         </td>
                         <td style={styles.td}>{m.issuedBy}</td>
                         <td style={styles.td}>{formatDate(m.issuedAt)}</td>
@@ -1506,9 +1498,9 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                   />
                 </div>
 
-                <button type="submit" disabled={requestSubmitting} style={styles.orangeBtn}>
-                  {requestSubmitting ? 'Submitting...' : 'Submit Material Request'}
-                </button>
+                <LoadingButton type="submit" loading={requestSubmitting} loadingText="Submitting..." style={styles.orangeBtn}>
+                  Submit Material Request
+                </LoadingButton>
               </form>
             </div>
 
@@ -1700,9 +1692,9 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                   />
                 </div>
 
-                <button type="submit" style={styles.orangeBtn} disabled={issueSubmitting || !selectedProjId}>
-                  {issueSubmitting ? 'Recording...' : 'Record Material Issue'}
-                </button>
+                <LoadingButton type="submit" style={styles.orangeBtn} loading={issueSubmitting} loadingText="Recording..." disabled={!selectedProjId}>
+                  Record Material Issue
+                </LoadingButton>
               </form>
             </div>
 

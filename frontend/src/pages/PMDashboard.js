@@ -4,6 +4,10 @@ import { Calendar } from 'lucide-react';
 import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import { API_BASE } from '../config';
+import useToastSetter from '../hooks/useToastSetter';
+import LoadingButton from '../components/LoadingButton';
+import { scrollToElement } from '../utils/scrollToElement';
+import useBusyAction from '../hooks/useBusyAction';
 import Pagination, { usePagination } from '../components/Pagination';
 
 const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
@@ -16,7 +20,9 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'bom', 'settings'
   const [boms, setBoms] = useState([]);
-  const [message, setMessage] = useState('');
+  const [message, setMessageState] = useState('');
+  const setMessage = useToastSetter(setMessageState, 'auto');
+  const [busyAction, withBusy] = useBusyAction();
   const [loading, setLoading] = useState(false);
   // KPI card counts from GET /api/projects/pm-stats. null = not loaded yet,
   // so the cards show a placeholder instead of a misleading 0.
@@ -65,6 +71,18 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [viewingProject, setViewingProject] = useState(null);
   const [showViewProjectModal, setShowViewProjectModal] = useState(false);
   const [showProjectForm, setShowProjectForm] = useState(false);
+  // Bring the form into view when it opens further down the page.
+  useEffect(() => {
+    if (!showProjectForm) return undefined;
+    const t = setTimeout(() => scrollToElement('#project-form-section'), 100);
+    return () => clearTimeout(t);
+  }, [showProjectForm, editingProjectId]);
+  // Bring the form into view when it opens further down the page.
+  useEffect(() => {
+    if (!showBOMForm) return undefined;
+    const t = setTimeout(() => scrollToElement('#bom-form-section'), 100);
+    return () => clearTimeout(t);
+  }, [showBOMForm]);
   const [nextProjectId, setNextProjectId] = useState('');
   const [nextProjectIdLoading, setNextProjectIdLoading] = useState(false);
 
@@ -802,7 +820,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               ✕
             </button>
           </div>
-          <form onSubmit={handleProjectSubmit}>
+          <form id="project-form-section" onSubmit={withBusy('project', handleProjectSubmit)}>
             {!editingProjectId && (
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '700', marginBottom: '6px' }}>PROJECT ID (AUTO-GENERATED)</label>
@@ -961,12 +979,14 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
             </div>
 
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button
+              <LoadingButton
                 type="submit"
+                loading={busyAction === 'project'}
+                loadingText="Saving..."
                 style={{ background: '#2563eb', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '14px', boxShadow: '0 4px 10px rgba(37, 99, 235,0.15)' }}
               >
                 {editingProjectId ? 'Update Project' : 'Create Project'}
-              </button>
+              </LoadingButton>
               {editingProjectId && (
                 <button
                   type="button"
@@ -1482,7 +1502,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                 )}
 
                 {/* Main Allocation Form */}
-                <form onSubmit={e => e.preventDefault()}>
+                <form id="bom-form-section" onSubmit={e => e.preventDefault()}>
                   <h4 style={{ color: '#0d1b4b', margin: '20px 0 10px', fontSize: '14px', fontWeight: '700' }}>Material Allocation Table</h4>
                   {/* paddingBottom reserves room for the material search dropdown (~5 rows) so it isn't
                       clipped by this container's overflow-x:auto, which the CSS spec also turns into
@@ -1711,9 +1731,11 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
                   <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button
+                      <LoadingButton
                         type="button"
-                        onClick={() => handleSubmitBOM()}
+                        onClick={withBusy('bom', () => handleSubmitBOM())}
+                        loading={busyAction === 'bom'}
+                        loadingText="Submitting..."
                         disabled={bomMaterials.length === 0 || !bomMaterials[0].name}
                         style={{
                           background: (bomMaterials.length === 0 || !bomMaterials[0].name) ? '#cbd5e1' : '#2563eb',
@@ -1728,7 +1750,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                         }}
                       >
                         🚀 Submit to Director
-                      </button>
+                      </LoadingButton>
                     </div>
                   </div>
                 </form>
@@ -1922,13 +1944,6 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button
-                  type="button"
-                  onClick={() => handleEditBom(viewingBom)}
-                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
-                >
-                  ✏️ Edit BOM
-                </button>
                 <button
                   type="button"
                   onClick={() => setShowViewBomModal(false)}

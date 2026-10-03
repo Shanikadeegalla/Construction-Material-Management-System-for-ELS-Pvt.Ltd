@@ -214,14 +214,36 @@ const settlePayment = async (payment, session = null) => {
 // @access  Private (PurchaseManager / Admin)
 export const createCheckoutSession = async (req, res) => {
   try {
-    const { invoiceId } = req.body;
-    if (!invoiceId) {
-      return res.status(400).json({ success: false, message: 'invoiceId is required.' });
+    let { invoiceId, purchaseOrderId, amount } = req.body;
+
+    if (!invoiceId && !purchaseOrderId) {
+      return res.status(400).json({ success: false, message: 'invoiceId or purchaseOrderId is required.' });
     }
 
-    const invoice = await Invoice.findById(invoiceId);
+    let invoice;
+    if (invoiceId) {
+      invoice = await Invoice.findById(invoiceId);
+    } else if (purchaseOrderId) {
+      invoice = await Invoice.findOne({ po: purchaseOrderId, status: 'Approved' })
+        || await Invoice.findOne({ po: purchaseOrderId }).sort({ createdAt: -1 });
+    }
+
     if (!invoice) {
       return res.status(404).json({ success: false, message: 'Invoice not found.' });
+    }
+
+    const targetPoId = purchaseOrderId || (invoice.po ? invoice.po.toString() : null);
+    if (!targetPoId) {
+      return res.status(400).json({ success: false, message: 'purchaseOrderId is required.' });
+    }
+
+    const po = await PurchaseOrder.findById(targetPoId);
+    if (!po) {
+      return res.status(404).json({ success: false, message: 'Purchase Order for this invoice was not found.' });
+    }
+
+    if (invoice.po && invoice.po.toString() !== po._id.toString()) {
+      return res.status(400).json({ success: false, message: 'Invoice does not belong to the specified Purchase Order.' });
     }
 
     if (invoice.status === 'Paid') {
@@ -236,9 +258,8 @@ export const createCheckoutSession = async (req, res) => {
       });
     }
 
-    const po = await PurchaseOrder.findById(invoice.po);
-    if (!po) {
-      return res.status(404).json({ success: false, message: 'Purchase Order for this invoice was not found.' });
+    if (amount !== undefined && amount !== null && Math.abs(Number(amount) - Number(invoice.amount)) > 0.01) {
+      return res.status(400).json({ success: false, message: `Provided payment amount (${amount}) does not match invoice amount (${invoice.amount}).` });
     }
 
     const supplierDoc = await Supplier.findById(invoice.supplier);
@@ -333,8 +354,11 @@ export const confirmPaymentSession = async (req, res) => {
 // @access  Private (PurchaseManager / Admin)
 export const recordManualPayment = async (req, res) => {
   try {
-    const { purchaseOrderId, method, bankName, paidAt, notes, chequeNumber, chequeDate } = req.body;
-    const reference = req.body.reference || chequeNumber;
+    if (req.user && !['PurchaseManager', 'Admin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Only Purchase Manager or Admin can record payments.' });
+    }
+
+    const { purchaseOrderId, paidAt, notes: inputNotes, chequeDate: inputChequeDate } = req.body;
     let { invoiceId } = req.body;
 
     // A caller that only knows the Purchase Order pays that PO's approved invoice.
@@ -350,19 +374,6 @@ export const recordManualPayment = async (req, res) => {
     if (!invoiceId) {
       return res.status(400).json({ success: false, message: 'invoiceId or purchaseOrderId is required.' });
     }
-    if (!['Cash', 'Cheque'].includes(method)) {
-      return res.status(400).json({ success: false, message: 'Payment method must be Cash or Cheque.' });
-    }
-    if (method === 'Cheque' && (!reference || !String(reference).trim())) {
-      return res.status(400).json({ success: false, message: 'A cheque number is required for cheque payments.' });
-    }
-    const paidDate = paidAt ? new Date(paidAt) : new Date();
-    if (Number.isNaN(paidDate.getTime())) {
-      return res.status(400).json({ success: false, message: 'Invalid payment date.' });
-    }
-    if (paidDate.getTime() > Date.now() + 24 * 60 * 60 * 1000) {
-      return res.status(400).json({ success: false, message: 'Payment date cannot be in the future.' });
-    }
 
     const invoice = await Invoice.findById(invoiceId);
     if (!invoice) {
@@ -375,9 +386,109 @@ export const recordManualPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Only Director-approved invoices can be paid.' });
     }
 
+    // Amount safeguard: never take amount from client; if provided, must match database amount
+    if (req.body.amount !== undefined && req.body.amount !== null) {
+      if (Math.abs(Number(req.body.amount) - Number(invoice.amount)) > 0.01) {
+        return res.status(400).json({
+          success: false,
+          message: `Provided payment amount (${req.body.amount}) does not match invoice amount (${invoice.amount}).`
+        });
+      }
+    }
+
+    const method = (req.body.method || '').trim();
+    if (!['Cash', 'Cheque'].includes(method)) {
+      return res.status(400).json({ success: false, message: 'Payment method must be Cash or Cheque.' });
+    }
+
+    // Payment Date validation
+    if (!paidAt) {
+      return res.status(400).json({ success: false, message: 'Payment date is required.' });
+    }
+    const paidDate = new Date(paidAt);
+    if (Number.isNaN(paidDate.getTime())) {
+      return res.status(400).json({ success: false, message: 'Invalid payment date.' });
+    }
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+    if (paidDate > endOfToday) {
+      return res.status(400).json({ success: false, message: 'Payment date cannot be in the future.' });
+    }
+    if (invoice.invoiceDate) {
+      const invDateStart = new Date(invoice.invoiceDate);
+      invDateStart.setHours(0, 0, 0, 0);
+      const paidDateStart = new Date(paidDate);
+      paidDateStart.setHours(0, 0, 0, 0);
+      if (paidDateStart < invDateStart) {
+        return res.status(400).json({ success: false, message: 'Payment date cannot be earlier than invoice date.' });
+      }
+    }
+
+    let reference = (req.body.reference || '').trim();
+    let bankName = (req.body.bankName || '').trim();
+    let chequeNumber = (req.body.chequeNumber || req.body.reference || '').trim();
+    let chequeDate = inputChequeDate ? new Date(inputChequeDate) : null;
+
+    if (method === 'Cash') {
+      if (reference.length > 50) {
+        return res.status(400).json({ success: false, message: 'Voucher / Receipt No cannot exceed 50 characters.' });
+      }
+      if (reference && !/^[a-zA-Z0-9\-_/]+$/.test(reference)) {
+        return res.status(400).json({ success: false, message: 'Voucher / Receipt No contains invalid characters. Only letters, numbers, -, _ and / are allowed.' });
+      }
+    }
+
+    if (method === 'Cheque') {
+      if (!chequeNumber) {
+        return res.status(400).json({ success: false, message: 'Cheque number is required for cheque payments.' });
+      }
+      if (!/^\d{6}$/.test(chequeNumber)) {
+        return res.status(400).json({ success: false, message: 'Cheque number must be exactly 6 digits.' });
+      }
+      if (!bankName) {
+        return res.status(400).json({ success: false, message: 'Bank name is required for cheque payments.' });
+      }
+      if (!inputChequeDate || Number.isNaN(chequeDate?.getTime())) {
+        return res.status(400).json({ success: false, message: 'Cheque date is required for cheque payments.' });
+      }
+
+      // Duplicate Cheque check (same cheque number and bank name for paid payments)
+      const duplicateCheque = await Payment.findOne({
+        method: 'Cheque',
+        chequeNumber: chequeNumber,
+        bankName: new RegExp(`^${bankName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+        status: { $in: ['paid', 'completed'] }
+      });
+      if (duplicateCheque) {
+        return res.status(400).json({
+          success: false,
+          message: `A cheque with number "${chequeNumber}" for bank "${bankName}" has already been recorded.`
+        });
+      }
+      reference = chequeNumber;
+    }
+
+    // Notes sanitization and length check
+    let rawNotes = (inputNotes || '').trim();
+    if (rawNotes.length > 500) {
+      return res.status(400).json({ success: false, message: 'Notes cannot exceed 500 characters.' });
+    }
+    const safeNotes = rawNotes
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
     const po = await PurchaseOrder.findById(invoice.po);
     if (!po) {
       return res.status(404).json({ success: false, message: 'Purchase Order for this invoice was not found.' });
+    }
+
+    // Idempotency check: prevent duplicate payment creation for already paid invoice
+    const existingPaid = await Payment.findOne({ invoice: invoice._id, status: { $in: ['paid', 'completed'] } });
+    if (existingPaid) {
+      return res.status(400).json({ success: false, message: 'This invoice has already been paid.' });
     }
 
     // Reuses the pending Payment row left behind by an abandoned Stripe checkout, if any.
@@ -387,15 +498,15 @@ export const recordManualPayment = async (req, res) => {
         invoice: invoice._id,
         purchaseOrder: po._id,
         supplier: invoice.supplier,
-        amount: invoice.amount,
+        amount: invoice.amount, // Always derived from the database invoice document
         currency: CURRENCY,
         method,
-        reference: reference ? String(reference).trim() : '',
-        bankName: method === 'Cheque' && bankName ? String(bankName).trim() : '',
-        chequeNumber: method === 'Cheque' && reference ? String(reference).trim() : '',
-        ...(method === 'Cheque' && chequeDate ? { chequeDate: new Date(chequeDate) } : {}),
+        reference,
+        bankName: method === 'Cheque' ? bankName : '',
+        chequeNumber: method === 'Cheque' ? chequeNumber : '',
+        ...(method === 'Cheque' && chequeDate ? { chequeDate } : {}),
         recordedBy: req.user ? req.user._id : undefined,
-        notes: notes || '',
+        notes: safeNotes,
         paidAt: paidDate,
         paidBy: req.user ? req.user._id : undefined,
         $unset: { stripeSessionId: 1 }

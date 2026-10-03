@@ -17,6 +17,26 @@ export const protect = async (req, res, next) => {
 
       // Get user from the token
       req.user = await User.findById(decoded.id).select('-password');
+
+      if (!req.user) {
+        res.status(401);
+        return next(new Error('Not authorized, user not found'));
+      }
+
+      if (req.user.status === false) {
+        res.status(401);
+        return next(new Error('Account is deactivated. Contact administrator.'));
+      }
+
+      if (req.user.passwordChangedAt && decoded.iat) {
+        const changedTimestamp = parseInt(req.user.passwordChangedAt.getTime() / 1000, 10);
+        if (decoded.iat < changedTimestamp) {
+          res.status(401);
+          return next(new Error('User recently changed password. Please log in again.'));
+        }
+      }
+
+      return next();
     } catch (error) {
       console.error('Token verification failed:', error.message);
       res.status(401);

@@ -124,11 +124,13 @@ try {
   check('Purchase Manager notified invoice approved', (await notifs('buy', 'Invoice_approved')).length === 1);
   r = await api('dir', 'PUT', `/invoices/${inv._id}/approve-payment`, {});
   check('Second approval rejected', r.status === 400);
+  const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  const today = now.toISOString().substring(0, 10);
   r = await api('main', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cash' });
   check('Main Store cannot record payment', r.status === 403, String(r.status));
   r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cheque' });
   check('Cheque without number rejected', r.status === 400);
-  r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cheque', reference: '004512', bankName: 'Commercial Bank' });
+  r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cheque', reference: '004512', bankName: 'Commercial Bank', chequeDate: today, paidAt: today });
   check('Cheque payment recorded', r.status === 201, JSON.stringify(r.data));
   r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cash' });
   check('Double payment rejected', r.status === 400);

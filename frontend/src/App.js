@@ -9,8 +9,9 @@ import SiteStoreDashboard from './pages/SiteStoreDashboard';
 import PaymentSuccess from './pages/PaymentSuccess';
 import PaymentCancel from './pages/PaymentCancel';
 import { API_BASE } from './config';
+import { ToastProvider } from './context/ToastContext';
 
-function App() {
+function MainApp() {
   const [view, setView] = useState('login');
   const [user, setUser] = useState(null);
   const [loginEmail, setLoginEmail] = useState('');
@@ -209,7 +210,6 @@ function App() {
       <style>{globalStyles}</style>
       <main style={!user && !view.startsWith('payment-') ? styles.main : {}}>
         {view === 'login' && renderLogin()}
-        {view === 'register' && renderRegister()}
         {view === 'payment-success' && (
           <PaymentSuccess onReturnToPOs={() => {
             window.history.pushState({}, '', '/');
@@ -457,4 +457,10 @@ const styles = {
   },
 };
 
-export default App;
+export default function App() {
+  return (
+    <ToastProvider>
+      <MainApp />
+    </ToastProvider>
+  );
+}

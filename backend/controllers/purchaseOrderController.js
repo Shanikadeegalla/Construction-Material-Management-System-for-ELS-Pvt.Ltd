@@ -98,6 +98,18 @@ export const getPurchaseOrders = async (req, res) => {
   }
 };
 
+// Next free PO-YYYY-XXX number, skipping any already taken
+const generateNextPoNumber = async () => {
+  const year = new Date().getFullYear();
+  let next = (await PurchaseOrder.countDocuments()) + 1;
+  let candidate;
+  do {
+    candidate = `PO-${year}-${String(next).padStart(3, '0')}`;
+    next++;
+  } while (await PurchaseOrder.findOne({ poNumber: candidate }));
+  return candidate;
+};
+
 // @desc    Create a new purchase order
 // @route   POST /api/purchase-orders
 // @access  Private
@@ -111,10 +123,7 @@ export const createPurchaseOrder = async (req, res) => {
     }
 
     // 1. Auto-generate poNumber (PO-YYYY-XXX)
-    const count = await PurchaseOrder.countDocuments();
-    const year = new Date().getFullYear();
-    const serial = String(count + 1).padStart(3, '0');
-    const poNumber = `PO-${year}-${serial}`;
+    const poNumber = await generateNextPoNumber();
 
     // 2. Resolve items and their material ObjectIds
     const resolvedItems = [];
@@ -232,12 +241,12 @@ export const getPurchaseOrderById = async (req, res) => {
 // @desc    Update PO status
 // @route   PUT /api/purchase-orders/:id/status
 // @access  Private
-// Note: 'Approved'/'Rejected' are excluded here - those transitions are
-// Director-gated and only reachable via approvePurchaseOrder/rejectPurchaseOrder.
+// Note: Approved/Rejected are Director-gated (approvePurchaseOrder/rejectPurchaseOrder)
+// and Delivered is only set by the GRN, so none of those can be set here.
 export const updatePurchaseOrderStatus = async (req, res) => {
   try {
     const { status } = req.body;
-    if (!status || !['Draft', 'Pending', 'Sent', 'Delivered', 'Closed', 'Cancelled'].includes(status)) {
+    if (!status || !['Sent', 'Closed', 'Cancelled'].includes(status)) {
       return res.status(400).json({ success: false, message: 'Invalid PO status.' });
     }
 
@@ -246,13 +255,16 @@ export const updatePurchaseOrderStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Purchase order not found.' });
     }
 
-    // A PO can only go out to the supplier after Director approval, and can only be
-    // delivered once it has been sent.
+    // A PO can only go out to the supplier after Director approval, is closed once
+    // its goods are in, and can only be cancelled before then.
     if (status === 'Sent' && !['Approved', 'Sent'].includes(existing.status)) {
       return res.status(400).json({ success: false, message: 'Purchase order must be Approved by the Director before it can be marked as Sent.' });
     }
-    if (status === 'Delivered' && !['Sent', 'Delivered'].includes(existing.status)) {
-      return res.status(400).json({ success: false, message: 'Purchase order must be Sent to the supplier before it can be marked as Delivered.' });
+    if (status === 'Closed' && existing.status !== 'Delivered') {
+      return res.status(400).json({ success: false, message: 'Only a Delivered purchase order can be closed.' });
+    }
+    if (status === 'Cancelled' && !['Pending', 'Approved', 'Sent'].includes(existing.status)) {
+      return res.status(400).json({ success: false, message: `A ${existing.status} purchase order cannot be cancelled.` });
     }
 
     const po = await PurchaseOrder.findByIdAndUpdate(

@@ -56,6 +56,8 @@ const buildDeliveryCheck = (invoice) => {
       acceptedQty,
       unitPrice,
       acceptedValue: acceptedQty * unitPrice,
+      discrepancyReason: gi?.discrepancyReason || '',
+      discrepancyNote: gi?.discrepancyNote || '',
       onPO: true
     };
   });

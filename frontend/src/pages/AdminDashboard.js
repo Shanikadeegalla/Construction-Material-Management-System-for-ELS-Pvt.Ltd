@@ -27,6 +27,7 @@ import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phon
 import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort, formatFullDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import { API_BASE } from '../config';
+import { useToast } from '../context/ToastContext';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import ReportsCenter from './ReportsCenter';
 import Pagination, { usePagination } from '../components/Pagination';
@@ -946,6 +947,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
 
   const [message, setMessage] = useState('');
+  const toast = useToast();
   const [currentTime, setCurrentTime] = useState(new Date());
 
   // Notifications state
@@ -1028,17 +1030,26 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     return () => clearInterval(interval);
   }, []);
 
+  const [userError, setUserError] = useState(null);
+
   const fetchUsers = async () => {
     try {
+      setUserError(null);
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const res = await fetch(`${API_BASE}/api/auth/users`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      const userList = data.success ? (data.data || []) : [];
-      setUsers(userList);
+      if (data.success && Array.isArray(data.data)) {
+        setUsers(data.data);
+      } else {
+        setUsers([]);
+        setUserError(data.message || 'Failed to load user list.');
+      }
     } catch (err) {
+      console.error('Error fetching users:', err);
       setUsers([]);
+      setUserError('Failed to connect to server. Please check network connection.');
     }
   };
 
@@ -1447,8 +1458,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
 
-
-      // Save all fields (name, email, role, phone, etc.)
+      // Save updated user profile (including email, role, details)
       const res = await fetch(`${API_BASE}/api/auth/users/${selectedUser._id}`, {
         method: 'PUT',
         headers: {
@@ -1458,7 +1468,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         body: JSON.stringify(editForm)
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         showSuccessMessage('✅ User profile updated successfully!');
         setIsEditing(false);
         setUserViewMode('list');
@@ -1485,8 +1495,16 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     e.preventDefault();
     setResetPasswordError('');
     
-    if (newPassword.length < 6) {
-      setResetPasswordError('Password must be at least 6 characters.');
+    const isStrongPassword = (pwd) =>
+      !!pwd &&
+      pwd.length >= 8 &&
+      /[A-Z]/.test(pwd) &&
+      /[a-z]/.test(pwd) &&
+      /[0-9]/.test(pwd) &&
+      /[^A-Za-z0-9]/.test(pwd);
+
+    if (!isStrongPassword(newPassword)) {
+      setResetPasswordError('Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -1518,11 +1536,13 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
   const showSuccessMessage = (msg) => {
     setMessage(msg);
+    toast.success(String(msg).replace(/^(?:✅|❌)\s*/u, ''));
     setTimeout(() => setMessage(''), 5000);
   };
 
   const showErrorMessage = (msg) => {
     setMessage(msg);
+    toast.error(String(msg).replace(/^(?:✅|❌)\s*/u, ''));
     setTimeout(() => setMessage(''), 5000);
   };
 
@@ -3429,4 +3449,4 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   );
 };
 
-export default AdminDashboard;
+export default AdminDashboard;

@@ -21,6 +21,9 @@ import {
   Cell
 } from 'recharts';
 import { API_BASE } from '../config';
+import useToastSetter from '../hooks/useToastSetter';
+import LoadingButton from '../components/LoadingButton';
+import useBusyAction from '../hooks/useBusyAction';
 
 const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -37,8 +40,11 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [inventory, setInventory] = useState([]);
   const [usages, setUsages] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
+  const [error, setErrorState] = useState('');
+  const setError = useToastSetter(setErrorState, 'error');
+  const [message, setMessageState] = useState('');
+  const setMessage = useToastSetter(setMessageState, 'auto');
+  const [busyAction, withBusy] = useBusyAction();
   const [modal, setModal] = useState(null);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [projects, setProjects] = useState([]);
@@ -75,7 +81,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [compareVersions, setCompareVersions] = useState([]);
   const [versionAId, setVersionAId] = useState('');
   const [versionBId, setVersionBId] = useState('');
-  const [directorNote, setDirectorNote] = useState('');
 
   const bomsPagination = usePagination(boms, 8, [boms.length]);
   const posPagination = usePagination(pos, 8, [pos.length]);
@@ -232,39 +237,12 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
       const data = await res.json();
       if (data.success) {
         setMessage('✅ BOM approved successfully!');
-        setDirectorNote('');
         fetchData();
       } else {
         throw new Error(data.message);
       }
     } catch (err) {
       setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
-      setDirectorNote('');
-    }
-  };
-
-  const rejectBOMWithReason = async (id, reason) => {
-    setMessage('');
-    setError('');
-    try {
-      const res = await fetch(`${API_BASE}/api/bom/${id}/reject`, {
-        method: 'PUT',
-        headers: getHeaders(),
-        body: JSON.stringify({ rejectionReason: reason })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setMessage('❌ BOM rejected and note sent to PM.');
-        setShowViewModal(false);
-        setDirectorNote('');
-        fetchData();
-      } else {
-        throw new Error(data.message);
-      }
-    } catch (err) {
-      setMessage(`⚠️ ${err.message || 'The action could not be completed. Please try again.'}`);
-      setShowViewModal(false);
-      setDirectorNote('');
     }
   };
 
@@ -1629,19 +1607,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
             </div>
 
-            {/* Approval / Rejection Optional Notes Textarea */}
-            {(viewingBom.status === 'Submitted' || viewingBom.status === 'Pending') && (
-              <div style={{ marginTop: '20px', marginBottom: '20px' }}>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px' }}>DIRECTOR NOTE / FEEDBACK (OPTIONAL)</label>
-                <textarea
-                  placeholder="Specify feedback note here (optional)."
-                  value={directorNote}
-                  onChange={e => setDirectorNote(e.target.value)}
-                  style={{ width: '100%', height: '80px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }}
-                />
-              </div>
-            )}
-
             {/* Modal Actions */}
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '15px' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
@@ -1663,29 +1628,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                 )}
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                {(viewingBom.status === 'Submitted' || viewingBom.status === 'Pending') && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleApprove(viewingBom._id, directorNote);
-                        setShowViewModal(false);
-                      }}
-                      style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
-                    >
-                      ✓ Approve BOM
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        rejectBOMWithReason(viewingBom._id, directorNote);
-                      }}
-                      style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
-                    >
-                      ✕ Reject BOM
-                    </button>
-                  </>
-                )}
                 <button
                   type="button"
                   onClick={() => setShowViewModal(false)}
@@ -1801,7 +1743,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div style={{ background: 'white', padding: '30px', borderRadius: '8px', width: '400px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
             <h3 style={{ color: '#0d1b4b', marginTop: 0, marginBottom: '16px' }}>Reject Bill of Materials (BOM)</h3>
-            <form onSubmit={handleRejectSubmit}>
+            <form onSubmit={withBusy('reject', handleRejectSubmit)}>
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', fontSize: '12px', color: '#666', fontWeight: '600', marginBottom: '6px' }}>REJECTION NOTE (OPTIONAL)</label>
                 <textarea
@@ -1812,7 +1754,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                 />
               </div>
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button type="submit" style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Confirm Reject</button>
+                <LoadingButton type="submit" loading={busyAction === 'reject'} loadingText="Rejecting..." style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>Confirm Reject</LoadingButton>
                 <button type="button" onClick={() => setShowRejectModal(false)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
               </div>
             </form>
@@ -1902,12 +1844,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
 
               <div style={{ marginTop: '22px', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                {viewingPO.status === 'Pending' && (
-                  <>
-                    <button onClick={() => openPOActionModal(viewingPO._id, 'approve')} style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', minWidth: '110px' }}>✓ Approve</button>
-                    <button onClick={() => openPOActionModal(viewingPO._id, 'reject')} style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', minWidth: '110px' }}>✕ Reject</button>
-                  </>
-                )}
                 <button onClick={() => setShowViewPOModal(false)} style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '90px' }}>Close</button>
               </div>
             </div>
@@ -1922,7 +1858,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             <h3 style={{ color: '#0d1b4b', marginTop: 0, marginBottom: '16px', fontSize: '18px' }}>
               Reject Purchase Order
             </h3>
-            <form onSubmit={handlePOActionSubmit}>
+            <form onSubmit={withBusy('poAction', handlePOActionSubmit)}>
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ display: 'block', fontSize: '12px', color: '#475569', fontWeight: '700', marginBottom: '6px', textTransform: 'uppercase' }}>
                   Rejection Reason
@@ -1936,9 +1872,9 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                 />
               </div>
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button type="submit" style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '110px' }}>
+                <LoadingButton type="submit" loading={busyAction === 'poAction'} loadingText="Rejecting..." style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '110px' }}>
                   Confirm Reject
-                </button>
+                </LoadingButton>
                 <button type="button" onClick={() => setPoActionModal(null)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '90px' }}>Cancel</button>
               </div>
             </form>
@@ -2012,7 +1948,11 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                       const mismatch = !line.onPO || line.receivedQty !== line.orderedQty;
                       return (
                         <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0', background: mismatch || line.damagedQty > 0 ? '#fffaf0' : 'white' }}>
-                          <td style={{ padding: '10px 12px', color: '#0f172a' }}>{line.materialName}{!line.onPO && <span style={{ color: '#e65100', fontSize: '11px', fontWeight: '700' }}> (not on PO)</span>}</td>
+                          <td style={{ padding: '10px 12px', color: '#0f172a' }}>{line.materialName}{!line.onPO && <span style={{ color: '#e65100', fontSize: '11px', fontWeight: '700' }}> (not on PO)</span>}
+                            {line.discrepancyReason && (
+                              <div style={{ color: '#b45309', fontSize: '11px', fontWeight: '600', marginTop: '2px' }}>{line.discrepancyReason}{line.discrepancyNote ? ` - ${line.discrepancyNote}` : ''}</div>
+                            )}
+                          </td>
                           <td style={{ padding: '10px 12px', color: '#0f172a' }}>{line.orderedQty} {line.unit}</td>
                           <td style={{ padding: '10px 12px', fontWeight: mismatch ? '700' : '400', color: mismatch ? '#e65100' : '#0f172a' }}>{grn ? line.receivedQty : '-'}</td>
                           <td style={{ padding: '10px 12px', fontWeight: line.damagedQty > 0 ? '700' : '400', color: line.damagedQty > 0 ? '#c62828' : '#0f172a' }}>{grn ? line.damagedQty : '-'}</td>
@@ -2041,12 +1981,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                     <span style={{ fontSize: '12px', color: '#94a3b8' }}>No invoice file attached</span>
                   )}
                   <div style={{ display: 'flex', gap: '10px' }}>
-                    {viewingInvoice.status === 'Pending Approval' && (
-                      <>
-                        <button onClick={() => openInvoiceActionModal(viewingInvoice._id, 'approve')} style={{ background: '#2e7d32', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', minWidth: '110px' }}>✓ Approve</button>
-                        <button onClick={() => openInvoiceActionModal(viewingInvoice._id, 'reject')} style={{ background: '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', minWidth: '110px' }}>✕ Reject</button>
-                      </>
-                    )}
                     <button onClick={() => setViewingInvoice(null)} style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '90px' }}>Close</button>
                   </div>
                 </div>
@@ -2063,7 +1997,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
             <h3 style={{ color: '#0d1b4b', marginTop: 0, marginBottom: '16px', fontSize: '18px' }}>
               {invoiceActionModal.action === 'approve' ? 'Approve Despite Delivery Issues?' : 'Reject Invoice Payment'}
             </h3>
-            <form onSubmit={handleInvoiceActionSubmit}>
+            <form onSubmit={withBusy('invoiceAction', handleInvoiceActionSubmit)}>
               {invoiceActionModal.action === 'approve' ? (
                 <div style={{ marginBottom: '20px', padding: '12px 16px', background: '#fff3e0', border: '1px solid #ffcc80', borderRadius: '8px', color: '#e65100', fontSize: '13px' }}>
                   <ul style={{ margin: 0, paddingLeft: '18px' }}>
@@ -2085,9 +2019,9 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
               </div>
               )}
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button type="submit" style={{ background: invoiceActionModal.action === 'approve' ? '#2e7d32' : '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '110px' }}>
+                <LoadingButton type="submit" loading={busyAction === 'invoiceAction'} loadingText="Saving..." style={{ background: invoiceActionModal.action === 'approve' ? '#2e7d32' : '#c62828', color: 'white', border: 'none', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '110px' }}>
                   {invoiceActionModal.action === 'approve' ? 'Approve Anyway' : 'Confirm Reject'}
-                </button>
+                </LoadingButton>
                 <button type="button" onClick={() => setInvoiceActionModal(null)} style={{ background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '10px 22px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', minWidth: '90px' }}>Cancel</button>
               </div>
             </form>

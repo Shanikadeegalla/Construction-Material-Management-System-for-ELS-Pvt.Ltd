@@ -7,6 +7,10 @@ import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShort
 import DateInput from '../components/DateInput';
 import * as XLSX from 'xlsx';
 import { API_BASE } from '../config';
+import useToastSetter from '../hooks/useToastSetter';
+import LoadingButton from '../components/LoadingButton';
+import { scrollToElement } from '../utils/scrollToElement';
+import useBusyAction from '../hooks/useBusyAction';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import ReportsCenter from './ReportsCenter';
 import Pagination, { usePagination } from '../components/Pagination';
@@ -18,6 +22,9 @@ const formatBomVersion = (version) => {
   if (!v) return 'v1.0';
   return /^v/i.test(v) ? `v${v.slice(1)}` : `v${v}`;
 };
+
+// Why a GRN line is short or damaged (must match the enum in the GRN model)
+const GRN_DISCREPANCY_REASONS = ['Short delivery', 'Damaged in transit', 'Wrong item', 'Poor quality', 'Other'];
 
 function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [view, setView] = useState('dashboard'); // 'dashboard', 'inventory', 'grn', 'min', 'approved-boms', 'stock-adjustments', 'stock-ledger', 'reports', 'notifications', 'settings'
@@ -37,8 +44,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [suppliers, setSuppliers] = useState([]);
   const [prs, setPrs] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [error, setErrorState] = useState('');
+  const setError = useToastSetter(setErrorState, 'error');
+  const [success, setSuccessState] = useState('');
+  const setSuccess = useToastSetter(setSuccessState, 'success');
+  const [busyAction, withBusy] = useBusyAction();
   const [modal, setModal] = useState(null);
   const [modalSearchTerm, setModalSearchTerm] = useState('');
 
@@ -59,6 +69,12 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   // set in that case).
   const emptyTransferItemRow = { materialName: '', unit: '', quantity: '' };
   const [showTransferForm, setShowTransferForm] = useState(false);
+  // Bring the form into view when it opens further down the page.
+  useEffect(() => {
+    if (!showTransferForm) return undefined;
+    const t = setTimeout(() => scrollToElement('#transfer-form-section'), 100);
+    return () => clearTimeout(t);
+  }, [showTransferForm]);
   const [transferForm, setTransferForm] = useState({
     sourceRequestId: '',
     requestNo: '',
@@ -172,6 +188,19 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
   const stockAdjustments = React.useMemo(() => stockLedger.filter(e => e.type === 'Adjustment'), [stockLedger]);
   const adjustmentsPagination = usePagination(stockAdjustments, 8, [stockAdjustments.length]);
+
+  // Stock status tiers, driven entirely by the thresholds stored on the
+  // Material record (never hard-coded per material in the UI):
+  //   NORMAL     — quantity above the Pre-Order Level (reorderLevel)
+  //   PRE_ORDER  — quantity at/below Pre-Order Level but above Minimum Level
+  //   CRITICAL   — quantity at/below Minimum Level (minimumStock)
+  const materialStatus = (m) => {
+    const preOrderLevel = m.reorderLevel ?? m.minimumStock;
+    if (m.quantity <= m.minimumStock) return { label: 'Critical', tier: 'CRITICAL', bg: '#ffebee', color: '#c62828' };
+    if (m.quantity <= preOrderLevel) return { label: 'Pre-Order', tier: 'PRE_ORDER', bg: '#fff3e0', color: '#b7791f' };
+    return { label: 'Normal', tier: 'NORMAL', bg: '#e8f5e9', color: '#2e7d32' };
+  };
+
 
   // Stock Adjustment form state
   const [adjustmentForm, setAdjustmentForm] = useState({ materialId: '', physicalCount: '', reason: 'Count Correction', notes: '' });
@@ -468,6 +497,10 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   }, [view]);
 
+  // What the supplier delivered on a GRN line: the good units plus the damaged ones.
+  const grnDeliveredQty = (item) => (Number(item.acceptedQty) || 0) + (Number(item.damagedQty) || 0);
+  const grnHasDiscrepancy = (item) => Number(item.damagedQty) > 0 || grnDeliveredQty(item) < Number(item.expectedQty);
+
   const handleGrnSubmit = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -477,24 +510,21 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       return;
     }
 
-    const invalid = grnForm.items.some(item => !item.material || item.receivedQty === '' || item.receivedQty === null || Number(item.receivedQty) < 0);
+    const invalid = grnForm.items.some(item => !item.material || item.acceptedQty === '' || item.acceptedQty === null || Number(item.acceptedQty) < 0 || Number(item.damagedQty) < 0);
     if (invalid) {
-      setError('Please enter a valid received quantity for all items.');
+      setError('Please enter a valid accepted and damaged quantity for all items.');
       return;
     }
 
-    const invalidExceedsOrdered = grnForm.items.some(item => Number(item.receivedQty) > Number(item.expectedQty));
+    const invalidExceedsOrdered = grnForm.items.some(item => grnDeliveredQty(item) > Number(item.expectedQty));
     if (invalidExceedsOrdered) {
-      setError('Received quantity cannot exceed the outstanding quantity.');
+      setError('Accepted plus damaged quantity cannot exceed the outstanding quantity.');
       return;
     }
 
-    const invalidDamaged = grnForm.items.some(item =>
-      item.condition === 'Damaged' &&
-      (item.damagedQty === '' || item.damagedQty === null || Number(item.damagedQty) < 0 || Number(item.damagedQty) > Number(item.receivedQty))
-    );
-    if (invalidDamaged) {
-      setError('Please enter a valid damaged quantity (not exceeding received quantity) for items marked Damaged.');
+    const missingReason = grnForm.items.some(item => grnHasDiscrepancy(item) && !item.discrepancyReason);
+    if (missingReason) {
+      setError('Please select a reason for every item that is short or damaged.');
       return;
     }
 
@@ -509,8 +539,24 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       const poIdForInvoice = selectedGrnPO;
       const supplierIdForInvoice = grnForm.supplierId;
 
+      // The API stores received qty (good + damaged) and the damaged part of it.
       const payload = {
         ...grnForm,
+        items: grnForm.items.map(item => {
+          const damagedQty = Number(item.damagedQty) || 0;
+          const hasDiscrepancy = grnHasDiscrepancy(item);
+          return {
+            material: item.material,
+            materialName: item.materialName,
+            unit: item.unit,
+            expectedQty: item.expectedQty,
+            receivedQty: grnDeliveredQty(item),
+            condition: damagedQty > 0 ? 'Damaged' : 'Good',
+            damagedQty,
+            discrepancyReason: hasDiscrepancy ? item.discrepancyReason : '',
+            discrepancyNote: hasDiscrepancy ? item.discrepancyNote : ''
+          };
+        }),
         receivedBy: user ? user.name : 'Store Officer'
       };
       const res = await fetch(`${API_BASE}/api/inventory/grn`, {
@@ -932,6 +978,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     if (!po) return;
 
     const matchedSupplier = resolveSupplierForPO(po);
+    // A PO can arrive in several deliveries, so each line only asks for what is
+    // still outstanding after the earlier GRNs for this PO.
     const receivedSoFar = {};
     grns.filter(g => g.poReference === po.poNumber).forEach(g => {
       (g.items || []).forEach(gi => {
@@ -941,14 +989,17 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     });
     const items = (po.items || []).map(item => {
       const matchedMaterial = materials.find(m => m.name === item.materialName && m.location === 'MainStore');
+      const expectedQty = Math.max(item.quantity - (receivedSoFar[item.materialName] || 0), 0);
       return {
         material: matchedMaterial ? matchedMaterial._id : '',
         materialName: item.materialName,
         unit: item.unit || '',
-        expectedQty: Math.max(item.quantity - (receivedSoFar[item.materialName] || 0), 0),
-        receivedQty: '',
-        condition: 'Good',
-        damagedQty: ''
+        expectedQty,
+        // A full, undamaged delivery is the default; the officer only edits the exceptions.
+        acceptedQty: expectedQty,
+        damagedQty: 0,
+        discrepancyReason: '',
+        discrepancyNote: ''
       };
     }).filter(item => item.expectedQty > 0);
 
@@ -1037,18 +1088,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   // Calculations for stats
   const totalSKUs = mainMaterials.length;
   const stockValue = mainMaterials.reduce((sum, m) => sum + (m.quantity * m.unitPrice), 0);
-
-  // Stock status tiers, driven entirely by the thresholds stored on the
-  // Material record (never hard-coded per material in the UI):
-  //   NORMAL     — quantity above the Pre-Order Level (reorderLevel)
-  //   PRE_ORDER  — quantity at/below Pre-Order Level but above Minimum Level
-  //   CRITICAL   — quantity at/below Minimum Level (minimumStock)
-  const materialStatus = (m) => {
-    const preOrderLevel = m.reorderLevel ?? m.minimumStock;
-    if (m.quantity <= m.minimumStock) return { label: 'Critical', tier: 'CRITICAL', bg: '#ffebee', color: '#c62828' };
-    if (m.quantity <= preOrderLevel) return { label: 'Pre-Order', tier: 'PRE_ORDER', bg: '#fff3e0', color: '#b7791f' };
-    return { label: 'Normal', tier: 'NORMAL', bg: '#e8f5e9', color: '#2e7d32' };
-  };
 
   const normalStockItems = mainMaterials.filter(m => materialStatus(m).tier === 'NORMAL').length;
   const preOrderItems = mainMaterials.filter(m => materialStatus(m).tier === 'PRE_ORDER').length;
@@ -1882,7 +1921,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                 );
               })()}
 
-              <form onSubmit={handleGrnSubmit}>
+              <form onSubmit={withBusy('grn', handleGrnSubmit)}>
                 <h4 style={{ color: '#0d1b4b', marginBottom: '12px' }}>GRN Materials List</h4>
                 {!selectedGrnPO || grnForm.items.length === 0 ? (
                   <div style={{ padding: '16px', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: '8px', color: '#8a6d00', fontSize: '13px', marginBottom: '16px' }}>
@@ -1895,17 +1934,28 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         <tr style={styles.tableHeaderRow}>
                           <th style={styles.th}>Material</th>
                           <th style={{ ...styles.th, textAlign: 'right' }}>Outstanding Qty</th>
-                          <th style={{ ...styles.th, textAlign: 'right' }}>Received Qty</th>
-                          <th style={styles.th}>Condition</th>
-                          <th style={styles.th}>Discrepancy</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>Accepted (Good)</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>Damaged</th>
+                          <th style={{ ...styles.th, textAlign: 'right' }}>Short</th>
+                          <th style={styles.th}>Status</th>
+                          <th style={styles.th}>Reason</th>
                         </tr>
                       </thead>
                       <tbody>
                         {grnForm.items.map((item, idx) => {
                           const ordered = Number(item.expectedQty) || 0;
-                          const received = item.receivedQty === '' ? null : Number(item.receivedQty);
-                          const shortage = received !== null && ordered - received > 0 ? ordered - received : 0;
                           const damagedQty = Number(item.damagedQty) || 0;
+                          const delivered = grnDeliveredQty(item);
+                          const over = Math.max(delivered - ordered, 0);
+                          const short = Math.max(ordered - delivered, 0);
+                          const updateGrnItem = (field, value) => {
+                            const updated = [...grnForm.items];
+                            updated[idx][field] = value;
+                            setGrnForm({ ...grnForm, items: updated });
+                          };
+                          const chip = (text, bg, color) => (
+                            <span style={{ background: bg, color, padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 700, whiteSpace: 'nowrap', display: 'inline-block', marginRight: '4px', marginBottom: '2px' }}>{text}</span>
+                          );
                           return (
                             <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
                               <td style={{ ...styles.tdBold, color: '#0d1b4b' }}>{item.materialName}{item.unit ? ` (${item.unit})` : ''}</td>
@@ -1915,67 +1965,53 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                                   type="number"
                                   min="0"
                                   max={ordered}
-                                  value={item.receivedQty}
-                                  onChange={e => {
-                                    const updated = [...grnForm.items];
-                                    updated[idx].receivedQty = e.target.value;
-                                    setGrnForm({ ...grnForm, items: updated });
-                                  }}
-                                  style={{
-                                    ...styles.formInput,
-                                    width: '90px',
-                                    textAlign: 'right',
-                                    ...(received !== null && received > ordered ? { borderColor: '#c62828' } : {})
-                                  }}
+                                  value={item.acceptedQty}
+                                  onChange={e => updateGrnItem('acceptedQty', e.target.value)}
+                                  style={{ ...styles.formInput, width: '90px', textAlign: 'right', ...(over > 0 ? { borderColor: '#c62828' } : {}) }}
                                   required
                                 />
                               </td>
-                              <td style={styles.td}>
-                                <select
-                                  value={item.condition}
-                                  onChange={e => {
-                                    const updated = [...grnForm.items];
-                                    updated[idx].condition = e.target.value;
-                                    if (e.target.value !== 'Damaged') updated[idx].damagedQty = '';
-                                    setGrnForm({ ...grnForm, items: updated });
-                                  }}
-                                  style={styles.formSelect}
-                                >
-                                  <option value="Good">Good</option>
-                                  <option value="Damaged">Damaged</option>
-                                </select>
-                                {item.condition === 'Damaged' && (
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    max={received !== null ? received : undefined}
-                                    placeholder="Damaged qty"
-                                    value={item.damagedQty}
-                                    onChange={e => {
-                                      const updated = [...grnForm.items];
-                                      updated[idx].damagedQty = e.target.value;
-                                      setGrnForm({ ...grnForm, items: updated });
-                                    }}
-                                    style={{ ...styles.formInput, width: '110px', marginTop: '6px' }}
-                                    required
-                                  />
-                                )}
+                              <td style={{ ...styles.td, textAlign: 'right' }}>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max={ordered}
+                                  value={item.damagedQty}
+                                  onChange={e => updateGrnItem('damagedQty', e.target.value)}
+                                  style={{ ...styles.formInput, width: '90px', textAlign: 'right', ...(over > 0 ? { borderColor: '#c62828' } : {}) }}
+                                />
+                              </td>
+                              <td style={{ ...styles.td, textAlign: 'right', fontWeight: short > 0 ? 700 : 400, color: short > 0 ? '#b45309' : '#94a3b8' }}>
+                                {short > 0 ? short : '—'}
                               </td>
                               <td style={styles.td}>
-                                {received !== null && received > ordered && (
-                                  <div style={{ color: '#c62828', fontSize: '12px', fontWeight: 600 }}>
-                                    ⚠️ Exceeds outstanding qty by {received - ordered} units
-                                  </div>
-                                )}
-                                {shortage > 0 && (
-                                  <div style={{ color: '#b45309', fontSize: '12px', fontWeight: 600, marginTop: (received !== null && received > ordered) ? '4px' : 0 }}>
-                                    ⚠️ Shortage: {shortage} units
-                                  </div>
-                                )}
-                                {item.condition === 'Damaged' && damagedQty > 0 && (
-                                  <div style={{ color: '#b91c1c', fontSize: '12px', fontWeight: 600, marginTop: (shortage > 0 || (received !== null && received > ordered)) ? '4px' : 0 }}>
-                                    ⚠️ Damaged quantity: {damagedQty}
-                                  </div>
+                                {over > 0 && chip(`Over by ${over}`, '#fee2e2', '#b91c1c')}
+                                {damagedQty > 0 && chip(`${damagedQty} damaged`, '#fee2e2', '#b91c1c')}
+                                {short > 0 && chip(`Short ${short}`, '#fef3c7', '#b45309')}
+                                {over === 0 && damagedQty === 0 && short === 0 && chip('Complete', '#dcfce7', '#15803d')}
+                              </td>
+                              <td style={styles.td}>
+                                {grnHasDiscrepancy(item) ? (
+                                  <>
+                                    <select
+                                      value={item.discrepancyReason}
+                                      onChange={e => updateGrnItem('discrepancyReason', e.target.value)}
+                                      style={styles.formSelect}
+                                      required
+                                    >
+                                      <option value="">-- Select reason --</option>
+                                      {GRN_DISCREPANCY_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                                    </select>
+                                    <input
+                                      type="text"
+                                      placeholder="Note (optional)"
+                                      value={item.discrepancyNote}
+                                      onChange={e => updateGrnItem('discrepancyNote', e.target.value)}
+                                      style={{ ...styles.formInput, marginTop: '6px' }}
+                                    />
+                                  </>
+                                ) : (
+                                  <span style={{ color: '#94a3b8' }}>—</span>
                                 )}
                               </td>
                             </tr>
@@ -1983,6 +2019,17 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         })}
                       </tbody>
                     </table>
+                    {(() => {
+                      const flagged = grnForm.items.filter(grnHasDiscrepancy);
+                      if (flagged.length === 0) return null;
+                      const totalDamaged = grnForm.items.reduce((sum, item) => sum + (Number(item.damagedQty) || 0), 0);
+                      const totalShort = grnForm.items.reduce((sum, item) => sum + Math.max((Number(item.expectedQty) || 0) - grnDeliveredQty(item), 0), 0);
+                      return (
+                        <div style={{ marginTop: '10px', padding: '10px 14px', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: '8px', color: '#8a6d00', fontSize: '13px', fontWeight: 600 }}>
+                          {flagged.length} of {grnForm.items.length} lines have discrepancies: {totalDamaged} damaged, {totalShort} short. Only accepted quantities are added to stock.
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
 
@@ -2078,13 +2125,15 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   </div>
                 </div>
 
-                <button
+                <LoadingButton
                   type="submit"
+                  loading={busyAction === 'grn'}
+                  loadingText="Recording GRN..."
                   style={{ ...styles.orangeBtn, opacity: (!selectedGrnPO || grnForm.items.length === 0) ? 0.5 : 1, cursor: (!selectedGrnPO || grnForm.items.length === 0) ? 'not-allowed' : 'pointer' }}
                   disabled={!selectedGrnPO || grnForm.items.length === 0}
                 >
                   Record GRN & Update Inventory
-                </button>
+                </LoadingButton>
               </form>
             </div>
 
@@ -2335,9 +2384,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   />
                 </div>
                 <div style={{ gridColumn: 'span 2' }}>
-                  <button type="submit" style={styles.orangeBtn} disabled={adjustmentSubmitting}>
-                    {adjustmentSubmitting ? 'Recording...' : 'Record Adjustment'}
-                  </button>
+                  <LoadingButton type="submit" style={styles.orangeBtn} loading={adjustmentSubmitting} loadingText="Recording...">
+                    Record Adjustment
+                  </LoadingButton>
                 </div>
               </form>
             </div>
@@ -2399,7 +2448,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                 <h3 style={{ color: '#0d1b4b', marginBottom: '16px', fontWeight: 'bold' }}>
                   {transferForm.sourceRequestId ? `Transfer Materials for Request ${transferForm.reference}` : 'Create Material Transfer Note'}
                 </h3>
-                <form onSubmit={handleCreateTransferSubmit} style={{ display: 'grid', gap: '16px' }}>
+                <form id="transfer-form-section" onSubmit={handleCreateTransferSubmit} style={{ display: 'grid', gap: '16px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
                     <div>
                       <label style={styles.fieldLabel}>Destination</label>
@@ -2557,9 +2606,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           </div>
                         )}
                         <div style={{ display: 'flex', gap: '10px' }}>
-                          <button type="submit" disabled={transferSubmitting || blocked} style={{ ...styles.orangeBtn, ...(blocked ? { background: '#94a3b8', cursor: 'not-allowed' } : {}) }}>
-                            {transferSubmitting ? 'Creating...' : 'Create Transfer'}
-                          </button>
+                          <LoadingButton type="submit" loading={transferSubmitting} loadingText="Creating..." disabled={blocked} style={{ ...styles.orangeBtn, ...(blocked ? { background: '#94a3b8', cursor: 'not-allowed' } : {}) }}>
+                            Create Transfer
+                          </LoadingButton>
                           <button type="button" onClick={() => setShowTransferForm(false)} style={{ background: '#cbd5e1', color: '#333', border: 'none', padding: '12px 24px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
                             Cancel
                           </button>
@@ -2916,13 +2965,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
                   {shortageItems.some(it => it.requestableQty > 0) ? (
-                    <button
+                    <LoadingButton
                       onClick={handleSubmitBomShortagePR}
-                      disabled={bomPrSubmitting}
+                      loading={bomPrSubmitting}
+                      loadingText="Submitting..."
                       style={{ background: '#f59e0b', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: bomPrSubmitting ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: 'bold', opacity: bomPrSubmitting ? 0.7 : 1 }}
                     >
-                      {bomPrSubmitting ? 'Submitting...' : '🚀 Submit Purchase Request to Purchase Manager'}
-                    </button>
+                      🚀 Submit Purchase Request to Purchase Manager
+                    </LoadingButton>
                   ) : shortageItems.some(it => it.shortage > 0) ? (
                     <div style={{ width: '100%', background: '#e8f5e9', border: '1px solid #a5d6a7', color: '#2e7d32', padding: '12px 16px', borderRadius: '6px', fontSize: '14px', fontWeight: 'bold' }}>
                       ✅ Purchase Request already sent to the Purchase Manager
