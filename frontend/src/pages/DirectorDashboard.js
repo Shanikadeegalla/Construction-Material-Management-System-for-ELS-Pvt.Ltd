@@ -1973,10 +1973,12 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
                 )}
 
                 <div style={{ marginTop: '22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                  {viewingInvoice.file?.url ? (
+                  {viewingInvoice.file?.url && viewingInvoice.fileExists !== false ? (
                     <a href={`${API_BASE}${viewingInvoice.file.url}`} target="_blank" rel="noopener noreferrer" style={{ color: '#0d1b4b', fontWeight: '700', fontSize: '13px' }}>
                       Open supplier invoice file
                     </a>
+                  ) : viewingInvoice.file?.url ? (
+                    <span style={{ fontSize: '12px', color: '#d97706', fontWeight: '700' }}>⚠️ Invoice file is missing on the server. Ask Main Store to re-upload it.</span>
                   ) : (
                     <span style={{ fontSize: '12px', color: '#94a3b8' }}>No invoice file attached</span>
                   )}

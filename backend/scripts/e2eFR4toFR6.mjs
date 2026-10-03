@@ -302,6 +302,29 @@ try {
   check('BOM stock summary lists the approved BOM', r.status === 200 && bomSummary && bomSummary.shortageCount >= 0 && bomSummary.toRequestCount <= bomSummary.shortageCount, JSON.stringify(r.data).slice(0, 200));
   r = await api('dir', 'GET', '/notifications');
   check('Director feed shows payment notification', r.data.data.some(n => n.type === 'PAYMENT_RECORDED'), r.data.data.map(n => n.type).join(','));
+
+  console.log('[Invoice file re-upload, PO validation, paged lists]');
+  r = await api('main', 'GET', '/invoices');
+  check('Invoice without a file is flagged', r.data.data.find(x => x._id === inv._id)?.fileExists === false);
+  const fd = new FormData();
+  fd.append('file', new Blob(['%PDF-1.4 e2e'], { type: 'application/pdf' }), 'e2e-invoice.pdf');
+  let up = await fetch(`${base}/invoices/${inv._id}/reupload`, { method: 'PUT', headers: { Authorization: `Bearer ${tokens.main}` }, body: fd });
+  const upData = await up.json();
+  check('Invoice file re-uploaded', up.status === 200 && upData.data?.fileExists === true, JSON.stringify(upData));
+  r = await api('dir', 'GET', '/invoices');
+  const reInv = r.data.data.find(x => x._id === inv._id);
+  check('Re-uploaded file is visible to the Director with its delivery check', reInv?.fileExists === true && !!reInv?.deliveryCheck, JSON.stringify(reInv?.file));
+  // The upload lands in the real uploads folder, so remove the test file again.
+  if (upData.data?.file?.url) {
+    const { UPLOAD_DIR } = await imp('config/uploadDir.js');
+    fs.rmSync(path.join(UPLOAD_DIR, path.basename(upData.data.file.url)), { force: true });
+  }
+  r = await api('buy', 'POST', '/purchase-orders', { supplier: String(supplier._id), items: [], totalAmount: 0 });
+  check('PO without items rejected', r.status === 400, JSON.stringify(r.data));
+  r = await api('buy', 'GET', '/purchase-orders?page=1&limit=1');
+  check('Paged PO list returns one row and the page count', r.data.data?.length === 1 && r.data.totalPages >= 2, JSON.stringify({ n: r.data.data?.length, tp: r.data.totalPages }));
+  r = await api('buy', 'GET', '/invoices?page=1&limit=1');
+  check('Paged invoice list returns one row and the page count', r.data.data?.length === 1 && r.data.totalPages >= 2, JSON.stringify({ n: r.data.data?.length, tp: r.data.totalPages }));
 } catch (err) {
   fail++;
   console.log('ERROR', err.stack || err);

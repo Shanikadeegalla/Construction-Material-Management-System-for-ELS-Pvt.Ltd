@@ -43,7 +43,89 @@ const resolveMaterial = async (materialName, unit) => {
 // @access  Private
 export const getPurchaseOrders = async (req, res) => {
   try {
-    const pos = await PurchaseOrder.find()
+    const { page, limit, status, supplier, search } = req.query;
+    const query = {};
+    if (status) query.status = status;
+    if (supplier) query.supplier = supplier;
+    if (search) {
+      query.$or = [
+        { poNumber: new RegExp(search, 'i') },
+        { notes: new RegExp(search, 'i') },
+        { createdBy: new RegExp(search, 'i') }
+      ];
+    }
+
+    if (page || limit) {
+      const pageNum = Math.max(1, parseInt(page, 10) || 1);
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+      const skip = (pageNum - 1) * limitNum;
+
+      const total = await PurchaseOrder.countDocuments(query);
+      const totalPages = Math.ceil(total / limitNum) || 1;
+
+      const pos = await PurchaseOrder.find(query)
+        .populate('prId')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum);
+
+      const suppliers = await Supplier.find().lean();
+      const supplierMap = {};
+      suppliers.forEach(s => {
+        supplierMap[s._id.toString()] = s.name;
+      });
+
+      const formattedPOs = pos.map(po => {
+        let supplierName = 'Unknown';
+        if (po.supplier) {
+          const supStr = po.supplier.toString();
+          if (supplierMap[supStr]) {
+            supplierName = supplierMap[supStr];
+          } else {
+            supplierName = po.supplier;
+          }
+        }
+        return {
+          _id: po._id,
+          poNumber: po.poNumber,
+          prId: po.prId ? { _id: po.prId._id, project: po.prId.project, projectName: po.prId.projectName } : null,
+          supplier: supplierName,
+          supplierRefId: po.supplier ? po.supplier.toString() : null,
+          totalAmount: po.totalAmount,
+          status: po.status,
+          notes: po.notes || '',
+          createdBy: po.createdBy,
+          createdAt: po.createdAt,
+          updatedAt: po.updatedAt,
+          expectedDeliveryDate: po.expectedDeliveryDate,
+          actualDeliveryDate: po.actualDeliveryDate,
+          receivedQty: po.receivedQty,
+          deliveryCondition: po.deliveryCondition,
+          paymentTerms: po.paymentTerms,
+          deliveryAddress: po.deliveryAddress,
+          sentAt: po.sentAt,
+          items: po.items.map(item => ({
+            material: item.material,
+            materialName: item.materialName,
+            quantity: item.quantity,
+            unit: item.unit,
+            unitPrice: item.unitPrice
+          }))
+        };
+      });
+
+      return res.status(200).json({
+        success: true,
+        count: formattedPOs.length,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages,
+        data: formattedPOs
+      });
+    }
+
+    const pos = await PurchaseOrder.find(query)
       .populate('prId')
       .sort({ createdAt: -1 });
 
@@ -118,24 +200,52 @@ export const createPurchaseOrder = async (req, res) => {
     const { prId, supplier, items, totalAmount, notes, expectedDeliveryDate, paymentTerms, deliveryAddress } = req.body;
     const createdBy = req.user ? req.user.name : (req.body.createdBy || 'Purchase Manager');
 
-    if (!supplier || !items || !Array.isArray(items) || items.length === 0 || !totalAmount) {
-      return res.status(400).json({ success: false, message: 'Missing required PO fields.' });
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please select at least one item.' });
+    }
+    if (!supplier) {
+      return res.status(400).json({ success: false, message: 'Please select a supplier.' });
+    }
+
+    // If PR is linked, validate PR existence and validate that selected items belong to the PR
+    let prDoc = null;
+    if (prId && mongoose.Types.ObjectId.isValid(prId)) {
+      prDoc = await PurchaseRequest.findById(prId);
+      if (!prDoc) {
+        return res.status(404).json({ success: false, message: 'Referenced Purchase Request was not found.' });
+      }
+      const prMaterialNames = new Set((prDoc.materials || []).map(m => (m.materialName || m.name || '').toLowerCase().trim()));
+      for (const item of items) {
+        const nameLower = (item.materialName || '').toLowerCase().trim();
+        if (prMaterialNames.size > 0 && !prMaterialNames.has(nameLower)) {
+          return res.status(400).json({ success: false, message: `Selected item "${item.materialName}" is not part of Purchase Request ${prDoc.prNumber || prId}.` });
+        }
+      }
     }
 
     // 1. Auto-generate poNumber (PO-YYYY-XXX)
     const poNumber = await generateNextPoNumber();
 
-    // 2. Resolve items and their material ObjectIds
+    // 2. Resolve items, their material ObjectIds, and recalculate totalAmount
     const resolvedItems = [];
+    let computedTotal = 0;
     for (const item of items) {
+      const qty = Number(item.quantity) || 0;
+      const unitPrice = Number(item.unitPrice) || 0;
+      computedTotal += (qty * unitPrice);
+
       const materialDoc = await resolveMaterial(item.materialName, item.unit);
       resolvedItems.push({
         material: materialDoc._id,
         materialName: item.materialName,
-        quantity: Number(item.quantity) || 0,
+        quantity: qty,
         unit: item.unit || 'bag',
-        unitPrice: Number(item.unitPrice) || 0
+        unitPrice: unitPrice
       });
+    }
+
+    if (resolvedItems.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please select at least one item.' });
     }
 
     // Resolve supplier to ObjectId
@@ -157,12 +267,12 @@ export const createPurchaseOrder = async (req, res) => {
       }
     }
 
-    // 3. Construct PO
+    // 3. Construct PO with recalculated totalAmount
     const poData = {
       poNumber,
       supplier: supplierId,
       items: resolvedItems,
-      totalAmount: Number(totalAmount),
+      totalAmount: computedTotal > 0 ? computedTotal : (Number(totalAmount) || 0),
       notes: notes || '',
       createdBy,
       status: 'Pending',

@@ -153,6 +153,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const poPagination = usePagination(filteredOrders, 8, [poSearchTerm]);
   const prPagination = usePagination(purchaseRequests, 8, [purchaseRequests.length]);
   const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
+  const invoicesPagination = usePagination(invoices, 8, [invoices.length], { storageKey: 'po_invoices' });
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -1696,7 +1697,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {invoices.map((inv, i) => {
+                    {invoicesPagination.paginatedData.map((inv, i) => {
                       const status = inv.status;
                       const isOverdue = status !== 'Paid' && inv.dueDate && new Date(inv.dueDate) < now;
 
@@ -1805,6 +1806,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     )}
                   </tbody>
                 </table>
+                <Pagination pagination={invoicesPagination} />
               </div>
             </div>
           )}

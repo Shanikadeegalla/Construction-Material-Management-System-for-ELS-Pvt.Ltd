@@ -738,6 +738,14 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const selectedProjectName = (projects.find(p => p._id === selectedProjId) || {}).projectName || issueForm.projectName;
   const projectPlanRows = planVsActual.filter(r => selectedProjectName && r.projectName === selectedProjectName);
 
+  const lowStockAlertsList = React.useMemo(() => materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)), [materials]);
+  const lowStockAlertsPagination = usePagination(lowStockAlertsList, 5, [lowStockAlertsList.length], { storageKey: 'site_low_stock_alerts' });
+  const inTransitPagination = usePagination(inTransitTransfers, 5, [inTransitTransfers.length], { storageKey: 'site_in_transit' });
+  const receivedTransfersPagination = usePagination(receivedTransfers, 5, [receivedTransfers.length], { storageKey: 'site_received_transfers' });
+  const issuedMinsList = React.useMemo(() => mins.filter(m => m.status === 'Issued'), [mins]);
+  const issuedMinsPagination = usePagination(issuedMinsList, 5, [issuedMinsList.length], { storageKey: 'site_issued_mins' });
+  const projectPlanPagination = usePagination(projectPlanRows, 10, [selectedProjId, planVsActual.length], { storageKey: 'site_project_plan' });
+
   // Total quantity historically confirmed as received at site, per material name
   const issuedToSiteByMaterial = {};
   mins.filter(m => m.status === 'Received').forEach(m => {
@@ -943,7 +951,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)).map((m, idx) => {
+                      {lowStockAlertsPagination.paginatedData.map((m, idx) => {
                         const min = m.minimumStock || 10;
                         const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
                         const max = m.maximumStock || 100;
@@ -973,6 +981,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       })}
                     </tbody>
                   </table>
+                  <Pagination pagination={lowStockAlertsPagination} />
                 </div>
               </div>
             )}
@@ -1005,6 +1014,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               {inTransitTransfers.length === 0 ? (
                 <div style={styles.emptyState}>No Material Transfer Notes currently in transit.</div>
               ) : (
+                <>
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
@@ -1017,7 +1027,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {inTransitTransfers.map(t => (
+                    {inTransitPagination.paginatedData.map(t => (
                       <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={styles.tdBold}>{t.mtnNumber}</td>
                         <td style={styles.td}>{t.requestNo || '-'}</td>
@@ -1044,6 +1054,8 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     ))}
                   </tbody>
                 </table>
+                <Pagination pagination={inTransitPagination} />
+                </>
               )}
             </div>
 
@@ -1053,6 +1065,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               {receivedTransfers.length === 0 ? (
                 <div style={styles.emptyState}>No transfers received yet.</div>
               ) : (
+                <>
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
@@ -1064,7 +1077,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {receivedTransfers.map(t => (
+                    {receivedTransfersPagination.paginatedData.map(t => (
                       <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={styles.tdBold}>{t.mtnNumber}</td>
                         <td style={styles.td}>
@@ -1082,6 +1095,8 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     ))}
                   </tbody>
                 </table>
+                <Pagination pagination={receivedTransfersPagination} />
+                </>
               )}
             </div>
 
@@ -1246,6 +1261,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               {mins.filter(m => m.status === 'Issued').length === 0 ? (
                 <div style={styles.emptyState}>No shipments currently in-transit.</div>
               ) : (
+                <>
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
@@ -1258,7 +1274,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {mins.filter(m => m.status === 'Issued').map(m => (
+                    {issuedMinsPagination.paginatedData.map(m => (
                       <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={styles.tdBold}>{m.minNumber}</td>
                         <td style={styles.td}>
@@ -1283,6 +1299,8 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     ))}
                   </tbody>
                 </table>
+                <Pagination pagination={issuedMinsPagination} />
+                </>
               )}
             </div>
           </div>
@@ -1714,6 +1732,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               ) : projectPlanRows.length === 0 ? (
                 <div style={styles.emptyState}>No approved BOM or usage recorded for this project yet.</div>
               ) : (
+                <>
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
@@ -1728,7 +1747,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {projectPlanRows.map((r, i) => {
+                    {projectPlanPagination.paginatedData.map((r, i) => {
                       const over = r.varianceQty > 0;
                       const badge = over || r.status === 'Unplanned'
                         ? { bg: '#ffebee', color: '#c62828' }
@@ -1752,6 +1771,8 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     })}
                   </tbody>
                 </table>
+                <Pagination pagination={projectPlanPagination} />
+                </>
               )}
             </div>
 

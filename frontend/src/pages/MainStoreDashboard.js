@@ -501,6 +501,32 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const grnDeliveredQty = (item) => (Number(item.acceptedQty) || 0) + (Number(item.damagedQty) || 0);
   const grnHasDiscrepancy = (item) => Number(item.damagedQty) > 0 || grnDeliveredQty(item) < Number(item.expectedQty);
 
+  // Replaces the stored file of an existing invoice, e.g. when the original
+  // upload is missing from the server.
+  const handleReuploadInvoice = async (invoice, file) => {
+    if (!file) return;
+    setError(''); setSuccess('');
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`${API_BASE}/api/invoices/${invoice._id}/reupload`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSuccess(`Invoice ${invoice.invoiceNumber || ''} file re-uploaded successfully.`);
+        fetchData(true);
+      } else {
+        setError(data.message || 'Failed to re-upload the invoice file.');
+      }
+    } catch (err) {
+      setError('Could not connect to the server to re-upload the invoice file.');
+    }
+  };
+
   const handleGrnSubmit = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -1123,6 +1149,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const lowStockMaterials = mainMaterials
     .filter(m => materialStatus(m).tier !== 'NORMAL')
     .sort((a, b) => stockRatio(a) - stockRatio(b));
+  const lowStockPagination = usePagination(lowStockMaterials, 5, [lowStockMaterials.length], { storageKey: 'main_low_stock' });
   const pendingMTNs = transferNotes.filter(m => m.status === 'In Transit').length;
 
   // Recent activity feed combining GRNs, Material Transfer Notes, and PR submissions
@@ -1661,7 +1688,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {lowStockMaterials.map(m => {
+                        {lowStockPagination.paginatedData.map(m => {
                           const status = materialStatus(m);
                           return (
                             <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0' }}>
@@ -1678,6 +1705,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         })}
                       </tbody>
                     </table>
+                    <Pagination pagination={lowStockPagination} />
                   </div>
                 )}
               </div>
@@ -2166,13 +2194,26 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         <td style={styles.td}>{formatDate(g.receivedDate || g.createdAt)}</td>
                         <td style={styles.td}>
                           {invoice ? (
-                            invoice.file?.url ? (
-                              <a href={`${API_BASE}${invoice.file.url}`} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontWeight: '600', fontSize: '12px' }}>
-                                View Invoice
-                              </a>
-                            ) : (
-                              <span style={{ color: '#94a3b8', fontSize: '12px' }}>Recorded (no file)</span>
-                            )
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              {invoice.file?.url && invoice.fileExists !== false ? (
+                                <a href={`${API_BASE}${invoice.file.url}`} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', fontWeight: '600', fontSize: '12px' }}>
+                                  View Invoice
+                                </a>
+                              ) : invoice.file?.url ? (
+                                <span style={{ color: '#d97706', fontSize: '12px', fontWeight: 'bold' }}>⚠️ File missing</span>
+                              ) : (
+                                <span style={{ color: '#94a3b8', fontSize: '12px' }}>Recorded (no file)</span>
+                              )}
+                              <label style={{ cursor: 'pointer', color: '#0d1b4b', fontSize: '11px', textDecoration: 'underline', fontWeight: '600' }}>
+                                {invoice.file?.url ? 'Re-upload file' : 'Upload file'}
+                                <input
+                                  type="file"
+                                  accept="image/*,application/pdf"
+                                  style={{ display: 'none' }}
+                                  onChange={e => { handleReuploadInvoice(invoice, e.target.files?.[0]); e.target.value = ''; }}
+                                />
+                              </label>
+                            </div>
                           ) : (
                             <span style={{ color: '#94a3b8', fontSize: '12px' }}>Not attached</span>
                           )}
