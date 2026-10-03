@@ -1002,44 +1002,26 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     return () => clearInterval(interval);
   }, []);
 
+  const [userError, setUserError] = useState(null);
+
   const fetchUsers = async () => {
     try {
+      setUserError(null);
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const res = await fetch(`${API_BASE}/api/auth/users`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
-      let userList = data.success ? data.data : [];
-      if (!userList || userList.length < 8) {
-        userList = [
-          { _id: '1', name: 'John Smith', email: 'john@els.com', role: 'ProjectManager', status: true, phone: '+94 77 987 6543', createdAt: new Date(Date.now() - 30*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 2*60*60*1000).toISOString() },
-          { _id: '2', name: 'Sarah Johnson', email: 'sarah@els.com', role: 'Director', status: true, phone: '+94 77 123 4567', createdAt: new Date(Date.now() - 60*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 4*60*60*1000).toISOString() },
-          { _id: '3', name: 'Mike Davis', email: 'mike@els.com', role: 'MainStoreOfficer', status: false, phone: '+94 77 444 5555', createdAt: new Date(Date.now() - 10*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 24*60*60*1000).toISOString() },
-          { _id: '4', name: 'Emily Brown', email: 'emily@els.com', role: 'PurchaseManager', status: true, phone: '+94 77 888 9999', createdAt: new Date(Date.now() - 15*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 12*60*60*1000).toISOString() },
-          { _id: '5', name: 'Ruwan Perera', email: 'ruwan@els.com', role: 'SiteStoreOfficer', status: true, phone: '+94 77 555 6666', createdAt: new Date(Date.now() - 20*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 6*60*60*1000).toISOString() },
-          { _id: '6', name: 'Admin Principal', email: 'admin@els.com', role: 'Admin', status: true, phone: '+94 77 777 7777', createdAt: new Date(Date.now() - 100*24*60*60*1000).toISOString(), lastLogin: new Date().toISOString() },
-          { _id: '7', name: 'Kanishka Silva', email: 'kanishka@els.com', role: 'ProjectManager', status: true, phone: '+94 77 333 4444', createdAt: new Date(Date.now() - 40*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 1*24*60*60*1000).toISOString() },
-          { _id: '8', name: 'Nishan Fernando', email: 'nishan@els.com', role: 'SiteStoreOfficer', status: true, phone: '+94 77 222 1111', createdAt: new Date(Date.now() - 12*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 3*60*60*1000).toISOString() }
-        ];
+      if (data.success && Array.isArray(data.data)) {
+        setUsers(data.data);
       } else {
-        userList = userList.map(u => ({
-          ...u,
-          phone: u.phone || '+94 77 ' + Math.floor(1000000 + Math.random() * 9000000),
-          lastLogin: u.lastLogin || new Date(Date.now() - Math.random() * 5 * 24 * 60 * 60 * 1000).toISOString()
-        }));
+        setUsers([]);
+        setUserError(data.message || 'Failed to load user list.');
       }
-      setUsers(userList);
     } catch (err) {
-      setUsers([
-        { _id: '1', name: 'John Smith', email: 'john@els.com', role: 'ProjectManager', status: true, phone: '+94 77 987 6543', createdAt: new Date(Date.now() - 30*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 2*60*60*1000).toISOString() },
-        { _id: '2', name: 'Sarah Johnson', email: 'sarah@els.com', role: 'Director', status: true, phone: '+94 77 123 4567', createdAt: new Date(Date.now() - 60*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 4*60*60*1000).toISOString() },
-        { _id: '3', name: 'Mike Davis', email: 'mike@els.com', role: 'MainStoreOfficer', status: false, phone: '+94 77 444 5555', createdAt: new Date(Date.now() - 10*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 24*60*60*1000).toISOString() },
-        { _id: '4', name: 'Emily Brown', email: 'emily@els.com', role: 'PurchaseManager', status: true, phone: '+94 77 888 9999', createdAt: new Date(Date.now() - 15*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 12*60*60*1000).toISOString() },
-        { _id: '5', name: 'Ruwan Perera', email: 'ruwan@els.com', role: 'SiteStoreOfficer', status: true, phone: '+94 77 555 6666', createdAt: new Date(Date.now() - 20*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 6*60*60*1000).toISOString() },
-        { _id: '6', name: 'Admin Principal', email: 'admin@els.com', role: 'Admin', status: true, phone: '+94 77 777 7777', createdAt: new Date(Date.now() - 100*24*60*60*1000).toISOString(), lastLogin: new Date().toISOString() },
-        { _id: '7', name: 'Kanishka Silva', email: 'kanishka@els.com', role: 'ProjectManager', status: true, phone: '+94 77 333 4444', createdAt: new Date(Date.now() - 40*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 1*24*60*60*1000).toISOString() },
-        { _id: '8', name: 'Nishan Fernando', email: 'nishan@els.com', role: 'SiteStoreOfficer', status: true, phone: '+94 77 222 1111', createdAt: new Date(Date.now() - 12*24*60*60*1000).toISOString(), lastLogin: new Date(Date.now() - 3*60*60*1000).toISOString() }
-      ]);
+      console.error('Error fetching users:', err);
+      setUsers([]);
+      setUserError('Failed to connect to server. Please check network connection.');
     }
   };
 
@@ -1452,24 +1434,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
 
-      // If email changed, call the specific update-email endpoint first
-      if (editForm.email.trim().toLowerCase() !== selectedUser.email.toLowerCase()) {
-        const emailRes = await fetch(`${API_BASE}/api/users/${selectedUser._id}/email`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          },
-          body: JSON.stringify({ newEmail: editForm.email.trim() })
-        });
-        const emailData = await emailRes.json();
-        if (!emailRes.ok || !emailData.success) {
-          showErrorMessage(`❌ Email update failed: ${emailData.message || 'Email already in use'}`);
-          return;
-        }
-      }
-
-      // Then save the remaining fields (name, role, phone, etc.)
+      // Save updated user profile (including email, role, details)
       const res = await fetch(`${API_BASE}/api/auth/users/${selectedUser._id}`, {
         method: 'PUT',
         headers: {
@@ -1479,7 +1444,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         body: JSON.stringify(editForm)
       });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         showSuccessMessage('✅ User profile updated successfully!');
         setIsEditing(false);
         setUserViewMode('list');
@@ -1507,8 +1472,16 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
     e.preventDefault();
     setResetPasswordError('');
     
-    if (newPassword.length < 6) {
-      setResetPasswordError('Password must be at least 6 characters.');
+    const isStrongPassword = (pwd) =>
+      !!pwd &&
+      pwd.length >= 8 &&
+      /[A-Z]/.test(pwd) &&
+      /[a-z]/.test(pwd) &&
+      /[0-9]/.test(pwd) &&
+      /[^A-Za-z0-9]/.test(pwd);
+
+    if (!isStrongPassword(newPassword)) {
+      setResetPasswordError('Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character.');
       return;
     }
     if (newPassword !== confirmPassword) {

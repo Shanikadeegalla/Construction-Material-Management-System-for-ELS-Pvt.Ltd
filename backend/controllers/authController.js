@@ -126,78 +126,28 @@ export const loginUser = async (req, res, next) => {
       throw new Error('Please enter email/username and password');
     }
 
-    const cleanIdentifier = loginIdentifier.trim().toLowerCase();
-    const escapedIdentifier = cleanIdentifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let user = null;
+    const cleanEmail = loginIdentifier.toLowerCase().trim();
 
-    const queryConditions = [
-      { email: { $regex: new RegExp(`^${escapedIdentifier}$`, 'i') } },
-      { username: { $regex: new RegExp(`^${escapedIdentifier}$`, 'i') } },
-      { name: { $regex: new RegExp(`^${escapedIdentifier}$`, 'i') } }
-    ];
-    if (!cleanIdentifier.includes('@')) {
-      queryConditions.push({ email: { $regex: new RegExp(`^${escapedIdentifier}@`, 'i') } });
-    }
+    // 1. Strict exact email lookup
+    user = await User.findOne({ email: cleanEmail });
 
-    let user = await User.findOne({ $or: queryConditions });
-
+    // 2. Exact username lookup if not found by email
     if (!user) {
-      user = await User.findOne({
-        $or: [
-          { email: { $regex: new RegExp(`${escapedIdentifier}`, 'i') } },
-          { username: { $regex: new RegExp(`${escapedIdentifier}`, 'i') } }
-        ]
-      });
-    }
-
-    let cleanPassword = password.trim();
-    let isMatch = user ? await user.matchPassword(cleanPassword) : false;
-
-    // Check if stripped trailing period matches (e.g. if user entered a trailing period by accident)
-    if (user && !isMatch) {
-      const strippedPassword = cleanPassword.replace(/\.$/, '');
-      if (strippedPassword !== cleanPassword) {
-        isMatch = await user.matchPassword(strippedPassword);
+      const cleanUsername = loginIdentifier.trim();
+      const matchingUsernames = await User.find({ username: cleanUsername });
+      if (matchingUsernames.length === 1) {
+        user = matchingUsernames[0];
+      } else if (matchingUsernames.length > 1) {
+        res.status(401);
+        throw new Error('Invalid credentials');
       }
     }
 
-    if (user && isMatch) {
-      // Auto-activate account if inactive
-      if (user.status === false) {
-        user.status = true;
-        await user.save();
-      }
+    // 3. Strict authentic password check using exact password string
+    const isMatch = user ? await user.matchPassword(password) : false;
 
-      const token = generateToken(user._id);
-
-      // Audit Log for successful login
-      const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
-      await AuditLog.create({
-        userId: user._id,
-        userName: user.name,
-        action: 'User Login',
-        module: 'Authentication',
-        ipAddress,
-        timestamp: new Date(),
-        status: 'Success'
-      });
-
-      res.status(200).json({
-        success: true,
-        data: {
-          _id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          status: user.status,
-          token,
-          firstName: user.firstName || '',
-          lastName: user.lastName || '',
-          phone: user.phone || '',
-          avatarUrl: user.avatarUrl || '/uploads/default-avatar.png',
-          settings: user.settings || {}
-        },
-      });
-    } else {
+    if (!user || !isMatch) {
       const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
       await AuditLog.create({
         userId: null,
@@ -209,8 +159,50 @@ export const loginUser = async (req, res, next) => {
         status: 'Failed'
       });
       res.status(401);
-      throw new Error('Invalid email or password');
+      throw new Error('Invalid credentials');
     }
+
+    // 4. Deactivated account check
+    if (user.status === false) {
+      res.status(403);
+      throw new Error('Account is deactivated. Contact administrator.');
+    }
+
+    // Update lastLogin timestamp
+    user.lastLogin = new Date();
+    await user.save();
+
+    const token = generateToken(user._id);
+
+    // Audit Log for successful login
+    const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+    await AuditLog.create({
+      userId: user._id,
+      userName: user.name,
+      action: 'User Login',
+      module: 'Authentication',
+      ipAddress,
+      timestamp: new Date(),
+      status: 'Success'
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        lastLogin: user.lastLogin,
+        token,
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        phone: user.phone || '',
+        avatarUrl: user.avatarUrl || '/uploads/default-avatar.png',
+        settings: user.settings || {}
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -222,7 +214,7 @@ export const loginUser = async (req, res, next) => {
 // @access  Private
 export const getUserProfile = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id).select('-password');
 
     if (user) {
       res.json({
@@ -233,6 +225,7 @@ export const getUserProfile = async (req, res, next) => {
           email: user.email,
           role: user.role,
           status: user.status,
+          lastLogin: user.lastLogin,
           firstName: user.firstName || '',
           lastName: user.lastName || '',
           phone: user.phone || '',
@@ -266,12 +259,18 @@ export const getUsers = async (req, res, next) => {
 // @access  Private (Admin Only)
 export const updateUser = async (req, res, next) => {
   try {
-    const { name, email, role, currentPassword, newPassword, firstName, lastName, phone, alternatePhone, username, employeeId, gender, avatarUrl, settings } = req.body;
+    const { name, email, role, currentPassword, newPassword, firstName, lastName, phone, alternatePhone, username, employeeId, gender, avatarUrl, settings, status } = req.body;
     const user = await User.findById(req.params.id);
 
     if (!user) {
       res.status(404);
       throw new Error('User not found');
+    }
+
+    // Protection: Only Admin can modify Admin accounts
+    if (user.role === 'Admin' && req.user.role !== 'Admin') {
+      res.status(403);
+      throw new Error('Only an Administrator can modify Administrator accounts.');
     }
 
     // Authorization check: Admin can update anyone, regular users can only update themselves
@@ -286,7 +285,16 @@ export const updateUser = async (req, res, next) => {
       throw new Error('Not authorized to change your own role');
     }
 
-    // Enforce at most one Admin account in the system
+    // Last Admin Protection: cannot demote or deactivate the last remaining active Admin
+    if (user.role === 'Admin' && ((role && role !== 'Admin') || status === false)) {
+      const activeAdminCount = await User.countDocuments({ role: 'Admin', status: true });
+      if (activeAdminCount <= 1) {
+        res.status(400);
+        throw new Error('Cannot demote or deactivate the last remaining administrator.');
+      }
+    }
+
+    // Promoting to Admin check
     if (role === 'Admin' && user.role !== 'Admin') {
       const adminCount = await User.countDocuments({ role: 'Admin' });
       if (adminCount >= 1) {
@@ -295,21 +303,31 @@ export const updateUser = async (req, res, next) => {
       }
     }
 
-    const cleanEmail = email ? email.trim().toLowerCase() : undefined;
-    if (cleanEmail && cleanEmail !== user.email) {
-      const emailExists = await User.findOne({ email: cleanEmail });
-      if (emailExists) {
+    if (email !== undefined) {
+      const cleanEmail = email.trim().toLowerCase();
+      const emailRegex = /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/;
+      if (!emailRegex.test(cleanEmail)) {
         res.status(400);
-        throw new Error('Email already exists for another user');
+        throw new Error('Please add a valid email');
+      }
+
+      if (cleanEmail !== user.email) {
+        const emailExists = await User.findOne({ email: cleanEmail, _id: { $ne: user._id } });
+        if (emailExists) {
+          res.status(400);
+          throw new Error('Email address is already in use.');
+        }
+        user.email = cleanEmail;
       }
     }
 
     if (employeeId && employeeId !== user.employeeId) {
-      const employeeIdExists = await User.findOne({ employeeId });
+      const employeeIdExists = await User.findOne({ employeeId, _id: { $ne: user._id } });
       if (employeeIdExists) {
         res.status(400);
         throw new Error('Employee ID already exists for another user');
       }
+      user.employeeId = employeeId;
     }
 
     // Password change logic
@@ -319,7 +337,6 @@ export const updateUser = async (req, res, next) => {
         throw new Error('Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character.');
       }
       if (req.user.role !== 'Admin' || req.user._id.toString() === req.params.id) {
-        // Anyone changing their own password (Admin included) must provide the correct current password
         if (!currentPassword) {
           res.status(400);
           throw new Error('Current password is required to change password');
@@ -331,18 +348,20 @@ export const updateUser = async (req, res, next) => {
         }
       }
       user.password = newPassword;
+      user.passwordChangedAt = new Date();
     }
 
     user.name = name || user.name;
-    user.email = cleanEmail || user.email;
     if (req.user.role === 'Admin' && role) {
-      user.role = role || user.role;
+      user.role = role;
+    }
+    if (req.user.role === 'Admin' && status !== undefined) {
+      user.status = status;
     }
 
     if (firstName !== undefined) user.firstName = firstName;
     if (lastName !== undefined) user.lastName = lastName;
     if (username !== undefined) user.username = username;
-    if (employeeId !== undefined) user.employeeId = employeeId;
     if (gender !== undefined) user.gender = gender;
     if (phone !== undefined) user.phone = phone;
     if (alternatePhone !== undefined) user.alternatePhone = alternatePhone;
@@ -380,6 +399,7 @@ export const updateUser = async (req, res, next) => {
         email: updatedUser.email,
         role: updatedUser.role,
         status: updatedUser.status,
+        lastLogin: updatedUser.lastLogin,
         firstName: updatedUser.firstName || '',
         lastName: updatedUser.lastName || '',
         username: updatedUser.username || '',
@@ -406,12 +426,30 @@ export const updateUser = async (req, res, next) => {
 // @access  Private (Admin Only)
 export const deactivateUser = async (req, res, next) => {
   try {
-    const user = await User.findByIdAndUpdate(req.params.id, { status: false }, { new: true });
+    const user = await User.findById(req.params.id);
     if (!user) {
       res.status(404);
       throw new Error('User not found');
     }
-    res.status(200).json({ success: true, message: 'User deactivated successfully!', data: user });
+
+    if (user.role === 'Admin' && req.user.role !== 'Admin') {
+      res.status(403);
+      throw new Error('Only an Administrator can modify Administrator accounts.');
+    }
+
+    if (user.role === 'Admin') {
+      const activeAdminCount = await User.countDocuments({ role: 'Admin', status: true });
+      if (activeAdminCount <= 1) {
+        res.status(400);
+        throw new Error('Cannot demote or deactivate the last remaining administrator.');
+      }
+    }
+
+    user.status = false;
+    await user.save();
+
+    const safeData = await User.findById(user._id).select('-password');
+    res.status(200).json({ success: true, message: 'User deactivated successfully!', data: safeData });
   } catch (error) {
     next(error);
   }
@@ -422,12 +460,22 @@ export const deactivateUser = async (req, res, next) => {
 // @access  Private (Admin Only)
 export const activateUser = async (req, res, next) => {
   try {
-    const user = await User.findByIdAndUpdate(req.params.id, { status: true }, { new: true });
+    const user = await User.findById(req.params.id);
     if (!user) {
       res.status(404);
       throw new Error('User not found');
     }
-    res.status(200).json({ success: true, message: 'User activated successfully!', data: user });
+
+    if (user.role === 'Admin' && req.user.role !== 'Admin') {
+      res.status(403);
+      throw new Error('Only an Administrator can modify Administrator accounts.');
+    }
+
+    user.status = true;
+    await user.save();
+
+    const safeData = await User.findById(user._id).select('-password');
+    res.status(200).json({ success: true, message: 'User activated successfully!', data: safeData });
   } catch (error) {
     next(error);
   }
@@ -443,11 +491,26 @@ export const deleteUser = async (req, res, next) => {
       throw new Error('You cannot delete your own account');
     }
 
-    const user = await User.findByIdAndDelete(req.params.id);
+    const user = await User.findById(req.params.id);
     if (!user) {
       res.status(404);
       throw new Error('User not found');
     }
+
+    if (user.role === 'Admin' && req.user.role !== 'Admin') {
+      res.status(403);
+      throw new Error('Only an Administrator can modify Administrator accounts.');
+    }
+
+    if (user.role === 'Admin') {
+      const activeAdminCount = await User.countDocuments({ role: 'Admin', status: true });
+      if (activeAdminCount <= 1) {
+        res.status(400);
+        throw new Error('Cannot demote or deactivate the last remaining administrator.');
+      }
+    }
+
+    await User.findByIdAndDelete(req.params.id);
 
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
     await AuditLog.create({
@@ -484,9 +547,9 @@ export const getAuditLogs = async (req, res, next) => {
 export const resetUserPassword = async (req, res, next) => {
   try {
     const { password } = req.body;
-    if (!password || password.trim().length < 6) {
+    if (!password || !isStrongPassword(password)) {
       res.status(400);
-      throw new Error('Password must be at least 6 characters long');
+      throw new Error('Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character.');
     }
 
     const user = await User.findById(req.params.id);
@@ -495,7 +558,13 @@ export const resetUserPassword = async (req, res, next) => {
       throw new Error('User not found');
     }
 
+    if (user.role === 'Admin' && req.user.role !== 'Admin') {
+      res.status(403);
+      throw new Error('Only an Administrator can modify Administrator accounts.');
+    }
+
     user.password = password;
+    user.passwordChangedAt = new Date();
     await user.save();
 
     // Log the audit event

@@ -70,7 +70,7 @@ router.get('/me', protect, getUserProfile);
 // User management (gated by the Roles & Permissions matrix)
 router.get('/next-employee-id', protect, checkPermission('Create/Edit Users'), getNextEmployeeId);
 router.get('/users', protect, checkPermission('View User List'), getUsers);
-router.put('/users/:id', protect, updateUser);
+router.put('/users/:id', protect, checkPermission('Create/Edit Users'), updateUser);
 router.put('/users/:id/deactivate', protect, checkPermission('Create/Edit Users'), deactivateUser);
 router.put('/users/:id/activate', protect, checkPermission('Create/Edit Users'), activateUser);
 router.put('/users/:id/reset-password', protect, checkPermission('Create/Edit Users'), resetUserPassword);
