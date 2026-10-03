@@ -26,19 +26,66 @@ export const getNextSupplierId = async (req, res) => {
   }
 };
 
+// Format supplier to ensure supplierId is never undefined or empty
+const formatSupplierDoc = (s) => {
+  if (!s) return s;
+  const obj = s.toObject ? s.toObject() : { ...s };
+  if (!obj.supplierId || String(obj.supplierId).trim() === '') {
+    const idStr = String(obj._id || '');
+    obj.supplierId = `SUP-${idStr.length >= 4 ? idStr.slice(-4).toUpperCase() : '0001'}`;
+  }
+  obj.category = obj.categories?.[0] || obj.category || '';
+  return obj;
+};
+
 // Get all suppliers
 // GET /api/suppliers
 export const getSuppliers = async (req, res) => {
   try {
-    const suppliers = await Supplier.find().sort({ name: 1 });
+    const { page, limit, search, status } = req.query;
+    const query = {};
+    if (status) query.status = status;
+    if (search) {
+      query.$or = [
+        { name: new RegExp(search, 'i') },
+        { supplierId: new RegExp(search, 'i') },
+        { email: new RegExp(search, 'i') },
+        { phone: new RegExp(search, 'i') }
+      ];
+    }
+
+    if (page || limit) {
+      const pageNum = Math.max(1, parseInt(page, 10) || 1);
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+      const skip = (pageNum - 1) * limitNum;
+
+      const total = await Supplier.countDocuments(query);
+      const totalPages = Math.ceil(total / limitNum) || 1;
+
+      const suppliers = await Supplier.find(query).sort({ name: 1 }).skip(skip).limit(limitNum);
+      const formatted = suppliers.map(formatSupplierDoc);
+
+      return res.status(200).json({
+        success: true,
+        count: formatted.length,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages,
+        data: formatted
+      });
+    }
+
+    const suppliers = await Supplier.find(query).sort({ name: 1 });
+    const formatted = suppliers.map(formatSupplierDoc);
 
     // Handle frontend discrepancy:
     // PurchaseOrderPage.js expects: { success: true, data: [...] }
     // SupplierManagement.js expects: [...] (raw array)
     if (req.headers.authorization) {
-      return res.status(200).json({ success: true, count: suppliers.length, data: suppliers });
+      return res.status(200).json({ success: true, count: formatted.length, data: formatted });
     } else {
-      return res.status(200).json(suppliers);
+      return res.status(200).json(formatted);
     }
   } catch (error) {
     if (req.headers.authorization) {
@@ -64,22 +111,39 @@ const duplicateKeyMessage = (error) => {
   return 'Duplicate value. Please choose a different one.';
 };
 
+const validateBankAccountNumber = (acc) => {
+  if (!acc || typeof acc !== 'string') return true;
+  const trimmed = acc.trim();
+  if (trimmed === '') return true;
+  return /^\d{6,20}$/.test(trimmed);
+};
+
 export const createSupplier = async (req, res) => {
   try {
+    if (req.body.accountNumber && !validateBankAccountNumber(req.body.accountNumber)) {
+      const msg = 'Bank account number must contain only numeric digits (between 6 and 20 digits).';
+      if (req.headers.authorization) {
+        return res.status(400).json({ success: false, message: msg });
+      } else {
+        return res.status(400).json({ message: msg });
+      }
+    }
     const supplierId = req.body.supplierId?.trim() || (await generateNextSupplierId());
     const supplier = new Supplier({
       ...req.body,
+      accountNumber: req.body.accountNumber ? req.body.accountNumber.trim() : '',
       supplierId,
       name: req.body.name?.trim() || supplierId,
       categories: normalizeCategories(req.body)
     });
     await supplier.save();
 
-    // Support both formats if needed
+    const formatted = formatSupplierDoc(supplier);
+
     if (req.headers.authorization) {
-      res.status(201).json({ success: true, message: 'Supplier added successfully!', data: supplier });
+      res.status(201).json({ success: true, message: 'Supplier added successfully!', data: formatted });
     } else {
-      res.status(201).json({ message: 'Supplier added successfully!', supplier });
+      res.status(201).json({ message: 'Supplier added successfully!', supplier: formatted });
     }
   } catch (error) {
     const message = duplicateKeyMessage(error);
@@ -97,7 +161,18 @@ export const addSupplier = createSupplier;
 // PUT /api/suppliers/:id
 export const updateSupplier = async (req, res) => {
   try {
+    if (req.body.accountNumber !== undefined && !validateBankAccountNumber(req.body.accountNumber)) {
+      const msg = 'Bank account number must contain only numeric digits (between 6 and 20 digits).';
+      if (req.headers.authorization) {
+        return res.status(400).json({ success: false, message: msg });
+      } else {
+        return res.status(400).json({ message: msg });
+      }
+    }
     const updatePayload = { ...req.body };
+    if (updatePayload.accountNumber !== undefined) {
+      updatePayload.accountNumber = updatePayload.accountNumber ? updatePayload.accountNumber.trim() : '';
+    }
     if (updatePayload.categories || updatePayload.category) {
       updatePayload.categories = normalizeCategories(updatePayload);
     }
@@ -116,10 +191,12 @@ export const updateSupplier = async (req, res) => {
       }
     }
 
+    const formatted = formatSupplierDoc(supplier);
+
     if (req.headers.authorization) {
-      res.status(200).json({ success: true, message: 'Supplier updated successfully!', data: supplier });
+      res.status(200).json({ success: true, message: 'Supplier updated successfully!', data: formatted });
     } else {
-      res.status(200).json({ message: 'Supplier updated successfully!', supplier });
+      res.status(200).json({ message: 'Supplier updated successfully!', supplier: formatted });
     }
   } catch (error) {
     const message = duplicateKeyMessage(error);
@@ -148,10 +225,12 @@ export const deactivateSupplier = async (req, res) => {
       }
     }
 
+    const formatted = formatSupplierDoc(supplier);
+
     if (req.headers.authorization) {
-      res.status(200).json({ success: true, message: 'Supplier deactivated successfully!', data: supplier });
+      res.status(200).json({ success: true, message: 'Supplier deactivated successfully!', data: formatted });
     } else {
-      res.status(200).json({ message: 'Supplier deactivated successfully!', supplier });
+      res.status(200).json({ message: 'Supplier deactivated successfully!', supplier: formatted });
     }
   } catch (error) {
     if (req.headers.authorization) {
@@ -178,10 +257,12 @@ export const activateSupplier = async (req, res) => {
       }
     }
 
+    const formatted = formatSupplierDoc(supplier);
+
     if (req.headers.authorization) {
-      res.status(200).json({ success: true, message: 'Supplier activated successfully!', data: supplier });
+      res.status(200).json({ success: true, message: 'Supplier activated successfully!', data: formatted });
     } else {
-      res.status(200).json({ message: 'Supplier activated successfully!', supplier });
+      res.status(200).json({ message: 'Supplier activated successfully!', supplier: formatted });
     }
   } catch (error) {
     if (req.headers.authorization) {
@@ -202,7 +283,7 @@ export const getSupplierById = async (req, res) => {
     if (!supplier) {
       return res.status(404).json({ success: false, message: 'Supplier not found' });
     }
-    res.status(200).json({ success: true, data: supplier });
+    res.status(200).json({ success: true, data: formatSupplierDoc(supplier) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -216,6 +297,8 @@ export const getSupplierProfile = async (req, res) => {
     if (!supplier) {
       return res.status(404).json({ success: false, message: 'Supplier not found' });
     }
+
+    const formattedSupplier = formatSupplierDoc(supplier);
 
     const [purchaseOrders, quotations, invoices] = await Promise.all([
       PurchaseOrder.find({ supplier: supplier._id }).populate('prId', 'project projectName').sort({ createdAt: -1 }),
@@ -278,7 +361,7 @@ export const getSupplierProfile = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        supplier,
+        supplier: formattedSupplier,
         purchaseOrders,
         quotations,
         invoices,
@@ -297,3 +380,4 @@ export const getSupplierProfile = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+

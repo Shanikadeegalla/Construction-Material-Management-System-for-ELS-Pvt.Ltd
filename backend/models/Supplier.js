@@ -46,7 +46,18 @@ const supplierSchema = new mongoose.Schema({
     default: 'Active'
   },
   bankName: { type: String, trim: true, default: '' },
-  accountNumber: { type: String, trim: true, default: '' },
+  accountNumber: {
+    type: String,
+    trim: true,
+    default: '',
+    validate: {
+      validator: function(v) {
+        if (!v || v.trim() === '') return true;
+        return /^\d{6,20}$/.test(v.trim());
+      },
+      message: 'Bank account number must contain only numeric digits (between 6 and 20 digits).'
+    }
+  },
   bankBranch: { type: String, trim: true, default: '' },
   businessRegistrationNumber: { type: String, trim: true, default: '' },
   vatNumber: { type: String, trim: true, default: '' },

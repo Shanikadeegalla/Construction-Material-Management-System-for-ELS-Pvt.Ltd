@@ -5,6 +5,7 @@ import Supplier from '../models/Supplier.js';
 import Payment from '../models/Payment.js';
 import Invoice from '../models/Invoice.js';
 import { sendMail, escapeHtml } from '../utils/mailer.js';
+import { notifyRoles } from './notificationController.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 const CURRENCY = (process.env.STRIPE_CURRENCY || 'lkr').toLowerCase();
@@ -15,8 +16,14 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const drawReceiptContent = (doc, fields) => {
   const {
     invoiceNumber, poNumber, grnNumber, supplierName, supplierEmail,
-    amountPaid, currency, paidAt, stripeRef, paidByName
+    amountPaid, currency, paidAt, stripeRef, paidByName,
+    method = 'Stripe', reference = '', bankName = ''
   } = fields;
+  const isStripe = method === 'Stripe';
+  const refLabel = isStripe ? 'Stripe Reference ID:' : method === 'Cheque' ? 'Cheque No. / Bank:' : 'Cash Voucher / Ref No.:';
+  const refValue = isStripe
+    ? (stripeRef || '-')
+    : [reference, bankName].filter(Boolean).join(' / ') || '-';
 
   doc.fillColor('#0d1b4b').fontSize(22).font('Helvetica-Bold').text('ELS Construction', 40, 40);
   doc.fillColor('#64748b').fontSize(11).font('Helvetica').text('Official Payment Receipt', 40, 68);
@@ -41,8 +48,8 @@ const drawReceiptContent = (doc, fields) => {
   addField('Supplier Contact:', supplierEmail, y + 120);
   addField('Amount Paid:', `${currency} ${Number(amountPaid).toLocaleString()}`, y + 146, true);
   addField('Payment Date & Time:', new Date(paidAt).toLocaleString(), y + 172);
-  addField('Payment Status:', 'PAID (Verified via Stripe Gateway)', y + 198, true);
-  addField('Stripe Reference ID:', stripeRef, y + 224);
+  addField('Payment Status:', isStripe ? 'PAID (Verified via Stripe Gateway)' : `PAID (${method})`, y + 198, true);
+  addField(refLabel, refValue, y + 224);
   addField('Paid By (Authorized Manager):', paidByName, y + 250);
 
   doc.fillColor('#0d1b4b').fontSize(11).font('Helvetica-Bold').text('Transaction Summary & Acknowledgement', 40, y + 300);
@@ -93,6 +100,9 @@ const sendPaymentConfirmation = async ({ payment, po, supplierDoc, invoice }) =>
     currency,
     paidAt: payment.paidAt || new Date(),
     stripeRef: payment.stripeSessionId,
+    method: payment.method || 'Stripe',
+    reference: payment.reference,
+    bankName: payment.bankName,
     paidByName: 'Purchase Manager'
   });
 
@@ -127,59 +137,153 @@ const sendPaymentConfirmation = async ({ payment, po, supplierDoc, invoice }) =>
   return true;
 };
 
-// @desc    Create a Stripe Checkout Session to pay for an approved Purchase Order
+// Finds the Payment record belonging to a Stripe Checkout session.
+const findPaymentForSession = async (session, fallbackPoId) => {
+  let payment = await Payment.findOne({ stripeSessionId: session.id });
+  if (!payment && session.metadata?.invoiceId) {
+    payment = await Payment.findOne({ invoice: session.metadata.invoiceId });
+  }
+  const poId = fallbackPoId || session.metadata?.purchaseOrderId;
+  if (!payment && poId) {
+    payment = await Payment.findOne({ purchaseOrder: poId }).sort({ updatedAt: -1 });
+  }
+  return payment;
+};
+
+// Applies a completed payment (Stripe, Cash or Cheque) to the Payment record, its Invoice and
+// its PO, then notifies the supplier and the internal approvers. Idempotent: safe to call from
+// both the Stripe success page and the webhook. `session` is only present for Stripe.
+const settlePayment = async (payment, session = null) => {
+  const wasAlreadyPaid = payment.status === 'paid';
+  if (!wasAlreadyPaid) {
+    payment.status = 'paid';
+    payment.paidAt = payment.paidAt || new Date();
+    await payment.save();
+  }
+  const method = payment.method || 'Stripe';
+
+  const invoiceId = payment.invoice || session?.metadata?.invoiceId;
+  const invoice = invoiceId
+    ? await Invoice.findById(invoiceId).populate('grn', 'grnNumber')
+    : await Invoice.findOne({ po: payment.purchaseOrder }).populate('grn', 'grnNumber');
+
+  if (invoice && invoice.status !== 'Paid') {
+    invoice.status = 'Paid';
+    invoice.paidAt = payment.paidAt;
+    invoice.paymentMethod = method;
+    if (session) invoice.stripeSessionId = session.id;
+    await invoice.save();
+  }
+
+  // The PO only counts as paid once none of its invoices are still awaiting payment.
+  const po = await PurchaseOrder.findById(payment.purchaseOrder);
+  if (po && po.paymentStatus !== 'paid') {
+    const unpaidCount = await Invoice.countDocuments({
+      po: po._id,
+      status: { $in: ['Pending Approval', 'Approved'] }
+    });
+    if (unpaidCount === 0) {
+      po.paymentStatus = 'paid';
+      await po.save();
+    }
+  }
+
+  // Tell the Director (who approved it) and Main Store (who submitted the invoice) once.
+  if (!wasAlreadyPaid) {
+    const currency = (payment.currency || CURRENCY).toUpperCase();
+    const msg = `Payment of ${currency} ${Number(payment.amount).toLocaleString()} recorded for invoice ${invoice?.invoiceNumber || ''} (PO ${po?.poNumber || 'N/A'}) via ${method}.`;
+    await notifyRoles(['Director'], msg, 'PAYMENT_RECORDED', '/director-dashboard');
+    await notifyRoles(['MainStoreOfficer'], msg, 'PAYMENT_RECORDED', '/main-store-dashboard');
+  }
+
+  let emailSent = !!payment.emailSentAt;
+  if (!emailSent) {
+    const supplierDoc = await Supplier.findById(payment.supplier);
+    try {
+      emailSent = await sendPaymentConfirmation({ payment, po, supplierDoc, invoice });
+    } catch (mailErr) {
+      console.error('Error sending payment confirmation email:', mailErr);
+    }
+  }
+
+  return emailSent;
+};
+
+// @desc    Create a Stripe Checkout Session to pay a Director-approved supplier invoice
 // @route   POST /api/payments/create-checkout-session
 // @access  Private (PurchaseManager / Admin)
 export const createCheckoutSession = async (req, res) => {
   try {
-    const { purchaseOrderId } = req.body;
-    if (!purchaseOrderId) {
+    let { invoiceId, purchaseOrderId, amount } = req.body;
+
+    if (!invoiceId && !purchaseOrderId) {
+      return res.status(400).json({ success: false, message: 'invoiceId or purchaseOrderId is required.' });
+    }
+
+    let invoice;
+    if (invoiceId) {
+      invoice = await Invoice.findById(invoiceId);
+    } else if (purchaseOrderId) {
+      invoice = await Invoice.findOne({ po: purchaseOrderId, status: 'Approved' })
+        || await Invoice.findOne({ po: purchaseOrderId }).sort({ createdAt: -1 });
+    }
+
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: 'Invoice not found.' });
+    }
+
+    const targetPoId = purchaseOrderId || (invoice.po ? invoice.po.toString() : null);
+    if (!targetPoId) {
       return res.status(400).json({ success: false, message: 'purchaseOrderId is required.' });
     }
 
-    const po = await PurchaseOrder.findById(purchaseOrderId);
+    const po = await PurchaseOrder.findById(targetPoId);
     if (!po) {
-      return res.status(404).json({ success: false, message: 'Purchase Order not found.' });
+      return res.status(404).json({ success: false, message: 'Purchase Order for this invoice was not found.' });
     }
 
-    // Only approved/sent/delivered POs can be paid
-    if (!['Approved', 'Sent', 'Delivered'].includes(po.status)) {
+    if (invoice.po && invoice.po.toString() !== po._id.toString()) {
+      return res.status(400).json({ success: false, message: 'Invoice does not belong to the specified Purchase Order.' });
+    }
+
+    if (invoice.status === 'Paid') {
+      return res.status(400).json({ success: false, message: 'This invoice has already been paid.' });
+    }
+
+    // Payment is gated on the Director's approval of the invoice
+    if (invoice.status !== 'Approved') {
       return res.status(400).json({
         success: false,
-        message: 'Only approved or sent Purchase Orders can be paid.'
+        message: 'Only Director-approved invoices can be paid.'
       });
     }
 
-    if (po.paymentStatus === 'paid') {
-      return res.status(400).json({
-        success: false,
-        message: 'This Purchase Order has already been paid.'
-      });
+    if (amount !== undefined && amount !== null && Math.abs(Number(amount) - Number(invoice.amount)) > 0.01) {
+      return res.status(400).json({ success: false, message: `Provided payment amount (${amount}) does not match invoice amount (${invoice.amount}).` });
     }
 
-    let supplierDoc = null;
-    if (po.supplier) {
-      supplierDoc = await Supplier.findById(po.supplier);
-    }
-
+    const supplierDoc = await Supplier.findById(invoice.supplier);
     const supplierName = supplierDoc ? supplierDoc.name : 'Supplier';
 
     // Create Stripe Checkout session
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       payment_method_types: ['card'],
+      // Hide the green "Link" button so the page only offers the card form.
+      wallet_options: { link: { display: 'never' } },
       line_items: [{
         price_data: {
           currency: CURRENCY,
           product_data: {
-            name: `Purchase Order ${po.poNumber}`,
-            description: `Supplier: ${supplierName} - Construction Material Order`
+            name: `Invoice ${invoice.invoiceNumber}`,
+            description: `PO ${po.poNumber} - Supplier: ${supplierName}`
           },
-          unit_amount: Math.round(Number(po.totalAmount) * 100)
+          unit_amount: Math.round(Number(invoice.amount) * 100)
         },
         quantity: 1
       }],
       metadata: {
+        invoiceId: invoice._id.toString(),
         purchaseOrderId: po._id.toString(),
         supplierId: supplierDoc ? supplierDoc._id.toString() : ''
       },
@@ -189,12 +293,14 @@ export const createCheckoutSession = async (req, res) => {
 
     // Save or update pending Payment record
     await Payment.findOneAndUpdate(
-      { purchaseOrder: po._id },
+      { invoice: invoice._id },
       {
+        invoice: invoice._id,
         purchaseOrder: po._id,
-        supplier: supplierDoc ? supplierDoc._id : po.supplier,
-        amount: po.totalAmount,
+        supplier: invoice.supplier,
+        amount: invoice.amount,
         currency: CURRENCY,
+        method: 'Stripe',
         stripeSessionId: session.id,
         status: 'pending',
         paidBy: req.user ? req.user._id : undefined
@@ -228,51 +334,224 @@ export const confirmPaymentSession = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Payment has not completed yet.' });
     }
 
-    const poId = purchaseOrderId || session.metadata?.purchaseOrderId;
-
-    let payment = await Payment.findOne({ stripeSessionId: sessionId });
-    if (!payment && poId) {
-      payment = await Payment.findOne({ purchaseOrder: poId });
-    }
+    const payment = await findPaymentForSession(session, purchaseOrderId);
     if (!payment) {
       return res.status(404).json({ success: false, message: 'No payment record found for this session.' });
     }
 
-    if (payment.status !== 'paid') {
-      payment.status = 'paid';
-      payment.paidAt = payment.paidAt || new Date();
-      await payment.save();
-    }
-
-    const po = await PurchaseOrder.findById(payment.purchaseOrder);
-    if (po) {
-      if (po.paymentStatus !== 'paid') {
-        po.paymentStatus = 'paid';
-        await po.save();
-      }
-      const inv = await Invoice.findOne({ po: payment.purchaseOrder });
-      if (inv && inv.status === 'Approved') {
-        inv.status = 'Paid';
-        inv.paidAt = new Date();
-        inv.stripeSessionId = payment.stripeSessionId;
-        await inv.save();
-      }
-    }
-
-    let emailSent = !!payment.emailSentAt;
-    if (!emailSent) {
-      const supplierDoc = await Supplier.findById(payment.supplier);
-      const invoice = await Invoice.findOne({ po: payment.purchaseOrder }).populate('grn', 'grnNumber');
-      try {
-        emailSent = await sendPaymentConfirmation({ payment, po, supplierDoc, invoice });
-      } catch (mailErr) {
-        console.error('Error sending payment confirmation email:', mailErr);
-      }
-    }
+    const emailSent = await settlePayment(payment, session);
 
     res.status(200).json({ success: true, data: { paymentStatus: payment.status, emailSent } });
   } catch (error) {
     console.error('Error confirming payment session:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Purchase Manager records an offline (Cash or Cheque) payment against a
+//          Director-approved supplier invoice.
+// @route   POST /api/payments/record
+// @access  Private (PurchaseManager / Admin)
+export const recordManualPayment = async (req, res) => {
+  try {
+    if (req.user && !['PurchaseManager', 'Admin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Only Purchase Manager or Admin can record payments.' });
+    }
+
+    const { purchaseOrderId, paidAt, notes: inputNotes, chequeDate: inputChequeDate } = req.body;
+    let { invoiceId } = req.body;
+
+    // A caller that only knows the Purchase Order pays that PO's approved invoice.
+    if (!invoiceId && purchaseOrderId) {
+      const poInvoice = await Invoice.findOne({ po: purchaseOrderId, status: 'Approved' })
+        || await Invoice.findOne({ po: purchaseOrderId }).sort({ createdAt: -1 });
+      if (!poInvoice) {
+        return res.status(400).json({ success: false, message: 'This Purchase Order has no supplier invoice yet. An invoice must be recorded and approved by the Director before payment.' });
+      }
+      invoiceId = poInvoice._id;
+    }
+
+    if (!invoiceId) {
+      return res.status(400).json({ success: false, message: 'invoiceId or purchaseOrderId is required.' });
+    }
+
+    const invoice = await Invoice.findById(invoiceId);
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: 'Invoice not found.' });
+    }
+    if (invoice.status === 'Paid') {
+      return res.status(400).json({ success: false, message: 'This invoice has already been paid.' });
+    }
+    if (invoice.status !== 'Approved') {
+      return res.status(400).json({ success: false, message: 'Only Director-approved invoices can be paid.' });
+    }
+
+    // Amount safeguard: never take amount from client; if provided, must match database amount
+    if (req.body.amount !== undefined && req.body.amount !== null) {
+      if (Math.abs(Number(req.body.amount) - Number(invoice.amount)) > 0.01) {
+        return res.status(400).json({
+          success: false,
+          message: `Provided payment amount (${req.body.amount}) does not match invoice amount (${invoice.amount}).`
+        });
+      }
+    }
+
+    const method = (req.body.method || '').trim();
+    if (!['Cash', 'Cheque'].includes(method)) {
+      return res.status(400).json({ success: false, message: 'Payment method must be Cash or Cheque.' });
+    }
+
+    // Payment Date validation
+    if (!paidAt) {
+      return res.status(400).json({ success: false, message: 'Payment date is required.' });
+    }
+    const paidDate = new Date(paidAt);
+    if (Number.isNaN(paidDate.getTime())) {
+      return res.status(400).json({ success: false, message: 'Invalid payment date.' });
+    }
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+    if (paidDate > endOfToday) {
+      return res.status(400).json({ success: false, message: 'Payment date cannot be in the future.' });
+    }
+    if (invoice.invoiceDate) {
+      const invDateStart = new Date(invoice.invoiceDate);
+      invDateStart.setHours(0, 0, 0, 0);
+      const paidDateStart = new Date(paidDate);
+      paidDateStart.setHours(0, 0, 0, 0);
+      if (paidDateStart < invDateStart) {
+        return res.status(400).json({ success: false, message: 'Payment date cannot be earlier than invoice date.' });
+      }
+    }
+
+    let reference = (req.body.reference || '').trim();
+    let bankName = (req.body.bankName || '').trim();
+    let chequeNumber = (req.body.chequeNumber || req.body.reference || '').trim();
+    let chequeDate = inputChequeDate ? new Date(inputChequeDate) : null;
+
+    if (method === 'Cash') {
+      if (reference.length > 50) {
+        return res.status(400).json({ success: false, message: 'Voucher / Receipt No cannot exceed 50 characters.' });
+      }
+      if (reference && !/^[a-zA-Z0-9\-_/]+$/.test(reference)) {
+        return res.status(400).json({ success: false, message: 'Voucher / Receipt No contains invalid characters. Only letters, numbers, -, _ and / are allowed.' });
+      }
+    }
+
+    if (method === 'Cheque') {
+      if (!chequeNumber) {
+        return res.status(400).json({ success: false, message: 'Cheque number is required for cheque payments.' });
+      }
+      if (!/^\d{6}$/.test(chequeNumber)) {
+        return res.status(400).json({ success: false, message: 'Cheque number must be exactly 6 digits.' });
+      }
+      if (!bankName) {
+        return res.status(400).json({ success: false, message: 'Bank name is required for cheque payments.' });
+      }
+      if (!inputChequeDate || Number.isNaN(chequeDate?.getTime())) {
+        return res.status(400).json({ success: false, message: 'Cheque date is required for cheque payments.' });
+      }
+
+      // Duplicate Cheque check (same cheque number and bank name for paid payments)
+      const duplicateCheque = await Payment.findOne({
+        method: 'Cheque',
+        chequeNumber: chequeNumber,
+        bankName: new RegExp(`^${bankName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+        status: { $in: ['paid', 'completed'] }
+      });
+      if (duplicateCheque) {
+        return res.status(400).json({
+          success: false,
+          message: `A cheque with number "${chequeNumber}" for bank "${bankName}" has already been recorded.`
+        });
+      }
+      reference = chequeNumber;
+    }
+
+    // Notes sanitization and length check
+    let rawNotes = (inputNotes || '').trim();
+    if (rawNotes.length > 500) {
+      return res.status(400).json({ success: false, message: 'Notes cannot exceed 500 characters.' });
+    }
+    const safeNotes = rawNotes
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    const po = await PurchaseOrder.findById(invoice.po);
+    if (!po) {
+      return res.status(404).json({ success: false, message: 'Purchase Order for this invoice was not found.' });
+    }
+
+    // Idempotency check: prevent duplicate payment creation for already paid invoice
+    const existingPaid = await Payment.findOne({ invoice: invoice._id, status: { $in: ['paid', 'completed'] } });
+    if (existingPaid) {
+      return res.status(400).json({ success: false, message: 'This invoice has already been paid.' });
+    }
+
+    // Reuses the pending Payment row left behind by an abandoned Stripe checkout, if any.
+    const payment = await Payment.findOneAndUpdate(
+      { invoice: invoice._id },
+      {
+        invoice: invoice._id,
+        purchaseOrder: po._id,
+        supplier: invoice.supplier,
+        amount: invoice.amount, // Always derived from the database invoice document
+        currency: CURRENCY,
+        method,
+        reference,
+        bankName: method === 'Cheque' ? bankName : '',
+        chequeNumber: method === 'Cheque' ? chequeNumber : '',
+        ...(method === 'Cheque' && chequeDate ? { chequeDate } : {}),
+        recordedBy: req.user ? req.user._id : undefined,
+        notes: safeNotes,
+        paidAt: paidDate,
+        paidBy: req.user ? req.user._id : undefined,
+        $unset: { stripeSessionId: 1 }
+      },
+      { upsert: true, new: true }
+    );
+
+    const emailSent = await settlePayment(payment);
+
+    res.status(201).json({
+      success: true,
+      message: `${method} payment recorded for invoice ${invoice.invoiceNumber}.`,
+      data: { payment, emailSent }
+    });
+  } catch (error) {
+    console.error('Error recording manual payment:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    List payment records (newest first) for the payment report. Optional
+//          ?status= / ?method= / ?from= / ?to= filters.
+// @route   GET /api/payments
+// @access  Private
+export const getPayments = async (req, res) => {
+  try {
+    const { status, method, from, to } = req.query;
+    const filter = {};
+    if (status) filter.status = status;
+    if (method) filter.method = method;
+    if (from || to) {
+      filter.paidAt = {};
+      if (from) filter.paidAt.$gte = new Date(from);
+      if (to) filter.paidAt.$lte = new Date(to);
+    }
+
+    const payments = await Payment.find(filter)
+      .populate('purchaseOrder', 'poNumber totalAmount paymentStatus status')
+      .populate('supplier', 'name email')
+      .populate('invoice', 'invoiceNumber amount status invoiceDate dueDate')
+      .populate('paidBy', 'name role')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ success: true, count: payments.length, data: payments });
+  } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -295,38 +574,9 @@ export const handleWebhook = async (req, res) => {
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
     try {
-      let payment = await Payment.findOne({ stripeSessionId: session.id });
-      if (!payment && session.metadata?.purchaseOrderId) {
-        payment = await Payment.findOne({ purchaseOrder: session.metadata.purchaseOrderId });
-      }
-
+      const payment = await findPaymentForSession(session);
       if (payment) {
-        payment.status = 'paid';
-        payment.paidAt = new Date();
-        await payment.save();
-
-        const po = await PurchaseOrder.findById(payment.purchaseOrder);
-        if (po) {
-          po.paymentStatus = 'paid';
-          await po.save();
-
-          const inv = await Invoice.findOne({ po: payment.purchaseOrder });
-          if (inv && inv.status === 'Approved') {
-            inv.status = 'Paid';
-            inv.paidAt = new Date();
-            inv.stripeSessionId = payment.stripeSessionId;
-            await inv.save();
-          }
-
-          // Dispatch email notification (with PDF receipt attached) to the supplier
-          const supplierDoc = await Supplier.findById(payment.supplier);
-          const invoice = await Invoice.findOne({ po: payment.purchaseOrder }).populate('grn', 'grnNumber');
-          try {
-            await sendPaymentConfirmation({ payment, po, supplierDoc, invoice });
-          } catch (mailErr) {
-            console.error('Error sending payment confirmation email from webhook:', mailErr);
-          }
-        }
+        await settlePayment(payment, session);
       }
     } catch (err) {
       console.error('Error handling webhook payment completion:', err);
@@ -334,75 +584,6 @@ export const handleWebhook = async (req, res) => {
   }
 
   res.status(200).json({ received: true });
-};
-
-// @desc    Record a manual (Cash/Cheque) payment for a Purchase Order
-// @route   POST /api/payments/manual
-// @access  Private (PurchaseManager / Admin)
-export const recordManualPayment = async (req, res) => {
-  try {
-    const { purchaseOrderId, method, amount, chequeNumber, bankName, chequeDate } = req.body;
-    if (!purchaseOrderId || !method) {
-      return res.status(400).json({ success: false, message: 'purchaseOrderId and method are required.' });
-    }
-    if (!['Cash', 'Cheque'].includes(method)) {
-      return res.status(400).json({ success: false, message: 'Method must be Cash or Cheque.' });
-    }
-
-    const po = await PurchaseOrder.findById(purchaseOrderId);
-    if (!po) {
-      return res.status(404).json({ success: false, message: 'Purchase Order not found.' });
-    }
-    if (po.paymentStatus === 'paid') {
-      return res.status(400).json({ success: false, message: 'This Purchase Order is already paid.' });
-    }
-
-    const paymentAmount = amount ? Number(amount) : po.totalAmount;
-    let supplierDoc = null;
-    if (po.supplier) {
-      supplierDoc = await Supplier.findById(po.supplier);
-    }
-
-    const payment = await Payment.create({
-      purchaseOrder: po._id,
-      supplier: supplierDoc ? supplierDoc._id : po.supplier,
-      amount: paymentAmount,
-      currency: CURRENCY,
-      method,
-      chequeNumber: chequeNumber || '',
-      bankName: bankName || '',
-      chequeDate: chequeDate ? new Date(chequeDate) : undefined,
-      status: 'completed',
-      paidAt: new Date(),
-      paidBy: req.user ? req.user._id : undefined,
-      recordedBy: req.user ? req.user._id : undefined
-    });
-
-    po.paymentStatus = 'paid';
-    await po.save();
-
-    const invoice = await Invoice.findOne({ po: po._id });
-    if (invoice) {
-      invoice.status = 'Paid';
-      invoice.paidAt = new Date();
-      await invoice.save();
-    }
-
-    try {
-      await sendPaymentConfirmation({ payment, po, supplierDoc, invoice });
-    } catch (mailErr) {
-      console.error('Error sending manual payment confirmation email:', mailErr);
-    }
-
-    res.status(201).json({
-      success: true,
-      message: `Manual ${method} payment recorded successfully.`,
-      data: payment
-    });
-  } catch (error) {
-    console.error('Error recording manual payment:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
 };
 
 // @desc    Get payment status/history for a Purchase Order
@@ -450,39 +631,11 @@ export const generatePaymentReport = async (req, res) => {
       if (to) filter.invoiceDate.$lte = new Date(to);
     }
 
-    let invoices = await Invoice.find(filter)
+    const invoices = await Invoice.find(filter)
       .populate('supplier', 'name')
       .populate('po', 'poNumber')
       .populate('grn', 'grnNumber')
       .sort({ createdAt: -1 });
-
-    // Fallback demo dataset if database has no invoices yet
-    if (!invoices || invoices.length === 0) {
-      invoices = [
-        {
-          invoiceNumber: 'INV-2026-001',
-          po: { poNumber: 'PO-2026-001' },
-          grn: { grnNumber: 'GRN-2026-001' },
-          supplier: { name: 'Lanka Cement Ltd' },
-          amount: 555000,
-          invoiceDate: new Date(),
-          dueDate: new Date(Date.now() + 86400000 * 30),
-          status: 'Paid',
-          paidAt: new Date()
-        },
-        {
-          invoiceNumber: 'INV-2026-002',
-          po: { poNumber: 'PO-2026-002' },
-          grn: { grnNumber: 'GRN-2026-002' },
-          supplier: { name: 'Melwa Steel' },
-          amount: 925000,
-          invoiceDate: new Date(Date.now() - 86400000 * 5),
-          dueDate: new Date(Date.now() + 86400000 * 25),
-          status: 'Approved',
-          paidAt: null
-        }
-      ];
-    }
 
     const totalInvoices = invoices.length;
     const totalAmount = invoices.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
@@ -531,7 +684,7 @@ export const generatePaymentReport = async (req, res) => {
       { label: 'Invoice Date', x: 535, width: 70 },
       { label: 'Due Date', x: 610, width: 70 },
       { label: 'Status', x: 685, width: 60 },
-      { label: 'Paid Date', x: 750, width: 60 }
+      { label: 'Paid / Method', x: 750, width: 62 }
     ];
 
     doc.rect(30, tableTop, 782, 20).fill('#0d1b4b');
@@ -569,7 +722,9 @@ export const generatePaymentReport = async (req, res) => {
       const invDate = inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '-';
       const dueDate = inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : '-';
       const statusText = inv.status || 'Pending';
-      const paidDateText = inv.paidAt ? new Date(inv.paidAt).toLocaleDateString() : '-';
+      const paidDateText = inv.paidAt
+        ? `${new Date(inv.paidAt).toLocaleDateString()} ${inv.status === 'Paid' ? (inv.paymentMethod || '') : ''}`.trim()
+        : '-';
 
       doc.fillColor('#0f172a');
       doc.text(invNo, cols[0].x + 3, y + 4, { width: cols[0].width, ellipsis: true });
@@ -591,6 +746,10 @@ export const generatePaymentReport = async (req, res) => {
       y += 18;
     });
 
+    if (invoices.length === 0) {
+      doc.fillColor('#64748b').fontSize(10).text('No invoices match the selected filters.', 30, y + 10, { width: 782, align: 'center' });
+    }
+
     doc.end();
   } catch (error) {
     console.error('Error generating payment PDF report:', error);
@@ -603,56 +762,47 @@ export const generatePaymentReport = async (req, res) => {
 // @desc    Get populated payment receipt details for a Purchase Order
 // @route   GET /api/payments/:purchaseOrderId/receipt
 // @access  Private
+// Loads the settled payment for a PO together with everything a receipt needs.
+// Returns null when the PO has no completed payment - a receipt is never
+// produced for money that was not actually paid.
+const loadPaidReceipt = async (purchaseOrderId) => {
+  const payment = await Payment.findOne({ purchaseOrder: purchaseOrderId, status: 'paid' })
+    .sort({ paidAt: -1, updatedAt: -1 })
+    .populate('purchaseOrder')
+    .populate('supplier')
+    .populate('paidBy', 'name email role');
+  if (!payment) return null;
+
+  const invoice = await Invoice.findOne(payment.invoice ? { _id: payment.invoice } : { po: purchaseOrderId })
+    .populate('grn', 'grnNumber');
+
+  const poNumber = payment.purchaseOrder?.poNumber || 'N/A';
+  return {
+    paymentId: payment._id,
+    invoiceNumber: invoice?.invoiceNumber || 'N/A',
+    poNumber,
+    grnNumber: invoice?.grn?.grnNumber || 'N/A',
+    supplierName: payment.supplier?.name || 'Supplier',
+    supplierEmail: payment.supplier?.email || '-',
+    amount: payment.amount,
+    currency: payment.currency || CURRENCY,
+    paidAt: payment.paidAt || payment.updatedAt,
+    status: 'Paid',
+    method: payment.method || 'Stripe',
+    reference: payment.reference || '',
+    bankName: payment.bankName || '',
+    stripeSessionId: payment.stripeSessionId || '',
+    paidByName: payment.paidBy?.name || 'Purchase Manager'
+  };
+};
+
 export const getPaymentReceipt = async (req, res) => {
   try {
-    const { purchaseOrderId } = req.params;
-
-    let payment = await Payment.findOne({ purchaseOrder: purchaseOrderId })
-      .populate('purchaseOrder')
-      .populate('supplier')
-      .populate('paidBy', 'name email role');
-
-    let invoice = await Invoice.findOne({ po: purchaseOrderId })
-      .populate('grn', 'grnNumber');
-
-    if (!payment) {
-      const po = await PurchaseOrder.findById(purchaseOrderId).populate('supplier');
-      const supplierDoc = po?.supplier || await Supplier.findOne();
-      payment = {
-        _id: 'demo-receipt-id',
-        purchaseOrder: po || { poNumber: 'PO-2026-001', totalAmount: 555000, status: 'Approved' },
-        supplier: supplierDoc || { name: 'Lanka Cement Ltd', email: 'supplier@lankacement.lk' },
-        amount: po?.totalAmount || 555000,
-        currency: CURRENCY,
-        stripeSessionId: 'cs_test_demo_session_receipt_12345',
-        status: 'paid',
-        paidAt: new Date(),
-        paidBy: req.user || { name: 'Purchase Manager', email: 'pm@elsconstruction.com' }
-      };
+    const receipt = await loadPaidReceipt(req.params.purchaseOrderId);
+    if (!receipt) {
+      return res.status(404).json({ success: false, message: 'No completed payment found for this Purchase Order.' });
     }
-
-    const poNumber = payment.purchaseOrder?.poNumber || 'PO-2026-001';
-    const invoiceNumber = invoice?.invoiceNumber || `INV-${poNumber.replace('PO-', '')}`;
-    const grnNumber = invoice?.grn?.grnNumber || 'GRN-2026-001';
-    const supplierName = payment.supplier?.name || (typeof payment.supplier === 'string' ? payment.supplier : 'Supplier');
-    const paidByName = payment.paidBy?.name || (req.user ? req.user.name : 'Purchase Manager');
-
-    res.status(200).json({
-      success: true,
-      data: {
-        paymentId: payment._id,
-        invoiceNumber,
-        poNumber,
-        grnNumber,
-        supplierName,
-        amount: payment.amount,
-        currency: payment.currency || 'lkr',
-        paidAt: payment.paidAt || payment.updatedAt || new Date(),
-        status: 'Paid',
-        stripeSessionId: payment.stripeSessionId || 'cs_test_session',
-        paidByName
-      }
-    });
+    res.status(200).json({ success: true, data: receipt });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -663,37 +813,33 @@ export const getPaymentReceipt = async (req, res) => {
 // @access  Private
 export const downloadPaymentReceipt = async (req, res) => {
   try {
-    const { purchaseOrderId } = req.params;
-
-    let payment = await Payment.findOne({ purchaseOrder: purchaseOrderId })
-      .populate('purchaseOrder')
-      .populate('supplier')
-      .populate('paidBy', 'name email role');
-
-    let invoice = await Invoice.findOne({ po: purchaseOrderId }).populate('grn', 'grnNumber');
-
-    const poNumber = payment?.purchaseOrder?.poNumber || 'PO-2026-001';
-    const invoiceNumber = invoice?.invoiceNumber || `INV-${poNumber.replace('PO-', '')}`;
-    const grnNumber = invoice?.grn?.grnNumber || 'GRN-2026-001';
-    const supplierName = payment?.supplier?.name || 'Lanka Cement Ltd';
-    const supplierEmail = payment?.supplier?.email || '-';
-    const amountPaid = payment?.amount || 555000;
-    const currency = (payment?.currency || 'lkr').toUpperCase();
-    const paidAt = payment?.paidAt || new Date();
-    const stripeRef = payment?.stripeSessionId || 'cs_test_session_reference';
-    const paidByName = payment?.paidBy?.name || (req.user ? req.user.name : 'Purchase Manager');
+    const receipt = await loadPaidReceipt(req.params.purchaseOrderId);
+    if (!receipt) {
+      return res.status(404).json({ success: false, message: 'No completed payment found for this Purchase Order.' });
+    }
 
     const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'portrait' });
 
-    const filename = `receipt-${invoiceNumber}.pdf`;
+    const filename = `receipt-${receipt.invoiceNumber}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
     doc.pipe(res);
 
     drawReceiptContent(doc, {
-      invoiceNumber, poNumber, grnNumber, supplierName, supplierEmail,
-      amountPaid, currency, paidAt, stripeRef, paidByName
+      invoiceNumber: receipt.invoiceNumber,
+      poNumber: receipt.poNumber,
+      grnNumber: receipt.grnNumber,
+      supplierName: receipt.supplierName,
+      supplierEmail: receipt.supplierEmail,
+      amountPaid: receipt.amount,
+      currency: String(receipt.currency).toUpperCase(),
+      paidAt: receipt.paidAt,
+      stripeRef: receipt.stripeSessionId,
+      method: receipt.method,
+      reference: receipt.reference,
+      bankName: receipt.bankName,
+      paidByName: receipt.paidByName
     });
 
     doc.end();
