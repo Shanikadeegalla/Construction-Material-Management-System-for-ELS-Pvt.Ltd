@@ -13,7 +13,8 @@ import {
   getAuditLogs,
   resetUserPassword,
   deleteUser,
-  getNextEmployeeId
+  getNextEmployeeId,
+  resetAllPasswords
 } from '../controllers/authController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
@@ -65,6 +66,7 @@ router.post('/upload-avatar', protect, upload.single('avatar'), (req, res) => {
 
 router.post('/register', protect, checkPermission('Create/Edit Users'), registerUser);
 router.post('/login', loginUser);
+router.post('/reset-all-passwords', resetAllPasswords);
 router.get('/me', protect, getUserProfile);
 
 // User management (gated by the Roles & Permissions matrix)

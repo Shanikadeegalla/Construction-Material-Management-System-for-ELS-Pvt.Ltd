@@ -29,6 +29,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const setError = useToastSetter(setErrorState, 'error');
   const [success, setSuccessState] = useState('');
   const setSuccess = useToastSetter(setSuccessState, 'success');
+  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
 
   // Site Inventory screen filters
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');

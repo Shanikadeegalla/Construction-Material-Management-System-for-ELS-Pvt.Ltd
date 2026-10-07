@@ -157,7 +157,7 @@ export const loginUser = async (req, res, next) => {
       const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
       await AuditLog.create({
         userId: null,
-        userName: loginIdentifier,
+        userName: cleanIdentifier,
         action: 'Failed Login',
         module: 'Authentication',
         ipAddress,
@@ -588,6 +588,67 @@ export const resetUserPassword = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: `Password reset successfully for user "${user.name}"`
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Reset all users' passwords to Password123! in active DB
+// @route   POST /api/auth/reset-all-passwords
+// @access  Public (Debug / Maintenance)
+export const resetAllPasswords = async (req, res, next) => {
+  try {
+    const targetPassword = 'Password123!';
+    const salt = await bcrypt.genSalt(10);
+    const freshHash = await bcrypt.hash(targetPassword, salt);
+
+    // 1. Ensure canonical test users exist
+    const { ensureDefaultUsersExist } = await import('../scripts/verifyAndSeedUsers.js');
+    await ensureDefaultUsersExist();
+
+    // 2. Fetch all users in active DB
+    const mongoose = (await import('mongoose')).default;
+    const allUsers = await User.find({});
+    
+    const results = [];
+    for (const u of allUsers) {
+      u.password = freshHash;
+      u.status = true;
+      await u.save();
+
+      const isVerified = await bcrypt.compare(targetPassword, u.password);
+      results.push({
+        _id: u._id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        password: targetPassword,
+        verified: isVerified ? 'PASS ✅' : 'FAIL ❌'
+      });
+    }
+
+    const hostName = mongoose.connection?.host || 'Unknown Host';
+    const dbName = mongoose.connection?.name || 'Unknown DB';
+
+    console.log(`[ResetAllPasswords] Reset ${results.length} user passwords in ${hostName}/${dbName}`);
+    console.table(results.map(r => ({ Role: r.role, Email: r.email, Password: r.password, Verified: r.verified })));
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully reset all ${results.length} users to '${targetPassword}' in active DB (${hostName}/${dbName})`,
+      activeDatabase: {
+        host: hostName,
+        name: dbName,
+        connectionString: process.env.MONGO_URI ? 'Atlas/Primary (or Local Fallback)' : 'Local'
+      },
+      totalUsers: results.length,
+      users: results.map(r => ({
+        role: r.role,
+        email: r.email,
+        password: r.password,
+        verified: r.verified
+      }))
     });
   } catch (error) {
     next(error);
