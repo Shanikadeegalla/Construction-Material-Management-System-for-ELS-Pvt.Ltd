@@ -79,6 +79,15 @@ const runPostConnectTasks = async () => {
   await seedDatabase();
 
   try {
+    const { ensureDefaultUsersExist } = await import('../scripts/verifyAndSeedUsers.js');
+    const userSummary = await ensureDefaultUsersExist();
+    console.log('[Auth Seeder] Test user credentials verified & ready:');
+    console.table(userSummary);
+  } catch (err) {
+    console.error('[Auth Seeder Error]:', err.message);
+  }
+
+  try {
     const User = (await import('../models/userModel.js')).default;
     const result = await User.updateMany({ role: 'PurchaseOfficer' }, { role: 'PurchaseManager' });
     if (result.modifiedCount > 0) {

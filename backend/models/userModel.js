@@ -114,12 +114,19 @@ const userSchema = new mongoose.Schema(
 
 // Match user entered password to hashed password in database
 userSchema.methods.matchPassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
+  if (!enteredPassword || !this.password) return false;
+  const cleanEntered = typeof enteredPassword === 'string' ? enteredPassword.trim() : enteredPassword;
+  return await bcrypt.compare(cleanEntered, this.password);
 };
 
 // Encrypt password using bcrypt before saving
 userSchema.pre('save', async function () {
   if (!this.isModified('password')) {
+    return;
+  }
+
+  // Prevent double-hashing if password is already a valid bcrypt hash string ($2a$, $2b$, $2x$, $2y$)
+  if (typeof this.password === 'string' && /^\$2[abxy]\$\d{2}\$/.test(this.password)) {
     return;
   }
 

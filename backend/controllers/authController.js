@@ -119,23 +119,29 @@ export const registerUser = async (req, res, next) => {
 export const loginUser = async (req, res, next) => {
   try {
     const { email, username, password } = req.body;
-    const loginIdentifier = email || username;
+    const rawIdentifier = email || username;
 
-    if (!loginIdentifier || !password) {
+    if (!rawIdentifier || !password) {
       res.status(400);
       throw new Error('Please enter email/username and password');
     }
 
     let user = null;
-    const cleanEmail = loginIdentifier.toLowerCase().trim();
+    const cleanIdentifier = String(rawIdentifier).trim();
+    const cleanEmail = cleanIdentifier.toLowerCase();
+    const cleanPassword = typeof password === 'string' ? password.trim() : password;
 
-    // 1. Strict exact email lookup
+    // 1. Exact or case-insensitive email lookup
     user = await User.findOne({ email: cleanEmail });
-
-    // 2. Exact username lookup if not found by email
     if (!user) {
-      const cleanUsername = loginIdentifier.trim();
-      const matchingUsernames = await User.find({ username: cleanUsername });
+      const escapedEmail = cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      user = await User.findOne({ email: { $regex: new RegExp(`^${escapedEmail}$`, 'i') } });
+    }
+
+    // 2. Exact or case-insensitive username lookup if not found by email
+    if (!user) {
+      const escapedUsername = cleanIdentifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const matchingUsernames = await User.find({ username: { $regex: new RegExp(`^${escapedUsername}$`, 'i') } });
       if (matchingUsernames.length === 1) {
         user = matchingUsernames[0];
       } else if (matchingUsernames.length > 1) {
@@ -144,8 +150,8 @@ export const loginUser = async (req, res, next) => {
       }
     }
 
-    // 3. Strict authentic password check using exact password string
-    const isMatch = user ? await user.matchPassword(password) : false;
+    // 3. Strict authentic password check using cleaned password string
+    const isMatch = user ? await user.matchPassword(cleanPassword) : false;
 
     if (!user || !isMatch) {
       const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
