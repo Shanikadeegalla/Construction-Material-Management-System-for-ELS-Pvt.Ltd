@@ -14,11 +14,11 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { formatDateTime, formatDayMonth } from '../utils/dateUtils';
+import { API_BASE } from '../config';
 import Pagination, { usePagination } from '../components/Pagination';
 import { getAuthHeaders, fetchWithAuth } from '../utils/authUtils';
 
 const VarianceReport = () => {
-  const toast = useToast();
   const [reportData, setReportData] = useState([]);
   const [timelineData, setTimelineData] = useState([]);
   const [totalWastageCost, setTotalWastageCost] = useState(0);
@@ -49,9 +49,9 @@ const VarianceReport = () => {
     } catch (err) {
       setError(err.message || 'Failed to connect to backend.');
       setReportData([]);
+      setTimelineData([]);
       setTotalWastageCost(0);
       setProjects([]);
-      setTimelineData([]);
     } finally {
       setLoading(false);
     }
@@ -229,7 +229,6 @@ const VarianceReport = () => {
     });
 
     doc.save(`ELS_Variance_Report_${selectedProject.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
-    toast.success('Variance Analysis PDF Report generated and downloaded');
   };
 
   // Excel Export
@@ -270,7 +269,6 @@ const VarianceReport = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Variance Report");
     XLSX.writeFile(wb, `ELS_Variance_Report_${selectedProject.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
-    toast.success('Variance Analysis Excel Spreadsheet generated and downloaded');
   };
 
   return (

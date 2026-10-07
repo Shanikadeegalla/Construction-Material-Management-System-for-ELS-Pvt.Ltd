@@ -47,6 +47,16 @@ const grnSchema = new mongoose.Schema({
     damagedQty: {
       type: Number,
       default: 0
+    },
+    // Why the line is short or damaged; empty for a complete, undamaged line
+    discrepancyReason: {
+      type: String,
+      enum: ['', 'Short delivery', 'Damaged in transit', 'Wrong item', 'Poor quality', 'Other'],
+      default: ''
+    },
+    discrepancyNote: {
+      type: String,
+      default: ''
     }
   }],
   poId: {

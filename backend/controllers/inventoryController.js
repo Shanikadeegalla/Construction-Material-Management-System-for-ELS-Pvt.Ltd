@@ -369,7 +369,9 @@ export const createGRN = async (req, res) => {
         expectedQty: Number(item.expectedQty) || 0,
         receivedQty: Number(item.receivedQty) || 0,
         condition,
-        damagedQty: condition === 'Damaged' ? (Number(item.damagedQty) || 0) : 0
+        damagedQty: condition === 'Damaged' ? (Number(item.damagedQty) || 0) : 0,
+        discrepancyReason: item.discrepancyReason || '',
+        discrepancyNote: item.discrepancyNote || ''
       });
     }
 

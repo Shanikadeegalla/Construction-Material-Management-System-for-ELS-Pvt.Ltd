@@ -24,17 +24,14 @@ import SettingsPage from './SettingsPage';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phoneUtils';
-import { formatBankAccountInput, isValidBankAccount, BANK_ACCOUNT_PLACEHOLDER } from '../utils/bankUtils';
 import { formatDate, formatDateTime, formatDateLong, formatDateWeekdayShort, formatFullDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import { API_BASE } from '../config';
+import { useToast } from '../context/ToastContext';
+import { formatBankAccountInput, isValidBankAccount, BANK_ACCOUNT_PLACEHOLDER } from '../utils/bankUtils';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import ReportsCenter from './ReportsCenter';
 import Pagination, { usePagination } from '../components/Pagination';
-import { scrollToElement } from '../utils/scrollToElement';
-import { useToast } from '../context/ToastContext';
-import LoadingButton from '../components/LoadingButton';
-import openUploadedFile from '../utils/openUploadedFile';
 
 // Taxonomy of gate-able actions in the app, grouped by module. This mirrors the
 // backend's Permission collection (role + action -> Full/View/Partial/Approve/None).
@@ -102,7 +99,6 @@ const MODULES_MATRIX = [
 const ALL_MODULE_ACTIONS = MODULES_MATRIX.flatMap(cat => cat.actions.map(a => a.name));
 
 const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
-  const toast = useToast();
   const [activePage, setActivePage] = useState('dashboard');
   const [userViewMode, setUserViewMode] = useState('list'); // 'list', 'details'
   const [selectedUser, setSelectedUser] = useState(null); // User for Details page
@@ -481,8 +477,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
       alert(`Phone number must be a 10-digit number, e.g. ${PHONE_PLACEHOLDER}.`);
       return;
     }
-    const cleanAccount = (supForm.accountNumber || '').trim();
-    if (cleanAccount && !isValidBankAccount(cleanAccount)) {
+    if (!isValidBankAccount(supForm.accountNumber)) {
       alert('Bank Account Number must contain only numeric digits (between 6 and 20 digits).');
       return;
     }
@@ -495,7 +490,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ ...supForm, accountNumber: cleanAccount })
+        body: JSON.stringify(supForm)
       });
       const data = await res.json();
       if (res.ok && (data.success || data.supplier)) {
@@ -957,6 +952,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
 
   const [message, setMessage] = useState('');
+  const toast = useToast();
   const [currentTime, setCurrentTime] = useState(new Date());
 
   // Notifications state
@@ -1403,7 +1399,6 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         setUserViewMode('list');
         fetchUsers();
         fetchAuditLogs();
-        setTimeout(() => scrollToElement('#users-list-section'), 100);
       } else {
         showErrorMessage(`❌ ${data.message || 'Failed to add user'}`);
       }
@@ -1413,9 +1408,6 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   const handleToggleStatus = async (targetUser) => {
-    if (targetUser.status !== false) {
-      if (!window.confirm(`Are you sure you want to deactivate "${targetUser.name}"?`)) return;
-    }
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const endpoint = `${API_BASE}/api/auth/users/${targetUser._id}/${targetUser.status !== false ? 'deactivate' : 'activate'}`;
@@ -1487,7 +1479,6 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         setUserViewMode('list');
         fetchUsers();
         fetchAuditLogs();
-        setTimeout(() => scrollToElement('#users-list-section'), 100);
       } else {
         showErrorMessage(`❌ ${data.message || 'Failed to update user'}`);
       }
@@ -1549,16 +1540,14 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   };
 
   const showSuccessMessage = (msg) => {
-    const cleanMsg = msg ? msg.replace(/^[✅❌⚠️🔑ℹ️🚀]\s*/, '') : '';
-    if (cleanMsg) toast.success(cleanMsg);
     setMessage(msg);
+    toast.success(String(msg).replace(/^(?:✅|❌)\s*/u, ''));
     setTimeout(() => setMessage(''), 5000);
   };
 
   const showErrorMessage = (msg) => {
-    const cleanMsg = msg ? msg.replace(/^[✅❌⚠️🔑ℹ️🚀]\s*/, '') : '';
-    if (cleanMsg) toast.error(cleanMsg);
     setMessage(msg);
+    toast.error(String(msg).replace(/^(?:✅|❌)\s*/u, ''));
     setTimeout(() => setMessage(''), 5000);
   };
 
@@ -2125,7 +2114,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                   </div>
 
                   {/* Users Table */}
-                  <div id="users-list-section" style={{ background: 'white', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                  <div style={{ background: 'white', borderRadius: '16px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                       <thead>
                         <tr style={{ background: '#0d1b4b', color: 'white' }}>
@@ -2172,7 +2161,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
               {/* USER DETAILS / CREATE VIEW */}
               {userViewMode === 'details' && (
-                <div id="user-form-section" style={{ maxWidth: '800px', margin: '0 auto' }}>
+                <div style={{ maxWidth: '800px', margin: '0 auto' }}>
                   
                   {/* User details card header */}
                   <div style={{ background: 'white', borderRadius: '16px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)', marginBottom: '24px', position: 'relative' }}>
@@ -2237,12 +2226,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         >
                           <div style={{ width: '64px', height: '64px', borderRadius: '50%', overflow: 'hidden', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '22px', color: '#94a3b8', fontWeight: '700' }}>
                             {avatarPreview ? (
-                              <img
-                                src={avatarPreview.startsWith('blob:') ? avatarPreview : `${API_BASE}${avatarPreview}`}
-                                alt="Preview"
-                                onError={(e) => { e.target.onerror = null; setAvatarPreview(''); }}
-                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                              />
+                              <img src={avatarPreview.startsWith('blob:') ? avatarPreview : `${API_BASE}${avatarPreview}`} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                             ) : (
                               (selectedUser ? selectedUser.name : newUser.name || '?').charAt(0).toUpperCase()
                             )}
@@ -2973,7 +2957,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
               {/* Add/Edit Supplier Form */}
               {showSupplierForm && (
-                <div id="admin-supplier-form-section" style={{ background: 'white', borderRadius: '12px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                <div style={{ background: 'white', borderRadius: '12px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
                   <h3 style={{ margin: '0 0 20px', color: '#0d1b4b', fontSize: '16px', fontWeight: '700' }}>
                     {editingSupplierId ? '📋 Edit Supplier Partner' : '📋 Register New Supplier Partner'}
                   </h3>
@@ -3056,20 +3040,9 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                         </div>
                         <div>
                           <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '6px' }}>Account Number</label>
-                          <input
-                            type="text"
-                            maxLength={20}
-                            value={supForm.accountNumber}
+                          <input type="text" maxLength={20} value={supForm.accountNumber}
                             onChange={(e) => setSupForm({ ...supForm, accountNumber: formatBankAccountInput(e.target.value) })}
-                            onBlur={() => setSupForm(prev => ({ ...prev, accountNumber: (prev.accountNumber || '').trim() }))}
-                            style={{
-                              width: '100%',
-                              padding: '10px',
-                              borderRadius: '6px',
-                              border: `1px solid ${supForm.accountNumber && !isValidBankAccount(supForm.accountNumber) ? '#ef4444' : '#cbd5e1'}`
-                            }}
-                            placeholder={BANK_ACCOUNT_PLACEHOLDER}
-                          />
+                            style={{ width: '100%', padding: '10px', borderRadius: '6px', border: `1px solid ${supForm.accountNumber && !isValidBankAccount(supForm.accountNumber) ? '#ef4444' : '#cbd5e1'}` }} placeholder={BANK_ACCOUNT_PLACEHOLDER} />
                           {supForm.accountNumber && !isValidBankAccount(supForm.accountNumber) && (
                             <span style={{ fontSize: '11px', color: '#ef4444', marginTop: '4px', display: 'block', fontWeight: '600' }}>
                               Account number must be 6–20 numeric digits
@@ -3092,13 +3065,9 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                           <div style={{ fontSize: '13px', fontWeight: '600', color: '#334155', marginBottom: '8px' }}>ID Photo</div>
                           {supForm.documents.idPhoto ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-                              <button
-                                type="button"
-                                onClick={() => openUploadedFile(supForm.documents.idPhoto.url, { fileType: 'document', toast })}
-                                style={{ color: '#2563eb', textDecoration: 'underline', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}
-                              >
+                              <a href={`${API_BASE}${supForm.documents.idPhoto.url}`} target="_blank" rel="noreferrer" style={{ color: '#2563eb', textDecoration: 'underline', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 ⬇ {supForm.documents.idPhoto.filename}
-                              </button>
+                              </a>
                               <button type="button" onClick={() => setSupForm(prev => ({ ...prev, documents: { ...prev.documents, idPhoto: null } }))}
                                 style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: '700' }}>✕</button>
                             </div>
@@ -3122,7 +3091,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
               )}
 
               {/* Suppliers List Table */}
-              <div id="admin-suppliers-list-section" style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+              <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
@@ -3204,7 +3173,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
 
               {/* Add/Edit Material Form */}
               {showMaterialForm && (
-                <div id="material-form-section" style={{ background: 'white', borderRadius: '12px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                <div style={{ background: 'white', borderRadius: '12px', padding: '24px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
                   <h3 style={{ margin: '0 0 20px', color: '#0d1b4b', fontSize: '16px', fontWeight: '700' }}>
                     {editingMaterialId ? '📦 Edit Master Material' : '📦 Add New Master Material'}
                   </h3>
@@ -3370,7 +3339,7 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
               )}
 
               {/* Master Material List Table */}
-              <div id="materials-list-section" style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+              <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
@@ -3491,4 +3460,4 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   );
 };
 
-export default AdminDashboard;
+export default AdminDashboard;

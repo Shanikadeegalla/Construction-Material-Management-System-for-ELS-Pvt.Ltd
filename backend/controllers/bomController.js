@@ -21,7 +21,7 @@ const getNextVersion = async (projectId) => {
 
   const latest = nonDraftBoms[nonDraftBoms.length - 1];
   const versionStr = latest.version || 'v1.0';
-  const match = versionStr.match(/^v(\d+)\.(\d+)$/);
+  const match = versionStr.match(/^v?(\d+)\.(\d+)$/i);
 
   let major = 1;
   let minor = 0;
@@ -324,14 +324,23 @@ export const rejectBOM = async (req, res) => {
     const approvedBy = req.user ? req.user.name : 'Director';
     const { rejectionReason } = req.body;
 
-    const bom = await BOM.findByIdAndUpdate(
-      req.params.id,
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid BOM ID.' });
+    }
+
+    // Same rule as approval: only a BOM waiting for the Director can be rejected.
+    const bom = await BOM.findOneAndUpdate(
+      { _id: req.params.id, status: { $in: ['Submitted', 'Pending'] } },
       { status: 'Rejected', approvedBy, rejectionReason: rejectionReason || '' },
       { new: true }
     ).populate('projectId');
 
     if (!bom) {
-      return res.status(404).json({ success: false, message: 'BOM not found.' });
+      const exists = await BOM.exists({ _id: req.params.id });
+      if (!exists) {
+        return res.status(404).json({ success: false, message: 'BOM not found.' });
+      }
+      return res.status(400).json({ success: false, message: 'Only a submitted BOM can be rejected.' });
     }
 
     const projectName = bom.projectName || (bom.projectId ? (bom.projectId.projectName || bom.projectId.name) : 'Project');

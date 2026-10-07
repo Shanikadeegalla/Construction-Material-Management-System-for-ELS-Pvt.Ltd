@@ -94,6 +94,7 @@ try {
   check('Director notified of PO', (await notifs('dir', 'PO_SUBMITTED')).length === 1);
   r = await api('dir', 'PUT', `/purchase-orders/${po._id}/approve`, {});
   check('PO approved', r.status === 200);
+  check('PO without supplier email stays Approved for manual send', r.data.data.status === 'Approved' && /sent manually/.test(r.data.message), r.data.message);
   check('Purchase Manager notified PO approved', (await notifs('buy', 'PO_approved')).length === 1);
   check('Main Store notified PO approved', (await notifs('main', 'PO_approved')).length === 1);
   r = await api('buy', 'PUT', `/purchase-orders/${po._id}/status`, { status: 'Sent' });
@@ -112,6 +113,10 @@ try {
   check('Invoice recorded', r.status === 201, JSON.stringify(r.data));
   const inv = r.data.data;
   check('Director notified of invoice', (await notifs('dir', 'Invoice_submitted')).length === 1);
+  r = await api('dir', 'GET', '/invoices');
+  const fullInv = r.data.data.find(x => x._id === inv._id);
+  check('Registry row carries its GRN', fullInv?.grn?.grnNumber === grn.grnNumber && fullInv?.po?.totalAmount === total, JSON.stringify(fullInv?.grn));
+  check('Full delivery: no warnings', fullInv?.deliveryCheck?.status === 'Full' && fullInv.deliveryCheck.warnings.length === 0 && fullInv.deliveryCheck.lines.length === 2 && fullInv.deliveryCheck.acceptedValue === total, JSON.stringify(fullInv?.deliveryCheck));
   r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cash' });
   check('Payment blocked before Director approval', r.status === 400, JSON.stringify(r.data));
   r = await api('dir', 'PUT', `/invoices/${inv._id}/approve-payment`, {});
@@ -119,11 +124,13 @@ try {
   check('Purchase Manager notified invoice approved', (await notifs('buy', 'Invoice_approved')).length === 1);
   r = await api('dir', 'PUT', `/invoices/${inv._id}/approve-payment`, {});
   check('Second approval rejected', r.status === 400);
+  const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  const today = now.toISOString().substring(0, 10);
   r = await api('main', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cash' });
   check('Main Store cannot record payment', r.status === 403, String(r.status));
   r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cheque' });
   check('Cheque without number rejected', r.status === 400);
-  r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cheque', reference: '004512', bankName: 'Commercial Bank' });
+  r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cheque', reference: '004512', bankName: 'Commercial Bank', chequeDate: today, paidAt: today });
   check('Cheque payment recorded', r.status === 201, JSON.stringify(r.data));
   r = await api('buy', 'POST', '/payments/record', { invoiceId: inv._id, method: 'Cash' });
   check('Double payment rejected', r.status === 400);
@@ -146,29 +153,30 @@ try {
 
   console.log('\n[Site request -> MTN in transit -> receipt]');
   const sid = String(project._id);
-  r = await api('site', 'POST', '/material-requests', { siteStoreId: sid, requiredDate: new Date(), materials: [{ materialName: im1.materialName, quantity: 60 }] });
+  r = await api('site', 'POST', '/material-requests', { requiredDate: new Date(), materials: [{ materialName: im1.materialName, quantity: 60 }] });
   check('Site Store request created', r.status === 201, JSON.stringify(r.data));
   const ssr = r.data.data;
+  check('Request is for the general Site Store, not a project', ssr.siteStoreId === null && ssr.siteStoreName === 'Site Store', JSON.stringify(ssr));
   check('Main Store notified of site request', (await notifs('main', 'SSR_SUBMITTED')).length === 1);
   r = await api('main', 'POST', '/material-transfer-notes', { sourceRequestId: ssr._id, transferDate: new Date(), materials: [{ materialName: im1.materialName, quantity: 60, unit: im1.unit }] });
   check('MTN issued In Transit', r.status === 201 && r.data.data.status === 'In Transit', JSON.stringify(r.data));
   const mtn = r.data.data;
   r = await api('main', 'GET', '/inventory?location=MainStore');
   check('Main Store stock deducted on issue', r.data.find(x => x.name === im1.materialName).quantity === P1 - 60);
-  r = await api('site', 'GET', `/site/inventory?projectId=${sid}`);
+  r = await api('site', 'GET', `/site/inventory`);
   check('Site stock NOT increased before receipt', r.data.length === 0, JSON.stringify(r.data));
   check('Requester notified of transfer', (await notifs('site', 'SSR_TRANSFERRED')).length === 1);
   check('Low stock -> Purchase Manager', (await notifs('buy', 'LOW_STOCK')).length === 1, String((await notifs('buy', 'LOW_STOCK')).length));
   r = await api('main', 'POST', `/material-transfer-notes/${mtn._id}/receive`);
   check('Main Store cannot confirm site receipt', r.status === 403, String(r.status));
-  r = await api('site', 'GET', `/material-transfer-notes?siteStoreId=${sid}`);
+  r = await api('site', 'GET', '/material-transfer-notes');
   check('Site Store sees its in-transit MTN', r.data.data.length === 1 && r.data.data[0].status === 'In Transit');
   r = await api('site', 'POST', `/material-transfer-notes/${mtn._id}/receive`);
   check('Site Store confirms receipt', r.status === 200 && r.data.data.status === 'Received', JSON.stringify(r.data));
   r = await api('site', 'POST', `/material-transfer-notes/${mtn._id}/receive`);
   check('Double receipt rejected', r.status === 400);
-  r = await api('site', 'GET', `/site/inventory?projectId=${sid}`);
-  check('Site inventory updated on receipt', r.data.length === 1 && r.data[0].quantity === 60, JSON.stringify(r.data));
+  r = await api('site', 'GET', `/site/inventory`);
+  check('Site inventory updated on receipt', r.data.length === 1 && r.data[0].quantity === 60 && !r.data[0].projectId, JSON.stringify(r.data));
   const siteMat1 = r.data[0];
   check('Main Store notified of receipt', (await notifs('main', 'MTN_RECEIVED')).length === 1);
 
@@ -177,14 +185,14 @@ try {
   const mainMat2 = r.data.find(x => x.name === im2.materialName);
   r = await api('main', 'POST', '/inventory/adjustments', { materialId: mainMat2._id, physicalCount: 40, reason: 'Physical count' });
   check('Stock adjustment', r.status === 201 && r.data.material.quantity === 40, JSON.stringify(r.data).slice(0, 200));
-  r = await api('main', 'POST', '/material-transfer-notes', { siteStoreId: sid, transferDate: new Date(), materials: [{ materialName: im2.materialName, quantity: 999, unit: im2.unit }] });
+  r = await api('main', 'POST', '/material-transfer-notes', { transferDate: new Date(), materials: [{ materialName: im2.materialName, quantity: 999, unit: im2.unit }] });
   check('Transfer above stock rejected', r.status === 400);
-  r = await api('main', 'POST', '/material-transfer-notes', { siteStoreId: sid, transferDate: new Date(), materials: [{ materialName: im2.materialName, quantity: 30, unit: im2.unit }] });
+  r = await api('main', 'POST', '/material-transfer-notes', { transferDate: new Date(), materials: [{ materialName: im2.materialName, quantity: 30, unit: im2.unit }] });
   check('Ad hoc MTN issued', r.status === 201, JSON.stringify(r.data));
   check('Site Store notified of ad hoc transfer', (await notifs('site', 'MTN_ISSUED')).length === 1);
   r = await api('site', 'POST', `/material-transfer-notes/${r.data.data._id}/receive`);
   check('Ad hoc MTN received', r.status === 200);
-  r = await api('site', 'GET', `/site/inventory?projectId=${sid}`);
+  r = await api('site', 'GET', `/site/inventory`);
   const siteMat2 = r.data.find(x => x.name === im2.materialName);
   check('Second material at site', siteMat2?.quantity === 30, JSON.stringify(r.data));
 
@@ -201,8 +209,17 @@ try {
   r = await api('site', 'POST', '/site/material-usage', { projectId: sid, materialId: siteMat2._id, quantity: 7, activity: 'Plastering' });
   check('Usage 15/10 flags overuse of 5', r.data.summary?.overuseQty === 5 && r.data.warning.length > 0, JSON.stringify(r.data.summary));
   check('PM notified of overuse', (await notifs('pm', 'USAGE_EXCEEDS_BOM')).length === 1);
-  r = await api('site', 'GET', `/site/inventory?projectId=${sid}`);
+  r = await api('site', 'GET', `/site/inventory`);
   check('Site stock reduced by usage', r.data.find(x => x.name === im1.materialName).quantity === 35 && r.data.find(x => x.name === im2.materialName).quantity === 15, JSON.stringify(r.data.map(x => [x.name, x.quantity])));
+
+  console.log('\n[Shared Site Store stock -> a second project]');
+  const project2 = await Project.create({ projectId: 'PRJ-E2E-002', projectName: 'E2E Bridge', clientName: 'Client', location: 'Kandy', startDate: new Date(), expectedEndDate: new Date(Date.now() + 9e9), budget: 1000000, createdBy: users.pm._id, status: 'Active' });
+  r = await api('site', 'POST', '/site/material-usage', { projectId: String(project2._id), materialId: siteMat1._id, quantity: 5, activity: 'Pier formwork' });
+  check('Same site stock issued to another project', r.status === 201 && r.data.data.projectName === 'E2E Bridge', JSON.stringify(r.data));
+  r = await api('site', 'GET', '/site/inventory');
+  check('Shared stock reduced by both projects', r.data.find(x => x.name === im1.materialName).quantity === 30, JSON.stringify(r.data.map(x => [x.name, x.quantity])));
+  r = await api('site', 'POST', '/material-requests', { requiredDate: new Date(), materials: [{ materialName: im1.materialName, quantity: 10 }] });
+  check('New request snapshots shared site stock', r.status === 201 && r.data.data.materials[0].availableAtSite === 30, JSON.stringify(r.data));
 
   console.log('\n[Reports]');
   r = await api('dir', 'GET', '/material-usage/variance');
@@ -218,6 +235,106 @@ try {
   check('Low-stock warnings list', r.data.success === true, JSON.stringify(r.data).slice(0, 200));
   r = await api('buy', 'GET', '/notifications');
   check('Purchase Manager notification feed', r.data.count >= 4, String(r.data.count));
+
+  console.log('\n[Invoice vs PO vs GRN: short, damaged and over-billed delivery]');
+  const items2 = [
+    { materialName: im1.materialName, quantity: 100, unit: im1.unit, unitPrice: 100 },
+    { materialName: im2.materialName, quantity: 20, unit: im2.unit, unitPrice: 100 }
+  ];
+  r = await api('buy', 'POST', '/purchase-orders', { supplier: String(supplier._id), items: items2, totalAmount: 12000 });
+  check('Second PO created', r.status === 201, JSON.stringify(r.data));
+  const po2 = r.data.data;
+  await api('dir', 'PUT', `/purchase-orders/${po2._id}/approve`, {});
+  await api('buy', 'PUT', `/purchase-orders/${po2._id}/status`, { status: 'Sent' });
+  r = await api('main', 'POST', '/inventory/grn', { poReference: po2.poNumber, supplier: 'E2E Supplier', receivedBy: 'E2E Main', items: [
+    { materialName: im1.materialName, expectedQty: 100, receivedQty: 80 },
+    { materialName: im2.materialName, expectedQty: 20, receivedQty: 20, condition: 'Damaged', damagedQty: 5 }
+  ] });
+  check('Short + damaged GRN recorded as Partial', r.status === 201 && r.data.grn.status === 'Partial', JSON.stringify(r.data).slice(0, 300));
+  const grn2 = r.data.grn;
+  r = await api('main', 'POST', '/invoices', { supplier: supplier._id, po: po2._id, grn: grn2._id, amount: 12000 });
+  check('Invoice recorded against partial GRN', r.status === 201, JSON.stringify(r.data));
+  const inv2 = r.data.data;
+  r = await api('dir', 'GET', `/invoices/${inv2._id}`);
+  const dc = r.data.data?.deliveryCheck;
+  check('Partial delivery flagged', dc?.status === 'Partial' && dc.acceptedValue === 9500, JSON.stringify(dc));
+  check('Short line shows ordered vs received', dc?.lines?.[0]?.orderedQty === 100 && dc.lines[0].receivedQty === 80, JSON.stringify(dc?.lines?.[0]));
+  check('Damaged line shows accepted qty', dc?.lines?.[1]?.damagedQty === 5 && dc.lines[1].acceptedQty === 15, JSON.stringify(dc?.lines?.[1]));
+  check('Warnings: short, damaged, amount above accepted value', dc?.warnings?.length === 3 && /short/.test(dc.warnings[0]) && /damaged/.test(dc.warnings[1]) && /goods accepted/.test(dc.warnings[2]), JSON.stringify(dc?.warnings));
+  r = await api('main', 'POST', '/invoices', { supplier: supplier._id, po: po2._id, grn: grn2._id, amount: 13000 });
+  r = await api('dir', 'GET', `/invoices/${r.data.data._id}`);
+  check('Amount above PO total flagged', r.data.data?.deliveryCheck?.warnings?.some(w => /higher than the PO total/.test(w)), JSON.stringify(r.data.data?.deliveryCheck?.warnings));
+  r = await api('dir', 'PUT', `/invoices/${inv2._id}/approve-payment`, {});
+  check('Director can still approve a flagged invoice', r.status === 200, JSON.stringify(r.data));
+
+  console.log('\n[Partial delivery, damaged stock, status guards, Director feed]');
+  r = await api('main', 'GET', `/inventory/stock-ledger?type=${encodeURIComponent('GRN Receipt')}`);
+  const dmgMove = r.data.data.find(e => e.reference === grn2.grnNumber && e.materialName === im2.materialName);
+  check('Damaged units kept out of stock (15 of 20)', dmgMove?.inQty === 15, JSON.stringify(dmgMove));
+  r = await api('buy', 'GET', `/purchase-orders/${po2._id}`);
+  check('PO stays Sent after a partial delivery', r.data.data.status === 'Sent' && r.data.data.receivedQty === 100, JSON.stringify({ s: r.data.data.status, q: r.data.data.receivedQty }));
+  r = await api('main', 'POST', '/inventory/grn', { poReference: po2.poNumber, supplier: 'E2E Supplier', receivedBy: 'E2E Main', items: [
+    { materialName: im1.materialName, expectedQty: 20, receivedQty: 50 }
+  ] });
+  check('GRN above the outstanding balance rejected', r.status === 400 && /outstanding/.test(r.data.message || ''), JSON.stringify(r.data));
+  r = await api('main', 'POST', '/inventory/grn', { poReference: po2.poNumber, supplier: 'E2E Supplier', receivedBy: 'E2E Main', items: [
+    { materialName: im1.materialName, expectedQty: 20, receivedQty: 20 }
+  ] });
+  check('Second GRN for the outstanding balance is Verified', r.status === 201 && r.data.grn.status === 'Verified', JSON.stringify(r.data).slice(0, 300));
+  r = await api('buy', 'GET', `/purchase-orders/${po2._id}`);
+  check('PO Delivered once deliveries add up', r.data.data.status === 'Delivered' && r.data.data.receivedQty === 120 && !!r.data.data.actualDeliveryDate, JSON.stringify({ s: r.data.data.status, q: r.data.data.receivedQty, d: r.data.data.actualDeliveryDate }));
+  r = await api('dir', 'PUT', `/purchase-orders/${po2._id}/approve`, {});
+  check('Delivered PO cannot be re-approved', r.status === 400, JSON.stringify(r.data));
+  r = await api('buy', 'POST', '/purchase-orders', { supplier: String(supplier._id), items: items2, totalAmount: 12000 });
+  const po3 = r.data.data;
+  r = await api('main', 'POST', '/inventory/grn', { poReference: po3.poNumber, supplier: 'E2E Supplier', receivedBy: 'E2E Main', items: [
+    { materialName: im1.materialName, expectedQty: 100, receivedQty: 100 }
+  ] });
+  check('GRN against an unsent PO rejected', r.status === 400, JSON.stringify(r.data));
+  r = await api('dir', 'PUT', `/purchase-orders/${po3._id}/reject`, { rejectionReason: 'e2e' });
+  check('Pending PO can be rejected', r.status === 200, JSON.stringify(r.data));
+  r = await api('dir', 'PUT', `/purchase-orders/${po3._id}/approve`, {});
+  check('Rejected PO cannot be approved', r.status === 400, JSON.stringify(r.data));
+  r = await api('dir', 'PUT', `/bom/${bomId}/reject`, { rejectionReason: 'e2e' });
+  check('Approved BOM cannot be rejected', r.status === 400, JSON.stringify(r.data));
+  r = await api('main', 'GET', '/bom/stock-summary');
+  const bomSummary = r.data.data?.[bomId];
+  check('BOM stock summary lists the approved BOM', r.status === 200 && bomSummary && bomSummary.shortageCount >= 0 && bomSummary.toRequestCount <= bomSummary.shortageCount, JSON.stringify(r.data).slice(0, 200));
+  r = await api('dir', 'GET', '/notifications');
+  check('Director feed shows payment notification', r.data.data.some(n => n.type === 'PAYMENT_RECORDED'), r.data.data.map(n => n.type).join(','));
+
+  console.log('[Invoice file re-upload, PO validation, paged lists]');
+  r = await api('main', 'GET', '/invoices');
+  check('Invoice without a file is flagged', r.data.data.find(x => x._id === inv._id)?.fileExists === false);
+  const fd = new FormData();
+  fd.append('file', new Blob(['%PDF-1.4 e2e'], { type: 'application/pdf' }), 'e2e-invoice.pdf');
+  let up = await fetch(`${base}/invoices/${inv._id}/reupload`, { method: 'PUT', headers: { Authorization: `Bearer ${tokens.main}` }, body: fd });
+  const upData = await up.json();
+  check('Invoice file re-uploaded', up.status === 200 && upData.data?.fileExists === true, JSON.stringify(upData));
+  r = await api('dir', 'GET', '/invoices');
+  const reInv = r.data.data.find(x => x._id === inv._id);
+  check('Re-uploaded file is visible to the Director with its delivery check', reInv?.fileExists === true && !!reInv?.deliveryCheck, JSON.stringify(reInv?.file));
+  // The upload lands in the real uploads folder, so remove the test file again.
+  if (upData.data?.file?.url) {
+    const { UPLOAD_DIR } = await imp('config/uploadDir.js');
+    fs.rmSync(path.join(UPLOAD_DIR, path.basename(upData.data.file.url)), { force: true });
+  }
+  r = await api('buy', 'POST', '/purchase-orders', { supplier: String(supplier._id), items: [], totalAmount: 0 });
+  check('PO without items rejected', r.status === 400, JSON.stringify(r.data));
+  r = await api('buy', 'GET', '/purchase-orders?page=1&limit=1');
+  check('Paged PO list returns one row and the page count', r.data.data?.length === 1 && r.data.totalPages >= 2, JSON.stringify({ n: r.data.data?.length, tp: r.data.totalPages }));
+  r = await api('buy', 'GET', '/invoices?page=1&limit=1');
+  check('Paged invoice list returns one row and the page count', r.data.data?.length === 1 && r.data.totalPages >= 2, JSON.stringify({ n: r.data.data?.length, tp: r.data.totalPages }));
+
+  console.log('[PO from selected PR items, supplier bank account]');
+  r = await api('buy', 'POST', '/purchase-orders', { prId: pr._id, supplier: String(supplier._id), items: [items[0]], totalAmount: 1 });
+  check('PO from one selected PR item, total recalculated', r.status === 201 && r.data.data?.items?.length === 1 && r.data.data.totalAmount === items[0].quantity * 100, JSON.stringify({ s: r.status, t: r.data.data?.totalAmount, m: r.data.message }));
+  r = await api('buy', 'POST', '/purchase-orders', { prId: pr._id, supplier: String(supplier._id), items: [{ materialName: 'Not On This Request', quantity: 1, unit: 'bag', unitPrice: 1 }], totalAmount: 1 });
+  check('PO item outside its Purchase Request rejected', r.status === 400 && /not part of Purchase Request/.test(r.data.message || ''), JSON.stringify(r.data));
+  const badAcc = await Supplier.create({ name: 'E2E Bad Account', phone: '0711234568', category: 'Other', supplierId: 'SUP-E2E-BAD', accountNumber: 'AB-12' }).then(() => null, e => e);
+  check('Supplier bank account with letters rejected', !!badAcc && /numeric digits/.test(badAcc.message), String(badAcc && badAcc.message));
+  const okAcc = await Supplier.create({ name: 'E2E Good Account', phone: '0711234569', category: 'Other', supplierId: 'SUP-E2E-OK', accountNumber: '8001234567' }).then(d => d, e => e);
+  check('Supplier bank account with 10 digits accepted', okAcc?.accountNumber === '8001234567', String(okAcc && okAcc.message));
 } catch (err) {
   fail++;
   console.log('ERROR', err.stack || err);

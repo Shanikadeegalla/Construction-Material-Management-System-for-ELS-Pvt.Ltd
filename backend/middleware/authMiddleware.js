@@ -42,6 +42,18 @@ export const protect = async (req, res, next) => {
       res.status(401);
       return next(new Error('Not authorized, token failed'));
     }
+
+    if (!req.user) {
+      res.status(401);
+      return next(new Error('Not authorized, user not found'));
+    }
+
+    if (req.user.status === false) {
+      res.status(401);
+      return next(new Error('Not authorized, account deactivated'));
+    }
+
+    return next();
   }
 
   if (!token) {

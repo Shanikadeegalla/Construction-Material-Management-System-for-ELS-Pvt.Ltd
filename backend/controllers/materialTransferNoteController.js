@@ -1,20 +1,19 @@
 import MaterialTransferNote from '../models/MaterialTransferNote.js';
 import MaterialRequest from '../models/MaterialRequest.js';
 import Material from '../models/Material.js';
-import Project from '../models/Project.js';
 import { recordMovement } from '../utils/stockService.js';
 import { createNotificationHelper, notifyRoles } from './notificationController.js';
 import { encryptDB, decryptDB } from '../utils/cryptoUtils.js';
 
 // SiteStore Material names/quantities are encrypted at rest, so matching an
 // existing Site Store line for a plaintext material name requires decrypting
-// each candidate's name to compare.
-const findSiteMaterialByName = async (siteStoreId, materialName) => {
-  const siteMats = await Material.find({
-    location: 'SiteStore',
-    $or: [{ project_id: siteStoreId }, { projectId: siteStoreId }]
-  });
-  return siteMats.find(sm => decryptDB(sm.name) === materialName) || null;
+// each candidate's name to compare. Site Store stock is one shared pool, so
+// the general (no project) line is preferred; a legacy line created when
+// stock was held per project is reused rather than duplicating the material.
+const findSiteMaterialByName = async (materialName) => {
+  const siteMats = await Material.find({ location: 'SiteStore' });
+  const matches = siteMats.filter(sm => decryptDB(sm.name) === materialName);
+  return matches.find(sm => !sm.projectId && !sm.project_id) || matches[0] || null;
 };
 
 // Issues stock for every line in `materials` (each already validated to be
@@ -34,8 +33,13 @@ const executeTransfer = async ({
   notes,
   createdBy
 }) => {
-  const count = await MaterialTransferNote.countDocuments({});
-  const mtnNumber = `MTN-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`;
+  // Next number = highest existing sequence for the year + 1, not a document
+  // count: a count collides with an existing mtnNumber (unique) as soon as
+  // any note other than the latest has been removed.
+  const mtnPrefix = `MTN-${new Date().getFullYear()}-`;
+  const existingNotes = await MaterialTransferNote.find({ mtnNumber: { $regex: `^${mtnPrefix}` } }).select('mtnNumber');
+  const lastSeq = existingNotes.reduce((max, n) => Math.max(max, parseInt(n.mtnNumber.slice(mtnPrefix.length), 10) || 0), 0);
+  const mtnNumber = `${mtnPrefix}${String(lastSeq + 1).padStart(3, '0')}`;
 
   // Issue stock: decrease Main Store for every material. Every step up to
   // here was validated above, so this loop should not fail under normal
@@ -154,7 +158,7 @@ const executeTransfer = async ({
 // @access  Private (MainStoreOfficer - "Issue Materials" permission)
 export const createTransferNote = async (req, res) => {
   try {
-    const { sourceRequestId, siteStoreId: bodySiteStoreId, transferDate, reference, notes, materials } = req.body;
+    const { sourceRequestId, transferDate, reference, notes, materials } = req.body;
     const createdBy = req.user ? req.user.name : 'Main Store Officer';
 
     if (!transferDate || !materials || !Array.isArray(materials) || materials.length === 0) {
@@ -165,8 +169,10 @@ export const createTransferNote = async (req, res) => {
     }
 
     let sourceRequest = null;
-    let siteStoreId = bodySiteStoreId;
-    let siteStoreName;
+    // Every transfer goes to the one general Site Store; only a legacy
+    // request raised for a project's own Site Store carries an id/name.
+    let siteStoreId = null;
+    let siteStoreName = 'Site Store';
 
     if (sourceRequestId) {
       sourceRequest = await MaterialRequest.findById(sourceRequestId);
@@ -176,8 +182,8 @@ export const createTransferNote = async (req, res) => {
       if (!['Pending', 'Processing', 'Partially Transferred'].includes(sourceRequest.status)) {
         return res.status(400).json({ success: false, message: 'Only Pending or Partially Transferred requests can be transferred.' });
       }
-      siteStoreId = sourceRequest.siteStoreId;
-      siteStoreName = sourceRequest.siteStoreName;
+      siteStoreId = sourceRequest.siteStoreId || null;
+      siteStoreName = sourceRequest.siteStoreName || 'Site Store';
 
       // Main Store may only transfer against a Site Store request once every
       // outstanding line on that request is covered in full - no partial
@@ -198,15 +204,6 @@ export const createTransferNote = async (req, res) => {
           message: `Materials can only be sent once every requested item is fully available. Still short: ${incomplete.map(m => `${m.materialName} (needs ${m.outstanding} ${m.unit})`).join(', ')}.`
         });
       }
-    } else {
-      if (!siteStoreId) {
-        return res.status(400).json({ success: false, message: 'Please select a destination Site Store.' });
-      }
-      const project = await Project.findById(siteStoreId);
-      if (!project) {
-        return res.status(400).json({ success: false, message: 'Selected Site Store was not found.' });
-      }
-      siteStoreName = `${project.projectName} Site Store`;
     }
 
     // Validate Main Store stock for every requested line before mutating anything.
@@ -267,7 +264,7 @@ export const receiveTransferNote = async (req, res) => {
 
     try {
       for (const line of claimed.materials) {
-        let siteMat = await findSiteMaterialByName(claimed.siteStoreId, line.materialName);
+        let siteMat = await findSiteMaterialByName(line.materialName);
 
         if (!siteMat) {
           const mainMat = await Material.findOne({ name: line.materialName, location: 'MainStore' });
@@ -280,9 +277,7 @@ export const receiveTransferNote = async (req, res) => {
             maximumStock: mainMat ? mainMat.maximumStock : 100,
             reorderLevel: mainMat ? mainMat.reorderLevel : 50,
             location: 'SiteStore',
-            unitPrice: mainMat ? mainMat.unitPrice : 0,
-            project_id: claimed.siteStoreId,
-            projectId: claimed.siteStoreId
+            unitPrice: mainMat ? mainMat.unitPrice : 0
           });
           await siteMat.save();
         }
@@ -317,20 +312,13 @@ export const receiveTransferNote = async (req, res) => {
   }
 };
 
-// @desc    List Material Transfer Notes. Optional ?siteStoreId= / ?status=
-//          filters; a Site Store Officer pinned to one project only ever sees
-//          that site's notes.
+// @desc    List Material Transfer Notes. Optional ?status= filter.
 // @route   GET /api/material-transfer-notes
 // @access  Private
 export const getTransferNotes = async (req, res) => {
   try {
     const filter = {};
-    if (req.query.siteStoreId) filter.siteStoreId = req.query.siteStoreId;
     if (req.query.status) filter.status = req.query.status;
-    if (req.user.role === 'SiteStoreOfficer') {
-      const siteStoreId = req.user.projectId || req.user.project_id;
-      if (siteStoreId) filter.siteStoreId = siteStoreId;
-    }
     const notes = await MaterialTransferNote.find(filter).sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: notes });
   } catch (error) {
