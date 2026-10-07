@@ -1931,9 +1931,9 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
             
             {/* Notifications dropdown bell */}
             <div style={{ position: 'relative', cursor: 'pointer', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowNotifications(!showNotifications)}>
-              <Bell size={18} style={{ color: '#475569' }} />
+              <Bell size={18} className={unreadCount > 0 ? 'notification-bell-shake' : ''} style={{ color: '#475569' }} />
                {unreadCount > 0 && (
-                <span style={{ position: 'absolute', top: '2px', right: '2px', background: '#ef4444', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff' }}>
+                <span className="notification-badge-vibrate" style={{ position: 'absolute', top: '2px', right: '2px', background: '#ef4444', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff' }}>
                   {unreadCount}
                 </span>
               )}
@@ -3135,11 +3135,11 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
                     {suppliersPagination.paginatedData.map((s, i) => {
                       return (
                         <tr key={s._id || i} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? 'white' : '#fafafa' }}>
-                          <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#0d1b4b' }}>{s.supplierId}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{(s.name && s.name !== s.supplierId) ? s.name : (s.contactPerson || '-')}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.contactPerson || '-'}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.phone}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.email || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', fontWeight: '600', color: '#0d1b4b' }}>{s.supplierId || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '600' }}>{s.name || s.supplierId || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '500' }}>{s.contactPerson || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '500' }}>{s.phone || '-'}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b' }}>{s.email || '-'}</td>
                           <td style={{ padding: '14px 16px' }}>
                             <span style={{
                               background: s.status === 'Active' ? '#e8f5e9' : '#ffebee',

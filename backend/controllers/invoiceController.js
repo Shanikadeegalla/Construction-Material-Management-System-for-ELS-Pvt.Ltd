@@ -421,3 +421,39 @@ export const reuploadInvoiceFile = async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Delete attached invoice file for an existing invoice record
+// @route   DELETE /api/invoices/:id/file
+// @access  Private
+export const deleteInvoiceFile = async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: 'Invoice not found.' });
+    }
+
+    if (invoice.file?.url) {
+      const filename = path.basename(invoice.file.url);
+      const fullPath = path.join(UPLOAD_DIR, filename);
+      if (fs.existsSync(fullPath)) {
+        try {
+          fs.unlinkSync(fullPath);
+        } catch (unlinkErr) {
+          console.error('Error removing file from disk:', unlinkErr);
+        }
+      }
+    }
+
+    invoice.file = undefined;
+    await invoice.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Invoice document deleted successfully.',
+      data: formatInvoice(invoice)
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+

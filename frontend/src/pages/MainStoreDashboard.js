@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import SettingsPage from './SettingsPage';
-import { Calendar } from 'lucide-react';
+import { Calendar, Eye, Upload, Trash2, RefreshCw, FileText, X, ExternalLink } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
 import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
@@ -28,6 +28,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [previewInvoice, setPreviewInvoice] = useState(null);
   const [grns, setGrns] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
@@ -153,6 +154,18 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
   const stockAdjustments = React.useMemo(() => stockLedger.filter(e => e.type === 'Adjustment'), [stockLedger]);
   const adjustmentsPagination = usePagination(stockAdjustments, 8, [stockAdjustments.length]);
+
+  // Stock status tiers, driven entirely by the thresholds stored on the
+  // Material record (never hard-coded per material in the UI):
+  //   NORMAL     — quantity above the Pre-Order Level (reorderLevel)
+  //   PRE_ORDER  — quantity at/below Pre-Order Level but above Minimum Level
+  //   CRITICAL   — quantity at/below Minimum Level (minimumStock)
+  const materialStatus = (m) => {
+    const preOrderLevel = m.reorderLevel ?? m.minimumStock;
+    if (m.quantity <= m.minimumStock) return { label: 'Critical', tier: 'CRITICAL', bg: '#ffebee', color: '#c62828' };
+    if (m.quantity <= preOrderLevel) return { label: 'Pre-Order', tier: 'PRE_ORDER', bg: '#fff3e0', color: '#b7791f' };
+    return { label: 'Normal', tier: 'NORMAL', bg: '#e8f5e9', color: '#2e7d32' };
+  };
 
   const lowStockAlertsList = React.useMemo(() => materials.filter(m => m.location === 'MainStore' && materialStatus(m).tier !== 'NORMAL'), [materials]);
   const lowStockAlertsPagination = usePagination(lowStockAlertsList, 5, [lowStockAlertsList.length]);
@@ -1067,18 +1080,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const totalSKUs = mainMaterials.length;
   const stockValue = mainMaterials.reduce((sum, m) => sum + (m.quantity * m.unitPrice), 0);
 
-  // Stock status tiers, driven entirely by the thresholds stored on the
-  // Material record (never hard-coded per material in the UI):
-  //   NORMAL     — quantity above the Pre-Order Level (reorderLevel)
-  //   PRE_ORDER  — quantity at/below Pre-Order Level but above Minimum Level
-  //   CRITICAL   — quantity at/below Minimum Level (minimumStock)
-  const materialStatus = (m) => {
-    const preOrderLevel = m.reorderLevel ?? m.minimumStock;
-    if (m.quantity <= m.minimumStock) return { label: 'Critical', tier: 'CRITICAL', bg: '#ffebee', color: '#c62828' };
-    if (m.quantity <= preOrderLevel) return { label: 'Pre-Order', tier: 'PRE_ORDER', bg: '#fff3e0', color: '#b7791f' };
-    return { label: 'Normal', tier: 'NORMAL', bg: '#e8f5e9', color: '#2e7d32' };
-  };
-
   const normalStockItems = mainMaterials.filter(m => materialStatus(m).tier === 'NORMAL').length;
   const preOrderItems = mainMaterials.filter(m => materialStatus(m).tier === 'PRE_ORDER').length;
   const criticalStockItems = mainMaterials.filter(m => materialStatus(m).tier === 'CRITICAL').length;
@@ -1430,6 +1431,283 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     );
   };
 
+  const handleUploadInvoiceFile = async (invoiceOrGrn, file) => {
+    if (!file) return;
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const fd = new FormData();
+      fd.append('file', file);
+
+      let res, data;
+      if (invoiceOrGrn && invoiceOrGrn._id && (invoiceOrGrn.invoiceNumber || invoiceOrGrn.grn)) {
+        res = await fetch(`${API_BASE}/api/invoices/${invoiceOrGrn._id}/reupload`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd
+        });
+        data = await res.json();
+      } else {
+        const poRef = invoiceOrGrn.poReference || invoiceOrGrn.po;
+        const matchedPO = purchaseOrders.find(p => p.poNumber === poRef || p._id === poRef);
+        
+        let supplierVal = invoiceOrGrn.supplierId || invoiceOrGrn.supplier;
+        if (!supplierVal && matchedPO) {
+          supplierVal = matchedPO.supplier?._id || matchedPO.supplier;
+        }
+        if (!supplierVal && suppliers.length > 0) {
+          supplierVal = suppliers[0]._id;
+        }
+
+        fd.append('supplier', supplierVal || 'Supplier');
+        fd.append('po', matchedPO ? matchedPO._id : (invoiceOrGrn.poId || invoiceOrGrn.po || invoiceOrGrn._id));
+        fd.append('grn', invoiceOrGrn._id);
+        fd.append('amount', matchedPO ? (matchedPO.totalAmount || 1) : 1);
+        fd.append('invoiceDate', new Date().toISOString());
+
+        res = await fetch(`${API_BASE}/api/invoices`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd
+        });
+        data = await res.json();
+      }
+
+      if (data.success) {
+        toast.success('Invoice file uploaded successfully!');
+        fetchData(true);
+        if (previewInvoice) {
+          setPreviewInvoice(data.data || null);
+        }
+      } else {
+        toast.error(data.message || 'Failed to upload invoice file.');
+      }
+    } catch (err) {
+      toast.error('Upload failed: ' + err.message);
+    }
+  };
+
+  const handleDeleteInvoiceFile = async (invoiceId) => {
+    if (!window.confirm('Are you sure you want to delete this invoice file?')) return;
+    try {
+      const token = JSON.parse(localStorage.getItem('user'))?.token;
+      const res = await fetch(`${API_BASE}/api/invoices/${invoiceId}/file`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Invoice file deleted successfully.');
+        setPreviewInvoice(null);
+        fetchData(true);
+      } else {
+        toast.error(data.message || 'Failed to delete invoice file.');
+      }
+    } catch (err) {
+      toast.error('Delete failed: ' + err.message);
+    }
+  };
+
+  const renderInvoicePreviewModal = () => {
+    if (!previewInvoice) return null;
+    const fileUrl = previewInvoice.file?.url ? `${API_BASE}${previewInvoice.file.url}` : null;
+    const isPdf = previewInvoice.file?.filename?.toLowerCase().endsWith('.pdf') || (fileUrl && fileUrl.toLowerCase().endsWith('.pdf'));
+
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(15, 23, 42, 0.75)',
+        backdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 999999,
+        padding: '20px'
+      }} onClick={() => setPreviewInvoice(null)}>
+        <div style={{
+          backgroundColor: '#ffffff',
+          borderRadius: '16px',
+          width: '100%',
+          maxWidth: '850px',
+          maxHeight: '90vh',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+          overflow: 'hidden'
+        }} onClick={e => e.stopPropagation()}>
+
+          {/* Modal Header */}
+          <div style={{
+            padding: '16px 24px',
+            borderBottom: '1px solid #e2e8f0',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: '#f8fafc'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <FileText size={20} style={{ color: '#2563eb' }} />
+              <div>
+                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: '#0f172a' }}>
+                  Invoice Document Preview — {previewInvoice.invoiceNumber || 'Supplier Invoice'}
+                </h3>
+                <div style={{ fontSize: '12px', color: '#64748b' }}>
+                  Amount: LKR {Number(previewInvoice.amount || 0).toLocaleString()} • File: {previewInvoice.file?.filename || 'Document'}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setPreviewInvoice(null)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#64748b',
+                cursor: 'pointer',
+                padding: '4px',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* Modal Body / Viewer */}
+          <div style={{ flex: 1, backgroundColor: '#f1f5f9', padding: '16px', overflowY: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '420px' }}>
+            {!fileUrl ? (
+              <div style={{ color: '#64748b', fontSize: '14px', textAlign: 'center' }}>
+                No file preview available.
+              </div>
+            ) : isPdf ? (
+              <iframe
+                src={fileUrl}
+                title="Invoice Document Preview"
+                style={{ width: '100%', height: '520px', border: 'none', borderRadius: '8px', backgroundColor: '#ffffff' }}
+              />
+            ) : (
+              <img
+                src={fileUrl}
+                alt="Invoice Document Preview"
+                style={{ maxWidth: '100%', maxHeight: '520px', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+              />
+            )}
+          </div>
+
+          {/* Modal Footer */}
+          <div style={{
+            padding: '16px 24px',
+            borderTop: '1px solid #e2e8f0',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: '#ffffff'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {previewInvoice.file?.url && (
+                <button
+                  type="button"
+                  onClick={() => openUploadedFile(previewInvoice.file.url, { fileType: 'invoice', toast })}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    backgroundColor: '#f1f5f9',
+                    color: '#334155',
+                    border: '1px solid #cbd5e1',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <ExternalLink size={15} />
+                  Open in New Tab
+                </button>
+              )}
+
+              {/* Re-upload Action Button */}
+              <label style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: '600',
+                backgroundColor: '#2563eb',
+                color: '#ffffff',
+                border: 'none',
+                cursor: 'pointer',
+                boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)'
+              }}>
+                <RefreshCw size={15} />
+                Re-upload
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      handleUploadInvoiceFile(previewInvoice, file);
+                    }
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+
+              {/* Delete Action Button */}
+              <button
+                type="button"
+                onClick={() => handleDeleteInvoiceFile(previewInvoice._id)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  backgroundColor: '#fef2f2',
+                  color: '#dc2626',
+                  border: '1px solid #fecaca',
+                  cursor: 'pointer'
+                }}
+              >
+                <Trash2 size={15} />
+                Delete
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setPreviewInvoice(null)}
+              style={{
+                padding: '8px 20px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: '600',
+                backgroundColor: '#0d1b4b',
+                color: '#ffffff',
+                border: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              Close
+            </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={styles.dashboardLayout}>
       {/* Navigation Sidebar */}
@@ -1487,9 +1765,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             {/* Notification Bell */}
             <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
-              <span style={{ fontSize: '18px' }}>🔔</span>
+              <span className={unreadCount > 0 ? 'notification-bell-shake' : ''} style={{ fontSize: '18px' }}>🔔</span>
               {unreadCount > 0 && (
-                <span style={{
+                <span className="notification-badge-vibrate" style={{
                   position: 'absolute',
                   top: '2px',
                   right: '2px',
@@ -2125,54 +2403,70 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         <td style={styles.td}>{supplierLabel}</td>
                         <td style={styles.td}>{formatDate(g.receivedDate || g.createdAt)}</td>
                         <td style={styles.td}>
-                          {invoice ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                              {invoice.file?.url && invoice.fileExists !== false ? (
+                          {(() => {
+                            const hasFile = invoice && invoice.file?.url && invoice.fileExists !== false;
+                            if (hasFile) {
+                              return (
                                 <button
                                   type="button"
-                                  onClick={() => openUploadedFile(invoice.file.url, { fileType: 'invoice', toast })}
-                                  style={{ color: '#2563eb', fontWeight: '600', fontSize: '12px', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
-                                >
-                                  👁 View Invoice
-                                </button>
-                              ) : (
-                                <span style={{ color: '#d97706', fontSize: '12px', fontWeight: 'bold' }}>⚠️ File missing</span>
-                              )}
-                              <label style={{ cursor: 'pointer', color: '#0d1b4b', fontSize: '11px', textDecoration: 'underline', fontWeight: '600' }}>
-                                📤 Re-upload File
-                                <input
-                                  type="file"
-                                  accept="image/*,application/pdf"
-                                  style={{ display: 'none' }}
-                                  onChange={async (e) => {
-                                    const file = e.target.files?.[0];
-                                    if (!file) return;
-                                    try {
-                                      const token = JSON.parse(localStorage.getItem('user'))?.token;
-                                      const fd = new FormData();
-                                      fd.append('file', file);
-                                      const res = await fetch(`${API_BASE}/api/invoices/${invoice._id}/reupload`, {
-                                        method: 'PUT',
-                                        headers: { Authorization: `Bearer ${token}` },
-                                        body: fd
-                                      });
-                                      const d = await res.json();
-                                      if (d.success) {
-                                        alert('Invoice file re-uploaded successfully!');
-                                        fetchData(true);
-                                      } else {
-                                        alert(d.message || 'Failed to re-upload invoice');
-                                      }
-                                    } catch (err) {
-                                      alert('Re-upload failed: ' + err.message);
-                                    }
+                                  onClick={() => setPreviewInvoice(invoice)}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '6px 14px',
+                                    borderRadius: '20px',
+                                    fontSize: '12px',
+                                    fontWeight: '600',
+                                    backgroundColor: '#eff6ff',
+                                    color: '#2563eb',
+                                    border: '1px solid #bfdbfe',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                                    transition: 'all 0.15s ease'
                                   }}
-                                />
-                              </label>
-                            </div>
-                          ) : (
-                            <span style={{ color: '#94a3b8', fontSize: '12px' }}>Not attached</span>
-                          )}
+                                >
+                                  <Eye size={14} />
+                                  View Invoice
+                                </button>
+                              );
+                            } else {
+                              return (
+                                <label
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '6px 14px',
+                                    borderRadius: '20px',
+                                    fontSize: '12px',
+                                    fontWeight: '600',
+                                    backgroundColor: '#fff7ed',
+                                    color: '#c2410c',
+                                    border: '1px solid #fed7aa',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                                    transition: 'all 0.15s ease'
+                                  }}
+                                >
+                                  <Upload size={14} />
+                                  Upload Invoice
+                                  <input
+                                    type="file"
+                                    accept=".pdf,.jpg,.jpeg,.png"
+                                    style={{ display: 'none' }}
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        handleUploadInvoiceFile(invoice || g, file);
+                                      }
+                                      e.target.value = '';
+                                    }}
+                                  />
+                                </label>
+                              );
+                            }
+                          })()}
                         </td>
                         <td style={styles.td}>
                           <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>Processed</span>
@@ -3462,6 +3756,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         );
       })()}
       {renderStoreStatsModal()}
+      {renderInvoicePreviewModal()}
     </div>
   );
 }

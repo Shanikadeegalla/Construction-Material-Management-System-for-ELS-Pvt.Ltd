@@ -49,7 +49,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   // Phase 9 - Material Issuance Note (MIN) States - the Main Store request/receipt
   // lifecycle (Pending/Approved/Issued/Received), unrelated to Material Issue & Usage below.
   const [mins, setMins] = useState([]);
-  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
 
   // Request Materials Form State (free-form Material Transfer Request, not
   // gated by an approved BOM)
@@ -877,9 +876,9 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                 {/* Notification Bell */}
                 <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
-                  <span style={{ fontSize: '18px' }}>🔔</span>
+                  <span className={unreadCount > 0 ? 'notification-bell-shake' : ''} style={{ fontSize: '18px' }}>🔔</span>
                   {unreadCount > 0 && (
-                    <span style={{
+                    <span className="notification-badge-vibrate" style={{
                       position: 'absolute',
                       top: '2px',
                       right: '2px',
@@ -2009,62 +2008,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
           </div>
         </div>
       )}
-
-      {/* Low Stock Popup Alerts (Mandatory overlay) */}
-      {(() => {
-        const alertsToTrigger = materials.filter(m => {
-          const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
-          return m.quantity < reorder;
-        });
-        const unacknowledged = alertsToTrigger.filter(m => !acknowledgedAlerts[m._id]);
-        if (unacknowledged.length === 0) return null;
-        
-        return (
-          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-            <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '500px', boxShadow: '0 10px 25px rgba(0,0,0,0.3)', borderTop: '6px solid #ef4444', textAlign: 'left' }}>
-              <h3 style={{ color: '#ef4444', margin: '0 0 16px', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                🚨 Low Stock Alert Notification
-              </h3>
-              <p style={{ color: '#475569', fontSize: '14px', marginBottom: '20px' }}>
-                The following materials have fallen below their reorder levels. Please review and requisition stock:
-              </p>
-              <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '24px' }}>
-                {unacknowledged.map(m => {
-                  const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
-                  const isCritical = m.quantity <= (m.minimumStock || 10);
-                  return (
-                    <div key={m._id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}>
-                      <div>
-                        <strong style={{ color: '#0f172a' }}>{m.name}</strong>
-                        <div style={{ fontSize: '11px', color: '#64748b' }}>Stock: {m.quantity} {m.unit} / Reorder: {reorder} {m.unit}</div>
-                      </div>
-                      <span style={{ 
-                        background: isCritical ? '#fee2e2' : '#ffedd5', 
-                        color: isCritical ? '#991b1b' : '#c2410c',
-                        padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' 
-                      }}>
-                        {isCritical ? 'Critical' : 'Pre-Order'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-              <button
-                onClick={() => {
-                  const updated = { ...acknowledgedAlerts };
-                  alertsToTrigger.forEach(m => {
-                    updated[m._id] = true;
-                  });
-                  setAcknowledgedAlerts(updated);
-                }}
-                style={{ width: '100%', padding: '12px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-              >
-                Acknowledge & Dismiss Alerts
-              </button>
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }

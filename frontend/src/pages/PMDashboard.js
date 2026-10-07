@@ -1436,9 +1436,9 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             {/* Notification Bell */}
             <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
-              <span style={{ fontSize: '18px' }}>🔔</span>
+              <span className={(unreadCount + bomUnreadCount) > 0 ? 'notification-bell-shake' : ''} style={{ fontSize: '18px' }}>🔔</span>
               {(unreadCount + bomUnreadCount) > 0 && (
-                <span style={{
+                <span className="notification-badge-vibrate" style={{
                   position: 'absolute',
                   top: '2px',
                   right: '2px',

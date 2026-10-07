@@ -1030,9 +1030,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             {/* Notification Bell */}
             <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
-              <span style={{ fontSize: '18px' }}>🔔</span>
+              <span className={(unreadCount + prUnreadCount) > 0 ? 'notification-bell-shake' : ''} style={{ fontSize: '18px' }}>🔔</span>
               {(unreadCount + prUnreadCount) > 0 && (
-                <span style={{
+                <span className="notification-badge-vibrate" style={{
                   position: 'absolute',
                   top: '2px',
                   right: '2px',
@@ -1780,25 +1780,25 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         {editingSupplierId === s._id ? (
                           // Editing Row
                           <>
-                            <td style={{ padding: '10px 16px', fontSize: '13px', color: '#666' }}>{s.supplierId}</td>
+                            <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '600' }}>{s.supplierId || '-'}</td>
                             <td style={{ padding: '10px 16px' }}>
-                              <input value={editSupForm.name} onChange={e => setEditSupForm({ ...editSupForm, name: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} required />
+                              <input value={editSupForm.name} onChange={e => setEditSupForm({ ...editSupForm, name: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc', color: '#1e293b' }} required />
                             </td>
                             <td style={{ padding: '10px 16px' }}>
-                              <input value={editSupForm.contactPerson} onChange={e => setEditSupForm({ ...editSupForm, contactPerson: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} />
+                              <input value={editSupForm.contactPerson} onChange={e => setEditSupForm({ ...editSupForm, contactPerson: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc', color: '#1e293b' }} />
                             </td>
                             <td style={{ padding: '10px 16px' }}>
-                              <input value={editSupForm.phone} onChange={e => setEditSupForm({ ...editSupForm, phone: formatPhoneInput(e.target.value) })} maxLength={12} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} required />
+                              <input value={editSupForm.phone} onChange={e => setEditSupForm({ ...editSupForm, phone: formatPhoneInput(e.target.value) })} maxLength={12} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc', color: '#1e293b' }} required />
                             </td>
                             <td style={{ padding: '10px 16px' }}>
-                              <input type="email" value={editSupForm.email} onChange={e => setEditSupForm({ ...editSupForm, email: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} />
+                              <input type="email" value={editSupForm.email} onChange={e => setEditSupForm({ ...editSupForm, email: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc', color: '#1e293b' }} />
                             </td>
                             <td style={{ padding: '10px 16px' }}>
-                              <input value={editSupForm.address} onChange={e => setEditSupForm({ ...editSupForm, address: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc' }} />
+                              <input value={editSupForm.address} onChange={e => setEditSupForm({ ...editSupForm, address: e.target.value })} style={{ padding: '6px', width: '90%', borderRadius: '4px', border: '1px solid #ccc', color: '#1e293b' }} />
                             </td>
-                            <td style={{ padding: '10px 16px', fontSize: '13px', color: '#666' }}>{s.createdAt ? formatDate(s.createdAt) : '-'}</td>
+                            <td style={{ padding: '10px 16px', fontSize: '13px', color: '#1e293b' }}>{s.createdAt ? formatDate(s.createdAt) : '-'}</td>
                             <td style={{ padding: '10px 16px' }}>
-                              <select value={editSupForm.status} onChange={e => setEditSupForm({ ...editSupForm, status: e.target.value })} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc' }}>
+                              <select value={editSupForm.status} onChange={e => setEditSupForm({ ...editSupForm, status: e.target.value })} style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', color: '#1e293b' }}>
                                 <option value="Active">Active</option>
                                 <option value="Inactive">Inactive</option>
                               </select>
@@ -1811,13 +1811,13 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         ) : (
                           // Normal Display Row
                           <>
-                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.supplierId}</td>
-                            <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '500', color: '#1565c0', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setViewingSupplierId(s._id)}>{s.name}</td>
-                            <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.contactPerson || '-'}</td>
-                            <td style={{ padding: '14px 16px', fontSize: '13px' }}>{s.phone}</td>
-                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.email || '-'}</td>
-                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.address || '-'}</td>
-                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#666' }}>{s.createdAt ? formatDate(s.createdAt) : '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '600' }}>{s.supplierId || '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#1d4ed8', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setViewingSupplierId(s._id)}>{s.name || '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '500' }}>{s.contactPerson || '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '500' }}>{s.phone || '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b' }}>{s.email || '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b' }}>{s.address || '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b' }}>{s.createdAt ? formatDate(s.createdAt) : '-'}</td>
                             <td style={{ padding: '14px 16px' }}>
                               <span style={{
                                 background: s.status === 'Active' ? '#e8f5e9' : '#ffebee',

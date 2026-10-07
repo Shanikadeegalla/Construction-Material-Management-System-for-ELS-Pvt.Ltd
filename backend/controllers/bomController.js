@@ -452,6 +452,38 @@ export const computeBOMStockCheck = async (bom) => {
   });
 };
 
+// @desc    Shortage summary for the approved BOM in force on every project,
+//          so the Approved BOMs list can show which ones still need a PR
+//          without opening each comparison.
+// @route   GET /api/bom/stock-summary
+// @access  Private
+export const getBOMStockSummary = async (req, res) => {
+  try {
+    const allApproved = await BOM.find({ status: 'Approved' }).sort({ updatedAt: -1, createdAt: -1 });
+    const seenProjects = new Set();
+    const boms = allApproved.filter((b) => {
+      const key = String(b.projectId);
+      if (seenProjects.has(key)) return false;
+      seenProjects.add(key);
+      return true;
+    });
+
+    const data = {};
+    await Promise.all(boms.map(async (bom) => {
+      const rows = await computeBOMStockCheck(bom);
+      data[String(bom._id)] = {
+        shortageCount: rows.filter((r) => r.shortage > 0).length,
+        // Shortage lines that no active PR covers yet.
+        toRequestCount: rows.filter((r) => r.requestableQty > 0).length
+      };
+    }));
+
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Compare an approved BOM's planned materials against Main Store stock
 // @route   GET /api/bom/:bomId/stock-check
 // @access  Private

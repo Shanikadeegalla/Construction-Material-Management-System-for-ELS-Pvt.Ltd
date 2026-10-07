@@ -24,6 +24,17 @@ function MainApp() {
   const API_AUTH_URL = `${API_BASE}/api/auth`;
 
   useEffect(() => {
+    // Listen for global unauthorized / token failure events
+    const handleUnauthorized = (e) => {
+      localStorage.removeItem('user');
+      localStorage.removeItem('token');
+      setUser(null);
+      setView('login');
+      setError(e?.detail?.message || 'Session expired or not authorized. Please sign in again.');
+    };
+
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+
     // Check dark mode preference
     const isDarkMode = localStorage.getItem('cmms_dark_mode') === 'true';
     if (isDarkMode) {
@@ -50,6 +61,10 @@ function MainApp() {
         localStorage.removeItem('user');
       }
     }
+
+    return () => {
+      window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    };
   }, []);
 
   const handleVerifySuccess = (userData) => {
@@ -210,7 +225,6 @@ function MainApp() {
       <style>{globalStyles}</style>
       <main style={!user && !view.startsWith('payment-') ? styles.main : {}}>
         {view === 'login' && renderLogin()}
-        {view === 'register' && renderRegister()}
         {view === 'payment-success' && (
           <PaymentSuccess onReturnToPOs={() => {
             window.history.pushState({}, '', '/');
