@@ -52,6 +52,8 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
   // BOM approval/rejection notifications (from Director actions)
   const [bomNotifications, setBomNotifications] = useState([]);
   const [bomUnreadCount, setBomUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   // Project state variables for Phase 3
   const [projects, setProjects] = useState([]);

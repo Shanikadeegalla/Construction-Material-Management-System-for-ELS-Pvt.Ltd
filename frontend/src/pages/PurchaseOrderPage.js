@@ -30,6 +30,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [prNotifications, setPrNotifications] = useState([]);
   const [prUnreadCount, setPrUnreadCount] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [pendingPRs, setPendingPRs] = useState([]);
   const [purchaseRequests, setPurchaseRequests] = useState([]);
   const [showForm, setShowForm] = useState(false);
