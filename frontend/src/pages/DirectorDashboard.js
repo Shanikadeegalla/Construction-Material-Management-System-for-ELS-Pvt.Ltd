@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import VarianceReport from './VarianceReport';
 import ReportsCenter from './ReportsCenter';
 import SettingsPage from './SettingsPage';
@@ -120,8 +120,18 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           return n.recipientId === user?._id || n.recipientId === user?.id;
         });
 
+        const unreadList = filteredNotifs.filter(n => !n.isRead);
+        const newUnreadCount = unreadList.length;
+
+        if (newUnreadCount > prevUnreadRef.current && prevUnreadRef.current > 0) {
+          const latest = unreadList[0];
+          const alertMsg = latest?.message || `You have ${newUnreadCount} unread notification(s).`;
+          toast.notify(alertMsg, 'Director Board Notification');
+        }
+        prevUnreadRef.current = newUnreadCount;
+
         setNotifications(filteredNotifs);
-        setUnreadCount(filteredNotifs.filter(n => !n.isRead).length);
+        setUnreadCount(newUnreadCount);
       }
     } catch (err) {
       console.error('Error fetching notifications:', err);
@@ -974,9 +984,9 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             {/* Bell Icon & Dropdown */}
             <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
-              <span style={{ fontSize: '18px' }}>🔔</span>
+              <span className={unreadCount > 0 ? 'notification-bell-shake' : ''} style={{ fontSize: '18px' }}>🔔</span>
               {unreadCount > 0 && (
-                <span style={{ position: 'absolute', top: '2px', right: '2px', background: '#ef4444', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff' }}>
+                <span className="notification-badge-vibrate" style={{ position: 'absolute', top: '2px', right: '2px', background: '#ef4444', color: 'white', borderRadius: '50%', width: '16px', height: '16px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px #fff' }}>
                   {unreadCount}
                 </span>
               )}

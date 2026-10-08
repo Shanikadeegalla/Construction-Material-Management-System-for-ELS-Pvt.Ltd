@@ -16,6 +16,7 @@ import {
 import { formatDateTime, formatDayMonth } from '../utils/dateUtils';
 import { API_BASE } from '../config';
 import Pagination, { usePagination } from '../components/Pagination';
+import { getAuthHeaders, fetchWithAuth } from '../utils/authUtils';
 
 const VarianceReport = () => {
   const [reportData, setReportData] = useState([]);
@@ -26,22 +27,14 @@ const VarianceReport = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const getHeaders = () => {
-    const token = JSON.parse(localStorage.getItem('user'))?.token;
-    return {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`
-    };
-  };
+  const getHeaders = () => getAuthHeaders();
 
   const fetchVarianceData = async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/api/material-usage/variance`, {
-        headers: getHeaders()
-      });
-      const data = await res.json();
+      const res = await fetchWithAuth('/api/material-usage/variance');
+      const data = await res.json().catch(() => ({}));
       if (data.success) {
         setReportData(data.report || []);
         setTimelineData(data.timeline || []);

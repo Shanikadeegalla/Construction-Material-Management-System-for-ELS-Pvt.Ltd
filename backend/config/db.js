@@ -59,63 +59,81 @@ const fixStaleRoleNames = async () => {
   }
 };
 
-const connectDB = async () => {
+const runPostConnectTasks = async () => {
+  if (process.env.VERCEL && process.env.RUN_STARTUP_TASKS !== 'true') {
+    return;
+  }
+
   try {
-    const conn = await mongoose.connect(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/ConstructionDB');
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    await fixStaleRoleNames();
+  } catch (err) {
+    console.error('[Migration Error - role/permission rename]:', err.message);
+  }
 
-    // The role/permission migrations and seeding below are idempotent
-    // start-up chores. A serverless deployment cold-starts constantly, so
-    // they are skipped there (set RUN_STARTUP_TASKS=true for one deploy if a
-    // fresh database needs seeding).
-    if (process.env.VERCEL && process.env.RUN_STARTUP_TASKS !== 'true') {
-      return;
+  try {
+    await removeDeprecatedPurchaseOfficerRole();
+  } catch (err) {
+    console.error('[Migration Error - remove PurchaseOfficer role]:', err.message);
+  }
+
+  await seedDatabase();
+
+  try {
+    const { ensureDefaultUsersExist } = await import('../scripts/verifyAndSeedUsers.js');
+    const userSummary = await ensureDefaultUsersExist();
+    console.log('[Auth Seeder] Test user credentials verified & ready:');
+    console.table(userSummary);
+  } catch (err) {
+    console.error('[Auth Seeder Error]:', err.message);
+  }
+
+  try {
+    const User = (await import('../models/userModel.js')).default;
+    const result = await User.updateMany({ role: 'PurchaseOfficer' }, { role: 'PurchaseManager' });
+    if (result.modifiedCount > 0) {
+      console.log(`[Migration] Migrated ${result.modifiedCount} users from PurchaseOfficer to PurchaseManager in userModel.`);
     }
+  } catch (err) {
+    console.error('[Migration Error - userModel]:', err.message);
+  }
 
-    try {
-      await fixStaleRoleNames();
-    } catch (err) {
-      console.error('[Migration Error - role/permission rename]:', err.message);
-    }
-
-    try {
-      await removeDeprecatedPurchaseOfficerRole();
-    } catch (err) {
-      console.error('[Migration Error - remove PurchaseOfficer role]:', err.message);
-    }
-
-    await seedDatabase();
-
-    // Database migration: Update existing PurchaseOfficer users to PurchaseManager
-    try {
-      const User = (await import('../models/userModel.js')).default;
-      const result = await User.updateMany({ role: 'PurchaseOfficer' }, { role: 'PurchaseManager' });
+  try {
+    const User = (await import('../models/userModel.js')).default;
+    for (const [oldName, newName] of ROLE_RENAMES) {
+      const result = await User.updateMany({ role: oldName }, { role: newName });
       if (result.modifiedCount > 0) {
-        console.log(`[Migration] Migrated ${result.modifiedCount} users from PurchaseOfficer to PurchaseManager in userModel.`);
+        console.log(`[Migration] Migrated ${result.modifiedCount} users from ${oldName} to ${newName} in userModel.`);
       }
-    } catch (err) {
-      console.error('[Migration Error - userModel]:', err.message);
+    }
+  } catch (err) {
+    console.error('[Migration Error - userModel store role rename]:', err.message);
+  }
+};
+
+const connectDB = async () => {
+  const primaryUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/ConstructionDB';
+  const localUri = 'mongodb://127.0.0.1:27017/ConstructionDB';
+
+  try {
+    const conn = await mongoose.connect(primaryUri, { serverSelectionTimeoutMS: 3000, socketTimeoutMS: 5000 });
+    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    await runPostConnectTasks();
+    return;
+  } catch (error) {
+    console.error(`Primary MongoDB connection error (${primaryUri}): ${error.message}`);
+    
+    if (primaryUri !== localUri) {
+      try {
+        console.log(`Attempting fallback connection to local MongoDB: ${localUri}`);
+        const conn = await mongoose.connect(localUri, { serverSelectionTimeoutMS: 3000, socketTimeoutMS: 5000 });
+        console.log(`MongoDB Connected (Local Fallback): ${conn.connection.host}`);
+        await runPostConnectTasks();
+        return;
+      } catch (localErr) {
+        console.error(`Local MongoDB fallback connection error: ${localErr.message}`);
+      }
     }
 
-    // Database migration: Update existing users still carrying the legacy
-    // StoreOfficer/SiteStorekeeper role names to their canonical equivalents
-    // (MainStoreOfficer/SiteStoreOfficer). This must run so these users keep
-    // matching Permission entries after fixStaleRoleNames() consolidates the
-    // Role/Permission documents above - otherwise they'd be left pointing at
-    // a role name with no permissions at all.
-    try {
-      const User = (await import('../models/userModel.js')).default;
-      for (const [oldName, newName] of ROLE_RENAMES) {
-        const result = await User.updateMany({ role: oldName }, { role: newName });
-        if (result.modifiedCount > 0) {
-          console.log(`[Migration] Migrated ${result.modifiedCount} users from ${oldName} to ${newName} in userModel.`);
-        }
-      }
-    } catch (err) {
-      console.error('[Migration Error - userModel store role rename]:', err.message);
-    }
-  } catch (error) {
-    console.error(`MongoDB connection error: ${error.message}`);
     console.warn(`Please ensure MongoDB is running locally on 127.0.0.1:27017, or configure MONGO_URI in your backend/.env file.`);
     console.log('Retrying MongoDB connection in 5 seconds...');
     setTimeout(connectDB, 5000);

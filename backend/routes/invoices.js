@@ -9,7 +9,8 @@ import {
   approveInvoicePayment,
   rejectInvoicePayment,
   markInvoicePaid,
-  reuploadInvoiceFile
+  reuploadInvoiceFile,
+  deleteInvoiceFile
 } from '../controllers/invoiceController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
@@ -49,7 +50,9 @@ router.route('/')
 
 router.get('/:id', protect, getInvoiceById);
 router.put('/:id/reupload', protect, uploadInvoiceFile.single('file'), reuploadInvoiceFile);
+router.delete('/:id/file', protect, deleteInvoiceFile);
 router.put('/:id/approve-payment', protect, checkPermission('Approve Payment'), approveInvoicePayment);
+
 router.put('/:id/reject-payment', protect, checkPermission('Approve Payment'), rejectInvoicePayment);
 router.put('/:id/mark-paid', protect, checkPermission('Approve Payment'), markInvoicePaid);
 

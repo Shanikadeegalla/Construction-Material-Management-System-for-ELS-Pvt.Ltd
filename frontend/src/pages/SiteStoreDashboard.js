@@ -29,6 +29,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const setError = useToastSetter(setErrorState, 'error');
   const [success, setSuccessState] = useState('');
   const setSuccess = useToastSetter(setSuccessState, 'success');
+  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
 
   // Site Inventory screen filters
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
@@ -53,7 +54,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   // Phase 9 - Material Issuance Note (MIN) States - the Main Store request/receipt
   // lifecycle (Pending/Approved/Issued/Received), unrelated to Material Issue & Usage below.
   const [mins, setMins] = useState([]);
-  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
 
   // Request Materials Form State (free-form Material Transfer Request, not
   // gated by an approved BOM)
@@ -835,9 +835,9 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                 {/* Notification Bell */}
                 <div style={{ position: 'relative', cursor: 'pointer', display: 'flex', alignItems: 'center', width: '38px', height: '38px', borderRadius: '50%', border: '1px solid #e2e8f0', justifyContent: 'center', background: '#ffffff' }} onClick={() => setShowNotifications(!showNotifications)}>
-                  <span style={{ fontSize: '18px' }}>🔔</span>
+                  <span className={unreadCount > 0 ? 'notification-bell-shake' : ''} style={{ fontSize: '18px' }}>🔔</span>
                   {unreadCount > 0 && (
-                    <span style={{
+                    <span className="notification-badge-vibrate" style={{
                       position: 'absolute',
                       top: '2px',
                       right: '2px',
@@ -1911,7 +1911,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
           </div>
         </div>
       )}
-
       {/* Transferred Materials popup - opened via "View" on a Material Transfer Note row */}
       {viewTransfer && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }} onClick={() => setViewTransfer(null)}>

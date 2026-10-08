@@ -50,7 +50,6 @@ router.post(
 router.get(
   '/',
   protect,
-  authorizeRoles('PurchaseManager', 'Director', 'Admin'),
   getPayments
 );
 

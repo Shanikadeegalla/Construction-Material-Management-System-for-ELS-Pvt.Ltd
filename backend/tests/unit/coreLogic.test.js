@@ -227,4 +227,37 @@ describe('CMMS Core Business Logic Unit Tests', () => {
       expect(result.length).toBe(45);
     });
   });
+
+  describe('8. Stripe Checkout Session Options', () => {
+    test('should include payment_method_types: ["card"] to disable Apple Pay and digital wallets', () => {
+      const buildCheckoutPayload = (invoice, po, supplierName, currency, frontendUrl) => ({
+        mode: 'payment',
+        payment_method_types: ['card'],
+        wallet_options: { link: { display: 'never' } },
+        line_items: [{
+          price_data: {
+            currency: currency.toLowerCase(),
+            product_data: {
+              name: `Invoice ${invoice.invoiceNumber}`,
+              description: `PO ${po.poNumber} - Supplier: ${supplierName}`
+            },
+            unit_amount: Math.round(Number(invoice.amount) * 100)
+          },
+          quantity: 1
+        }],
+        metadata: {
+          invoiceId: String(invoice._id),
+          purchaseOrderId: String(po._id),
+          supplierId: supplierName
+        },
+        success_url: `${frontendUrl}/payments/success?session_id={CHECKOUT_SESSION_ID}&po=${po._id}`,
+        cancel_url: `${frontendUrl}/payments/cancel?po=${po._id}`
+      });
+
+      const payload = buildCheckoutPayload({ _id: 'inv1', invoiceNumber: 'INV-001', amount: 1000 }, { _id: 'po1', poNumber: 'PO-001' }, 'Test Supplier', 'LKR', 'http://localhost:3000');
+      expect(payload.payment_method_types).toEqual(['card']);
+      expect(payload.payment_method_types).not.toContain('apple_pay');
+      expect(payload.wallet_options.link.display).toBe('never');
+    });
+  });
 });

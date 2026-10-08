@@ -6,6 +6,7 @@ import { formatDate, formatDateTime } from '../utils/dateUtils';
 import { API_BASE } from '../config';
 import { useToast } from '../context/ToastContext';
 import Pagination, { usePagination } from '../components/Pagination';
+import { getAuthHeaders, fetchWithAuth } from '../utils/authUtils';
 
 const num = (v) => Number(v) || 0;
 const money = (v) => num(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -65,16 +66,13 @@ function ReportsCenter({ tabs }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
 
-  const getHeaders = () => {
-    const token = JSON.parse(localStorage.getItem('user'))?.token;
-    return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-  };
+  const getHeaders = () => getAuthHeaders();
 
   // Fetches one endpoint and unwraps the list, tolerating both the
   // { success, data } envelope and bare-array responses used across the API.
   const getList = async (path, key = 'data') => {
-    const res = await fetch(`${API_BASE}${path}`, { headers: getHeaders() });
-    const body = await res.json();
+    const res = await fetchWithAuth(path);
+    const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.message || `Failed to load ${path}`);
     if (Array.isArray(body)) return body;
     return Array.isArray(body[key]) ? body[key] : [];

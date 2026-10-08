@@ -8,8 +8,9 @@ import DirectorDashboard from './pages/DirectorDashboard';
 import SiteStoreDashboard from './pages/SiteStoreDashboard';
 import PaymentSuccess from './pages/PaymentSuccess';
 import PaymentCancel from './pages/PaymentCancel';
-import { API_BASE } from './config';
 import { ToastProvider } from './context/ToastContext';
+import { API_BASE } from './config';
+import { isValidJwtFormat } from './utils/authUtils';
 
 function MainApp() {
   const [view, setView] = useState('login');
@@ -24,6 +25,17 @@ function MainApp() {
   const API_AUTH_URL = `${API_BASE}/api/auth`;
 
   useEffect(() => {
+    // Listen for global unauthorized / token failure events
+    const handleUnauthorized = (e) => {
+      localStorage.removeItem('user');
+      localStorage.removeItem('token');
+      setUser(null);
+      setView('login');
+      setError(e?.detail?.message || 'Session expired or not authorized. Please sign in again.');
+    };
+
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+
     // Check dark mode preference
     const isDarkMode = localStorage.getItem('cmms_dark_mode') === 'true';
     if (isDarkMode) {
@@ -42,14 +54,29 @@ function MainApp() {
     if (storedUser) {
       try {
         const parsed = JSON.parse(storedUser);
-        setUser(parsed);
-        if (!path.startsWith('/payments/')) {
-          setView('dashboard');
+        const token = parsed?.token || localStorage.getItem('token');
+        if (token && !isValidJwtFormat(token)) {
+          console.warn('Stored session token is malformed. Purging stale session.');
+          localStorage.removeItem('user');
+          localStorage.removeItem('token');
+          setUser(null);
+          setView('login');
+          setError('Session token was invalid or expired. Please sign in again.');
+        } else {
+          setUser(parsed);
+          if (!path.startsWith('/payments/')) {
+            setView('dashboard');
+          }
         }
       } catch (err) {
         localStorage.removeItem('user');
+        localStorage.removeItem('token');
       }
     }
+
+    return () => {
+      window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    };
   }, []);
 
   const handleVerifySuccess = (userData) => {
@@ -120,10 +147,10 @@ function MainApp() {
       {success && <div style={styles.successAlert}>{success}</div>}
       <form onSubmit={handleLogin} style={styles.form}>
         <div style={styles.formGroup}>
-          <label style={styles.label}>Email Address</label>
+          <label style={styles.label}>Email Address / Username / Employee ID</label>
           <div className="els-input-wrap">
             <Mail size={16} className="els-input-icon" />
-            <input type="email" placeholder="enter your email" value={loginEmail}
+            <input type="text" placeholder="enter email or username (e.g. director@els.com)" value={loginEmail}
               onChange={(e) => setLoginEmail(e.target.value)} className="els-input" style={styles.loginInput} required />
           </div>
         </div>

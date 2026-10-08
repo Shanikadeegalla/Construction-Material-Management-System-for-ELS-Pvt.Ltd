@@ -18,12 +18,12 @@ const styles = {
     marginRight: '8px'
   }),
   card: { background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' },
-  th: { padding: '14px 16px', textAlign: 'left', fontSize: '13px' },
-  td: { padding: '14px 16px', fontSize: '13px', color: '#333' },
-  label: { display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px', fontWeight: '600' },
-  input: { width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box' },
-  infoLabel: { fontSize: '12px', color: '#666', fontWeight: '600', marginBottom: '4px' },
-  infoValue: { fontSize: '14px', color: '#0d1b4b', fontWeight: '500' }
+  th: { padding: '14px 16px', textAlign: 'left', fontSize: '13px', color: '#0d1b4b', fontWeight: '700' },
+  td: { padding: '14px 16px', fontSize: '13px', color: '#1e293b' },
+  label: { display: 'block', fontSize: '12px', color: '#475569', marginBottom: '4px', fontWeight: '600' },
+  input: { width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', boxSizing: 'border-box', color: '#1e293b' },
+  infoLabel: { fontSize: '12px', color: '#475569', fontWeight: '600', marginBottom: '4px' },
+  infoValue: { fontSize: '14px', color: '#0f172a', fontWeight: '600' }
 };
 
 const statusBadge = (status) => {

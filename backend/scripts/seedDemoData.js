@@ -17,26 +17,9 @@ const seedDemoData = async () => {
 
     // 1. Seed Demo Users
     console.log('\n👤 Seeding Demo Users...');
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash('Password123!', salt);
-
-    const demoUsers = [
-      { name: 'System Admin', email: 'admin@elslanka.com', role: 'Admin', employeeId: 'EMP-0001' },
-      { name: 'Executive Director', email: 'director@elslanka.com', role: 'Director', employeeId: 'EMP-0002' },
-      { name: 'Project Manager', email: 'pm@elslanka.com', role: 'ProjectManager', employeeId: 'EMP-0003' },
-      { name: 'Purchase Manager', email: 'purchase@elslanka.com', role: 'PurchaseManager', employeeId: 'EMP-0004' },
-      { name: 'Main Store Officer', email: 'mainstore@elslanka.com', role: 'MainStoreOfficer', employeeId: 'EMP-0005' },
-      { name: 'Site Store Officer', email: 'sitestore@elslanka.com', role: 'SiteStoreOfficer', employeeId: 'EMP-0006' }
-    ];
-
-    for (const u of demoUsers) {
-      await User.findOneAndUpdate(
-        { email: u.email },
-        { ...u, password: hashedPassword, isVerified: true, status: true },
-        { upsert: true, new: true }
-      );
-      console.log(`  ✓ User [${u.role}] ${u.email} ready.`);
-    }
+    const { ensureDefaultUsersExist } = await import('./verifyAndSeedUsers.js');
+    await ensureDefaultUsersExist();
+    console.log('  ✓ Canonical test users synchronized.');
 
     // 2. Seed Item Master Materials
     console.log('\n📦 Seeding Item Master...');
@@ -131,14 +114,13 @@ const seedDemoData = async () => {
     console.log('\n=================================================');
     console.log('🎉 DEMO DATA SEEDING COMPLETE FOR ELS VIVA DEMO!');
     console.log('=================================================');
-    console.log('Default Password for all seeded users: Password123!');
     console.log('Accounts ready:');
-    console.log('  • Admin:            admin@elslanka.com');
-    console.log('  • Director:         director@elslanka.com');
-    console.log('  • Project Manager:  pm@elslanka.com');
-    console.log('  • Purchase Manager: purchase@elslanka.com');
-    console.log('  • Main Store:       mainstore@elslanka.com');
-    console.log('  • Site Store:       sitestore@elslanka.com');
+    console.log('  • Admin:            adminO@els.com / admin123');
+    console.log('  • Director:         director@els.com / dir123');
+    console.log('  • Project Manager:  pm@els.com / pm123456');
+    console.log('  • Purchase Manager: PurchaseManager@els.com / Purchase@123');
+    console.log('  • Main Store:       store@els.com / store123');
+    console.log('  • Site Store:       sitestore@els.com / site123');
     console.log('=================================================\n');
 
     process.exit(0);
