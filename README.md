@@ -72,13 +72,13 @@ cd backend
 npm run seed:demo
 ```
 
-### Seeded Viva Demonstration Accounts (Default Password: `Password123!`)
-- **Admin**: `admin@elslanka.com`
-- **Director**: `director@elslanka.com`
-- **Project Manager**: `pm@elslanka.com`
-- **Purchase Manager**: `purchase@elslanka.com`
-- **Main Store Officer**: `mainstore@elslanka.com`
-- **Site Store Officer**: `sitestore@elslanka.com`
+### Seeded Demonstration Accounts
+- **Admin**: `adminO@els.com` / `admin123`
+- **Director**: `director@els.com` / `dir123`
+- **Project Manager**: `pm@els.com` / `pm123456`
+- **Purchase Manager**: `PurchaseManager@els.com` / `Purchase@123`
+- **Main Store Officer**: `store@els.com` / `store123`
+- **Site Store Officer**: `sitestore@els.com` / `site123`
 
 ---
 

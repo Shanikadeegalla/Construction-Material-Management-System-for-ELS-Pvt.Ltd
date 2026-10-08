@@ -1,6 +1,15 @@
 import { API_BASE } from '../config';
 
 /**
+ * Validates whether a token string has basic standard JWT format (3 dot-separated parts).
+ */
+export const isValidJwtFormat = (token) => {
+  if (typeof token !== 'string' || !token.trim()) return false;
+  const parts = token.trim().split('.');
+  return parts.length === 3 && parts.every(p => p.length > 0);
+};
+
+/**
  * Extracts authentication token from localStorage and returns standard request headers.
  */
 export const getAuthHeaders = (extraHeaders = {}) => {
@@ -25,7 +34,13 @@ export const getAuthHeaders = (extraHeaders = {}) => {
   };
 
   if (token && token !== 'null' && token !== 'undefined') {
-    headers['Authorization'] = `Bearer ${token}`;
+    if (!isValidJwtFormat(token)) {
+      console.warn('Malformed or invalid JWT token found in localStorage. Purging stale session.');
+      localStorage.removeItem('user');
+      localStorage.removeItem('token');
+    } else {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
   }
 
   return headers;

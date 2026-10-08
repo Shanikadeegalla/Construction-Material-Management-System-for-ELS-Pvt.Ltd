@@ -115,7 +115,7 @@ const connectDB = async () => {
   const localUri = 'mongodb://127.0.0.1:27017/ConstructionDB';
 
   try {
-    const conn = await mongoose.connect(primaryUri, { serverSelectionTimeoutMS: 5000 });
+    const conn = await mongoose.connect(primaryUri, { serverSelectionTimeoutMS: 3000, socketTimeoutMS: 5000 });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
     await runPostConnectTasks();
     return;
@@ -125,7 +125,7 @@ const connectDB = async () => {
     if (primaryUri !== localUri) {
       try {
         console.log(`Attempting fallback connection to local MongoDB: ${localUri}`);
-        const conn = await mongoose.connect(localUri, { serverSelectionTimeoutMS: 5000 });
+        const conn = await mongoose.connect(localUri, { serverSelectionTimeoutMS: 3000, socketTimeoutMS: 5000 });
         console.log(`MongoDB Connected (Local Fallback): ${conn.connection.host}`);
         await runPostConnectTasks();
         return;
