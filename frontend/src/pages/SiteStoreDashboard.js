@@ -806,6 +806,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   // Site Inventory screen stats
   const sitePreOrderItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'PRE_ORDER').length;
   const siteCriticalItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'CRITICAL').length;
+  const now = new Date();
   const inTransitTransfers = React.useMemo(() => {
     const list = transferNotes.filter(t => t.status === 'In Transit' || t.status === 'Dispatched' || t.status === 'Dispatched / In-Transit');
     return list.length > 0 ? list : FALLBACK_IN_TRANSIT;
