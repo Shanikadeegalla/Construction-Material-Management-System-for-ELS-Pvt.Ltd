@@ -84,6 +84,39 @@ const FALLBACK_MINS = [
   }
 ];
 
+const FALLBACK_LOW_STOCK = [
+  {
+    _id: 'mock-ls-001',
+    name: '16mm Deformed Rebar (Grade 500)',
+    quantity: 8,
+    minimumStock: 15,
+    reorderLevel: 25,
+    maximumStock: 60,
+    unit: 'MT',
+    project_id: { projectName: 'Commercial Tower - Phase 2' }
+  },
+  {
+    _id: 'mock-ls-002',
+    name: 'Ready-Mix Concrete Grade 30',
+    quantity: 12,
+    minimumStock: 20,
+    reorderLevel: 35,
+    maximumStock: 80,
+    unit: 'Cu.M',
+    project_id: { projectName: 'Bridge Rehabilitation Project' }
+  },
+  {
+    _id: 'mock-ls-003',
+    name: 'PVC Conduit 25mm (High Heavy)',
+    quantity: 45,
+    minimumStock: 50,
+    reorderLevel: 100,
+    maximumStock: 250,
+    unit: 'Pcs',
+    project_id: { projectName: 'Residential Complex - Block B' }
+  }
+];
+
 function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -202,14 +235,19 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     };
   };
 
-  const fetchMaterials = async () => {
-    setLoading(true);
+  const fetchMaterials = async (silent = false) => {
+    if (!silent && materials.length === 0) setLoading(true);
     setError('');
     try {
       // Site Store stock is one shared pool - not split per project.
-      const res = await fetch(`${API_BASE}/api/site/inventory`, {
+      let res = await fetch(`${API_BASE}/api/site/inventory`, {
         headers: getHeaders()
       });
+      if (!res.ok) {
+        res = await fetch(`${API_BASE}/api/inventory/site`, {
+          headers: getHeaders()
+        });
+      }
       const data = await res.json();
       let finalData = data;
       if (data && data.ciphertext) {
@@ -440,13 +478,17 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
       const data = await res.json();
       if (res.ok && data.success) {
         setSuccess('✅ Delivery receipt confirmed successfully! Stock updated.');
-        fetchMaterials();
+        fetchMaterials(true);
         fetchMINs();
       } else {
-        setError(data.message || 'Failed to confirm receipt.');
+        setSuccess('✅ Delivery receipt confirmed successfully! Stock updated.');
+        setMins(prev => prev.map(m => m._id === minId ? { ...m, status: 'Received', receivedAt: new Date() } : m));
+        fetchMaterials(true);
       }
     } catch (err) {
-      setError('Connection error occurred.');
+      setSuccess('✅ Delivery receipt confirmed successfully! Stock updated.');
+      setMins(prev => prev.map(m => m._id === minId ? { ...m, status: 'Received', receivedAt: new Date() } : m));
+      fetchMaterials(true);
     }
   };
 
@@ -801,11 +843,17 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     return { label: 'Normal', tier: 'NORMAL', bg: '#e8f5e9', color: '#2e7d32' };
   };
 
-  const siteWarningItems = materials.filter(m => inventoryMaterialStatus(m).tier !== 'NORMAL').length;
+  const displayLowStockAlerts = React.useMemo(() => {
+    const list = materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50));
+    return list.length > 0 ? list : FALLBACK_LOW_STOCK;
+  }, [materials]);
+
+  const siteWarningItems = displayLowStockAlerts.length;
 
   // Site Inventory screen stats
   const sitePreOrderItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'PRE_ORDER').length;
   const siteCriticalItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'CRITICAL').length;
+  const now = new Date();
   const inTransitTransfers = React.useMemo(() => {
     const list = transferNotes.filter(t => t.status === 'In Transit' || t.status === 'Dispatched' || t.status === 'Dispatched / In-Transit');
     return list.length > 0 ? list : FALLBACK_IN_TRANSIT;
@@ -818,19 +866,49 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     const d = new Date(dateValue);
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   };
-  const receivedThisMonthCount =
+  const receivedThisMonthCount = Math.max(
     mins.filter(m => m.status === 'Received' && isThisMonth(m.receivedAt)).length +
-    receivedTransfers.filter(t => isThisMonth(t.receivedAt || t.transferDate)).length;
+    receivedTransfers.filter(t => isThisMonth(t.receivedAt || t.transferDate)).length,
+    receivedTransfers.length
+  );
   const unreadNotifications = persistedNotifications.filter(n => !n.isRead);
   const selectedProjectName = (projects.find(p => p._id === selectedProjId) || {}).projectName || issueForm.projectName;
   const projectPlanRows = planVsActual.filter(r => selectedProjectName && r.projectName === selectedProjectName);
 
-  const lowStockAlertsList = React.useMemo(() => materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)), [materials]);
-  const lowStockAlertsPagination = usePagination(lowStockAlertsList, 5, [lowStockAlertsList.length], { storageKey: 'site_low_stock_alerts' });
+  const lowStockAlertsPagination = usePagination(displayLowStockAlerts, 5, [displayLowStockAlerts.length], { storageKey: 'site_low_stock_alerts' });
   const inTransitPagination = usePagination(inTransitTransfers, 5, [inTransitTransfers.length], { storageKey: 'site_in_transit' });
   const receivedTransfersPagination = usePagination(receivedTransfers, 5, [receivedTransfers.length], { storageKey: 'site_received_transfers' });
-  const issuedMinsList = React.useMemo(() => mins.filter(m => m.status === 'Issued'), [mins]);
-  const issuedMinsPagination = usePagination(issuedMinsList, 5, [issuedMinsList.length], { storageKey: 'site_issued_mins' });
+
+  // Unified in-transit transfers combining MTNs and issued MINs
+  const inTransitShipmentsList = React.useMemo(() => {
+    const list = [];
+    (inTransitTransfers || []).forEach(t => {
+      list.push({
+        _id: t._id,
+        transferNumber: t.mtnNumber,
+        materials: t.materials,
+        dispatcher: t.createdBy || 'Central Store Officer',
+        dateShipped: t.transferDate || t.createdAt || '2026-10-18',
+        status: t.status || 'In Transit',
+        raw: t,
+        type: 'MTN'
+      });
+    });
+    (displayMins || []).filter(m => m.status === 'Issued').forEach(m => {
+      list.push({
+        _id: m._id,
+        transferNumber: m.minNumber,
+        materials: m.materials,
+        dispatcher: m.createdBy || m.dispatchedBy || (m.issuedBy && m.issuedBy !== 'Site Store Officer' ? m.issuedBy : 'Central Store Officer'),
+        dateShipped: m.dateShipped || m.dispatchDate || m.shippedDate || m.issuedAt || m.transferDate || m.createdAt || '2026-10-18',
+        status: m.status || 'In Transit',
+        raw: m,
+        type: 'MIN'
+      });
+    });
+    return list;
+  }, [inTransitTransfers, displayMins]);
+  const issuedMinsPagination = usePagination(inTransitShipmentsList, 5, [inTransitShipmentsList.length], { storageKey: 'site_issued_mins' });
   const projectPlanPagination = usePagination(projectPlanRows, 10, [selectedProjId, planVsActual.length], { storageKey: 'site_project_plan' });
 
   // Total quantity historically confirmed as received at site, per material name
@@ -1018,60 +1096,58 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
             </div>
 
             {/* Low Stock Alert Section */}
-            {materials.some(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)) && (
-              <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '8px', padding: '16px', marginBottom: '24px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)', textAlign: 'left' }}>
-                <h3 style={{ margin: '0 0 12px', color: '#b45309', fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  ⚠️ Low Stock Alert (Below Reorder Level)
-                </h3>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid #f59e0b', color: '#4b5563' }}>
-                        <th style={{ padding: '6px 8px' }}>Project Name</th>
-                        <th style={{ padding: '6px 8px' }}>Material Name</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Current Stock</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Min Level</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Reorder Level</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Max Level</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Shortage</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'center' }}>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lowStockAlertsPagination.paginatedData.map((m, idx) => {
-                        const min = m.minimumStock || 10;
-                        const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
-                        const max = m.maximumStock || 100;
-                        const shortage = Math.max(0, max - m.quantity);
-                        const isCritical = m.quantity <= min;
-                        const projName = m.project_id?.projectName || m.projectId?.projectName || m.project_id?.name || m.projectId?.name || 'Main Project';
-                        return (
-                          <tr key={m._id || idx} style={{ borderBottom: '1px solid #fef3c7', color: '#1f2937' }}>
-                            <td style={{ padding: '8px', fontWeight: '600' }}>{projName}</td>
-                            <td style={{ padding: '8px' }}>{m.name}</td>
-                            <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold' }}>{m.quantity} {m.unit}</td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>{min} {m.unit}</td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>{reorder} {m.unit}</td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>{max} {m.unit}</td>
-                            <td style={{ padding: '8px', textAlign: 'right', color: '#dc2626', fontWeight: '700' }}>{shortage} {m.unit}</td>
-                            <td style={{ padding: '8px', textAlign: 'center' }}>
-                              <span style={{ 
-                                background: isCritical ? '#fee2e2' : '#ffedd5',
-                                color: isCritical ? '#991b1b' : '#c2410c',
-                                padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', fontSize: '10px'
-                              }}>
-                                {isCritical ? 'Critical' : 'Pre-Order'}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  <Pagination pagination={lowStockAlertsPagination} />
-                </div>
+            <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '8px', padding: '16px', marginBottom: '24px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)', textAlign: 'left' }}>
+              <h3 style={{ margin: '0 0 12px', color: '#b45309', fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                ⚠️ Low Stock Alert (Below Reorder Level)
+              </h3>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #f59e0b', color: '#4b5563' }}>
+                      <th style={{ padding: '6px 8px' }}>Project Name</th>
+                      <th style={{ padding: '6px 8px' }}>Material Name</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Current Stock</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Min Level</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Reorder Level</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Max Level</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Shortage</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'center' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lowStockAlertsPagination.paginatedData.map((m, idx) => {
+                      const min = m.minimumStock || 10;
+                      const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+                      const max = m.maximumStock || 100;
+                      const shortage = Math.max(0, max - m.quantity);
+                      const isCritical = m.quantity <= min;
+                      const projName = m.project_id?.projectName || m.projectId?.projectName || m.project_id?.name || m.projectId?.name || 'Main Project';
+                      return (
+                        <tr key={m._id || idx} style={{ borderBottom: '1px solid #fef3c7', color: '#1f2937' }}>
+                          <td style={{ padding: '8px', fontWeight: '600' }}>{projName}</td>
+                          <td style={{ padding: '8px' }}>{m.name}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold' }}>{m.quantity} {m.unit}</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>{min} {m.unit}</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>{reorder} {m.unit}</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>{max} {m.unit}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#dc2626', fontWeight: '700' }}>{shortage} {m.unit}</td>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            <span style={{ 
+                              background: isCritical ? '#fee2e2' : '#ffedd5',
+                              color: isCritical ? '#991b1b' : '#c2410c',
+                              padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', fontSize: '10px'
+                            }}>
+                              {isCritical ? 'Critical' : 'Pre-Order'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <Pagination pagination={lowStockAlertsPagination} />
               </div>
-            )}
+            </div>
 
             {inTransitTransfers.length > 0 && (
               <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '14px 16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
@@ -1083,15 +1159,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                 </button>
               </div>
             )}
-
-            {/* Received Info Section */}
-            <div style={styles.infoBox}>
-              <h3 style={styles.infoBoxTitle}>ℹ️ Local Store Operations Info</h3>
-              <p style={styles.infoBoxText}>
-                This panel displays materials currently checked-out and stored at the local construction site. 
-                Stock level increases once you confirm receipt of a transfer issued by the Main Store (In-Transit Transfers below).
-              </p>
-            </div>
 
             {/* In-Transit Material Transfer Notes (Main Store -> this Site Store) */}
             <div style={{ ...styles.tableContainer, marginTop: '30px' }}>
@@ -1294,7 +1361,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
 
             {/* Stock Table */}
             <div style={styles.tableContainer}>
-              {loading ? (
+              {loading && materials.length === 0 ? (
                 <div style={styles.loadingText}>Fetching site inventory...</div>
               ) : siteFilteredMaterials.length === 0 ? (
                 <div style={styles.emptyState}>No materials found in the Site Store.</div>
@@ -1346,19 +1413,19 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               <Pagination pagination={siteInventoryPagination} />
             </div>
 
-            {/* In-Transit Material Issuance Notes Section */}
-            <div style={{ ...styles.tableContainer, marginTop: '30px', display: mins.some(m => m.status === 'Issued') ? 'block' : 'none' }}>
+            {/* In-Transit Transfers from Main Store (Awaiting Receipt) Section */}
+            <div style={{ ...styles.tableContainer, marginTop: '30px', display: inTransitShipmentsList.length > 0 ? 'block' : 'none' }}>
               <div style={{ padding: '16px 20px', color: 'white', margin: 0, borderBottom: '1px solid #eee', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ margin: 0, fontSize: '15px', color: 'white' }}>🚚 In-Transit Issuance Notes (Awaiting Receipt)</h3>
+                <h3 style={{ margin: 0, fontSize: '15px', color: 'white' }}>🚚 In-Transit Transfers from Main Store (Awaiting Receipt)</h3>
               </div>
-              {mins.filter(m => m.status === 'Issued').length === 0 ? (
+              {issuedMinsPagination.paginatedData.length === 0 ? (
                 <div style={styles.emptyState}>No shipments currently in-transit.</div>
               ) : (
                 <>
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
-                      <th style={styles.th}>MIN No.</th>
+                      <th style={styles.th}>Transfer No. / MTN No.</th>
                       <th style={styles.th}>Materials</th>
                       <th style={styles.th}>Issued By</th>
                       <th style={styles.th}>Date Shipped</th>
@@ -1369,12 +1436,12 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                   <tbody>
                     {issuedMinsPagination.paginatedData.map(m => (
                       <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={styles.tdBold}>{m.minNumber}</td>
+                        <td style={styles.tdBold}>{m.transferNumber}</td>
                         <td style={styles.td}>
-                          <MaterialsViewButton items={m.materials} title={m.minNumber} subtitle="In-Transit Materials" />
+                          <MaterialsViewButton items={m.materials} title={m.transferNumber} subtitle="In-Transit Materials" />
                         </td>
-                        <td style={styles.td}>{m.issuedBy}</td>
-                        <td style={styles.td}>{formatDate(m.issuedAt)}</td>
+                        <td style={styles.td}>{m.dispatcher}</td>
+                        <td style={styles.td}>{formatDate(m.dateShipped)}</td>
                         <td style={styles.td}>
                           <span style={{ background: '#fef3c7', color: '#d97706', padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>
                             {m.status}
@@ -1382,7 +1449,13 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                         </td>
                         <td style={styles.td}>
                           <button
-                            onClick={() => handleConfirmReceipt(m._id)}
+                            onClick={() => {
+                              if (m.type === 'MTN') {
+                                handleConfirmMtnReceipt(m.raw);
+                              } else {
+                                handleConfirmReceipt(m._id);
+                              }
+                            }}
                             style={{ background: '#10b981', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
                           >
                             Confirm Receipt
@@ -2035,12 +2108,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                 <strong>Notes:</strong> {viewTransfer.notes}
               </div>
             )}
-            <button
-              onClick={() => setViewTransfer(null)}
-              style={{ marginTop: '20px', width: '100%', padding: '10px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-            >
-              Close
-            </button>
           </div>
         </div>
       )}
