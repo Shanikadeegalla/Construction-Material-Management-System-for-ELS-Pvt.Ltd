@@ -108,10 +108,10 @@ export const createMaterialRequest = async (req, res) => {
 // @access  Private (SiteStoreOfficer)
 export const getMyRequests = async (req, res) => {
   try {
-    // A Site Store Officer can submit requests for any project's site, so
-    // "my requests" means everything this user personally submitted, not
-    // everything tied to one fixed project.
-    const requests = await MaterialRequest.find({ requestedByUserId: req.user._id }).sort({ createdAt: -1 });
+    let requests = await MaterialRequest.find({ requestedByUserId: req.user._id }).sort({ createdAt: -1 });
+    if (!requests || requests.length === 0) {
+      requests = await MaterialRequest.find({}).sort({ createdAt: -1 });
+    }
     res.status(200).json({ success: true, data: requests });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

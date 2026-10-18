@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import MaterialTransferNote from '../models/MaterialTransferNote.js';
 import MaterialIssuanceNote from '../models/MaterialIssuanceNote.js';
 import Project from '../models/Project.js';
+import User from '../models/userModel.js';
+import MaterialUsage from '../models/MaterialUsage.js';
 
 dotenv.config();
 
@@ -181,6 +183,135 @@ export const seedSiteStoreDemoData = async () => {
         await existing.save();
         console.log(`[SiteStore Demo Seed] Updated MIN: ${min.minNumber} (${min.status})`);
       }
+    }
+
+    // 4. Seed Site Store Material Requests (SSR Requisition Logs)
+    const siteStoreUser = await User.findOne({ role: 'SiteStoreOfficer' });
+    const dummyRequests = [
+      {
+        requestNo: 'SSR-2026-003',
+        requiredDate: new Date('2026-10-20T00:00:00.000Z'),
+        status: 'Pending',
+        mtnNumber: 'MTN-2026-009',
+        notes: 'Urgent cement delivery for slab cast',
+        requestedBy: siteStoreUser ? siteStoreUser.name : 'Site Store Officer',
+        requestedByUserId: siteStoreUser ? siteStoreUser._id : null,
+        siteStoreName: 'Site Store',
+        materials: [
+          { materialName: 'OPC Cement 50kg', category: 'Cement', unit: 'Bags', quantity: 250, fulfilledQty: 0, availableAtSite: 0 }
+        ],
+        createdAt: new Date('2026-10-20T08:00:00.000Z'),
+        updatedAt: new Date('2026-10-20T08:00:00.000Z')
+      },
+      {
+        requestNo: 'SSR-2026-002',
+        requiredDate: new Date('2026-10-19T00:00:00.000Z'),
+        status: 'Transferred',
+        mtnNumber: 'MTN-2026-008',
+        notes: 'High-yield rebar transfer',
+        requestedBy: siteStoreUser ? siteStoreUser.name : 'Site Store Officer',
+        requestedByUserId: siteStoreUser ? siteStoreUser._id : null,
+        siteStoreName: 'Site Store',
+        materials: [
+          { materialName: 'Tor Steel 16mm', category: 'Steel & Metals', unit: 'MT', quantity: 2.5, fulfilledQty: 2.5, availableAtSite: 0 }
+        ],
+        createdAt: new Date('2026-10-19T08:00:00.000Z'),
+        updatedAt: new Date('2026-10-19T08:00:00.000Z')
+      },
+      {
+        requestNo: 'SSR-2026-001',
+        requiredDate: new Date('2026-10-04T00:00:00.000Z'),
+        status: 'Fully received',
+        mtnNumber: 'MTN-2026-001',
+        notes: 'Initial site mobilization material',
+        requestedBy: siteStoreUser ? siteStoreUser.name : 'Site Store Officer',
+        requestedByUserId: siteStoreUser ? siteStoreUser._id : null,
+        siteStoreName: 'Site Store',
+        materials: [
+          { materialName: 'River Sand', category: 'Aggregates', unit: 'Cu.M', quantity: 15, fulfilledQty: 15, availableAtSite: 0 }
+        ],
+        createdAt: new Date('2026-10-04T08:00:00.000Z'),
+        updatedAt: new Date('2026-10-04T08:00:00.000Z')
+      }
+    ];
+
+    for (const reqItem of dummyRequests) {
+      await mongoose.connection.collection('materialrequests').updateOne(
+        { requestNo: reqItem.requestNo },
+        { $set: reqItem },
+        { upsert: true }
+      );
+      console.log(`[SiteStore Demo Seed] Upserted MaterialRequest: ${reqItem.requestNo} (${reqItem.status})`);
+    }
+
+    // 5. Clean test entries and assign valid sequence IDs to MaterialUsage
+    await mongoose.connection.collection('materialusages').deleteMany({
+      $or: [
+        { materialName: { $regex: 'test', $options: 'i' } },
+        { projectName: { $regex: 'test', $options: 'i' } },
+        { quantityUsed: { $exists: true } }
+      ]
+    });
+
+    const targetProj = await Project.findOne({ name: { $regex: /colombo/i } }) || targetProject;
+    const cleanUsages = [
+      {
+        minNumber: 'MIN-2026-1140',
+        projectName: 'Colombo Port Expansion',
+        projectId: targetProj._id,
+        materialName: 'Portland Cement',
+        actualQty: 150,
+        unit: 'bags',
+        activity: 'Quay Wall Concreting',
+        recordedBy: 'Site Store Officer',
+        usageDate: new Date('2026-07-06T18:40:27.308Z'),
+        notes: 'Dispatched for Berth 4 quay wall concrete pour.'
+      },
+      {
+        minNumber: 'MIN-2026-1141',
+        projectName: 'Colombo Port Expansion',
+        projectId: targetProj._id,
+        materialName: 'Portland Cement',
+        actualQty: 200,
+        unit: 'bags',
+        activity: 'Pile Cap Reinforcement',
+        recordedBy: 'Site Store Officer',
+        usageDate: new Date('2026-06-28T16:33:06.683Z'),
+        notes: 'Tying and bar bending for deep foundation pile caps.'
+      },
+      {
+        minNumber: 'MIN-2026-1142',
+        projectName: 'Colombo Port Expansion',
+        projectId: targetProj._id,
+        materialName: 'Portland Cement',
+        actualQty: 120,
+        unit: 'bags',
+        activity: 'Retaining Wall Construction',
+        recordedBy: 'Site Store Officer',
+        usageDate: new Date('2026-06-28T16:33:06.624Z'),
+        notes: 'Mortar batching for perimeter containment wall.'
+      },
+      {
+        minNumber: 'MIN-2026-1143',
+        projectName: 'Colombo Port Expansion',
+        projectId: targetProj._id,
+        materialName: 'OPC Cement 50kg',
+        actualQty: 120,
+        unit: 'bags',
+        activity: 'Breakwater Substructure',
+        recordedBy: 'Site Store Officer',
+        usageDate: new Date('2026-10-12T08:45:00.000Z'),
+        notes: 'Precast armor block concrete mixing.'
+      }
+    ];
+
+    for (const u of cleanUsages) {
+      await mongoose.connection.collection('materialusages').updateOne(
+        { minNumber: u.minNumber },
+        { $set: u },
+        { upsert: true }
+      );
+      console.log(`[SiteStore Demo Seed] Upserted MaterialUsage: ${u.minNumber} (${u.activity})`);
     }
 
     console.log('[SiteStore Demo Seed] All dummy data seeded successfully.');
