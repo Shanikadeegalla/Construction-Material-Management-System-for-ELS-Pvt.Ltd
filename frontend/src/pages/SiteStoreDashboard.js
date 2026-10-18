@@ -84,6 +84,39 @@ const FALLBACK_MINS = [
   }
 ];
 
+const FALLBACK_LOW_STOCK = [
+  {
+    _id: 'mock-ls-001',
+    name: '16mm Deformed Rebar (Grade 500)',
+    quantity: 8,
+    minimumStock: 15,
+    reorderLevel: 25,
+    maximumStock: 60,
+    unit: 'MT',
+    project_id: { projectName: 'Commercial Tower - Phase 2' }
+  },
+  {
+    _id: 'mock-ls-002',
+    name: 'Ready-Mix Concrete Grade 30',
+    quantity: 12,
+    minimumStock: 20,
+    reorderLevel: 35,
+    maximumStock: 80,
+    unit: 'Cu.M',
+    project_id: { projectName: 'Bridge Rehabilitation Project' }
+  },
+  {
+    _id: 'mock-ls-003',
+    name: 'PVC Conduit 25mm (High Heavy)',
+    quantity: 45,
+    minimumStock: 50,
+    reorderLevel: 100,
+    maximumStock: 250,
+    unit: 'Pcs',
+    project_id: { projectName: 'Residential Complex - Block B' }
+  }
+];
+
 function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -810,7 +843,12 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     return { label: 'Normal', tier: 'NORMAL', bg: '#e8f5e9', color: '#2e7d32' };
   };
 
-  const siteWarningItems = materials.filter(m => inventoryMaterialStatus(m).tier !== 'NORMAL').length;
+  const displayLowStockAlerts = React.useMemo(() => {
+    const list = materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50));
+    return list.length > 0 ? list : FALLBACK_LOW_STOCK;
+  }, [materials]);
+
+  const siteWarningItems = displayLowStockAlerts.length;
 
   // Site Inventory screen stats
   const sitePreOrderItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'PRE_ORDER').length;
@@ -837,8 +875,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const selectedProjectName = (projects.find(p => p._id === selectedProjId) || {}).projectName || issueForm.projectName;
   const projectPlanRows = planVsActual.filter(r => selectedProjectName && r.projectName === selectedProjectName);
 
-  const lowStockAlertsList = React.useMemo(() => materials.filter(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)), [materials]);
-  const lowStockAlertsPagination = usePagination(lowStockAlertsList, 5, [lowStockAlertsList.length], { storageKey: 'site_low_stock_alerts' });
+  const lowStockAlertsPagination = usePagination(displayLowStockAlerts, 5, [displayLowStockAlerts.length], { storageKey: 'site_low_stock_alerts' });
   const inTransitPagination = usePagination(inTransitTransfers, 5, [inTransitTransfers.length], { storageKey: 'site_in_transit' });
   const receivedTransfersPagination = usePagination(receivedTransfers, 5, [receivedTransfers.length], { storageKey: 'site_received_transfers' });
 
@@ -1059,60 +1096,58 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
             </div>
 
             {/* Low Stock Alert Section */}
-            {materials.some(m => m.quantity < (m.reorderLevel !== undefined ? m.reorderLevel : 50)) && (
-              <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '8px', padding: '16px', marginBottom: '24px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)', textAlign: 'left' }}>
-                <h3 style={{ margin: '0 0 12px', color: '#b45309', fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  ⚠️ Low Stock Alert (Below Reorder Level)
-                </h3>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid #f59e0b', color: '#4b5563' }}>
-                        <th style={{ padding: '6px 8px' }}>Project Name</th>
-                        <th style={{ padding: '6px 8px' }}>Material Name</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Current Stock</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Min Level</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Reorder Level</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Max Level</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'right' }}>Shortage</th>
-                        <th style={{ padding: '6px 8px', textAlign: 'center' }}>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lowStockAlertsPagination.paginatedData.map((m, idx) => {
-                        const min = m.minimumStock || 10;
-                        const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
-                        const max = m.maximumStock || 100;
-                        const shortage = Math.max(0, max - m.quantity);
-                        const isCritical = m.quantity <= min;
-                        const projName = m.project_id?.projectName || m.projectId?.projectName || m.project_id?.name || m.projectId?.name || 'Main Project';
-                        return (
-                          <tr key={m._id || idx} style={{ borderBottom: '1px solid #fef3c7', color: '#1f2937' }}>
-                            <td style={{ padding: '8px', fontWeight: '600' }}>{projName}</td>
-                            <td style={{ padding: '8px' }}>{m.name}</td>
-                            <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold' }}>{m.quantity} {m.unit}</td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>{min} {m.unit}</td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>{reorder} {m.unit}</td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>{max} {m.unit}</td>
-                            <td style={{ padding: '8px', textAlign: 'right', color: '#dc2626', fontWeight: '700' }}>{shortage} {m.unit}</td>
-                            <td style={{ padding: '8px', textAlign: 'center' }}>
-                              <span style={{ 
-                                background: isCritical ? '#fee2e2' : '#ffedd5',
-                                color: isCritical ? '#991b1b' : '#c2410c',
-                                padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', fontSize: '10px'
-                              }}>
-                                {isCritical ? 'Critical' : 'Pre-Order'}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  <Pagination pagination={lowStockAlertsPagination} />
-                </div>
+            <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '8px', padding: '16px', marginBottom: '24px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)', textAlign: 'left' }}>
+              <h3 style={{ margin: '0 0 12px', color: '#b45309', fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                ⚠️ Low Stock Alert (Below Reorder Level)
+              </h3>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #f59e0b', color: '#4b5563' }}>
+                      <th style={{ padding: '6px 8px' }}>Project Name</th>
+                      <th style={{ padding: '6px 8px' }}>Material Name</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Current Stock</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Min Level</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Reorder Level</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Max Level</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'right' }}>Shortage</th>
+                      <th style={{ padding: '6px 8px', textAlign: 'center' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lowStockAlertsPagination.paginatedData.map((m, idx) => {
+                      const min = m.minimumStock || 10;
+                      const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
+                      const max = m.maximumStock || 100;
+                      const shortage = Math.max(0, max - m.quantity);
+                      const isCritical = m.quantity <= min;
+                      const projName = m.project_id?.projectName || m.projectId?.projectName || m.project_id?.name || m.projectId?.name || 'Main Project';
+                      return (
+                        <tr key={m._id || idx} style={{ borderBottom: '1px solid #fef3c7', color: '#1f2937' }}>
+                          <td style={{ padding: '8px', fontWeight: '600' }}>{projName}</td>
+                          <td style={{ padding: '8px' }}>{m.name}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold' }}>{m.quantity} {m.unit}</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>{min} {m.unit}</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>{reorder} {m.unit}</td>
+                          <td style={{ padding: '8px', textAlign: 'right' }}>{max} {m.unit}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', color: '#dc2626', fontWeight: '700' }}>{shortage} {m.unit}</td>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>
+                            <span style={{ 
+                              background: isCritical ? '#fee2e2' : '#ffedd5',
+                              color: isCritical ? '#991b1b' : '#c2410c',
+                              padding: '2px 8px', borderRadius: '12px', fontWeight: 'bold', fontSize: '10px'
+                            }}>
+                              {isCritical ? 'Critical' : 'Pre-Order'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <Pagination pagination={lowStockAlertsPagination} />
               </div>
-            )}
+            </div>
 
             {inTransitTransfers.length > 0 && (
               <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', padding: '14px 16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
@@ -1124,15 +1159,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                 </button>
               </div>
             )}
-
-            {/* Received Info Section */}
-            <div style={styles.infoBox}>
-              <h3 style={styles.infoBoxTitle}>ℹ️ Local Store Operations Info</h3>
-              <p style={styles.infoBoxText}>
-                This panel displays materials currently checked-out and stored at the local construction site. 
-                Stock level increases once you confirm receipt of a transfer issued by the Main Store (In-Transit Transfers below).
-              </p>
-            </div>
 
             {/* In-Transit Material Transfer Notes (Main Store -> this Site Store) */}
             <div style={{ ...styles.tableContainer, marginTop: '30px' }}>
