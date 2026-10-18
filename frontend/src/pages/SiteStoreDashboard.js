@@ -2108,12 +2108,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                 <strong>Notes:</strong> {viewTransfer.notes}
               </div>
             )}
-            <button
-              onClick={() => setViewTransfer(null)}
-              style={{ marginTop: '20px', width: '100%', padding: '10px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-            >
-              Close
-            </button>
           </div>
         </div>
       )}
