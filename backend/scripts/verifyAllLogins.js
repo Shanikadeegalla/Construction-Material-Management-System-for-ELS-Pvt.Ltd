@@ -1,13 +1,11 @@
 const verifyLogins = async () => {
   const credentials = [
-    { label: 'Director (email director@els.com, pwd dir123)', body: { email: 'director@els.com', password: 'dir123' } },
-    { label: 'Director (email director@els.com, pwd director123)', body: { email: 'director@els.com', password: 'director123' } },
-    { label: 'Director (username director, pwd dir123)', body: { email: 'director', password: 'dir123' } },
-    { label: 'Director Yushika (email yushika@els.com, pwd dir123)', body: { email: 'yushika@els.com', password: 'dir123' } },
-    { label: 'Admin (email admin@els.com, pwd admin123)', body: { email: 'admin@els.com', password: 'admin123' } },
-    { label: 'PM (email pm@els.com, pwd pm123456)', body: { email: 'pm@els.com', password: 'pm123456' } },
-    { label: 'Purchase Manager (email purchase@els.com, pwd purchase123)', body: { email: 'purchase@els.com', password: 'purchase123' } },
-    { label: 'Store Officer (email store@els.com, pwd store123)', body: { email: 'store@els.com', password: 'store123' } }
+    { label: 'Admin (adminO@els.com / admin123)', body: { email: 'adminO@els.com', password: 'admin123' } },
+    { label: 'Purchase Manager (PurchaseManager@els.com / Purchase@123)', body: { email: 'PurchaseManager@els.com', password: 'Purchase@123' } },
+    { label: 'Director (director@els.com / dir123)', body: { email: 'director@els.com', password: 'dir123' } },
+    { label: 'Project Manager (pm@els.com / pm123456)', body: { email: 'pm@els.com', password: 'pm123456' } },
+    { label: 'Main Store Officer (store@els.com / store123)', body: { email: 'store@els.com', password: 'store123' } },
+    { label: 'Site Store Officer (sitestore@els.com / site123)', body: { email: 'sitestore@els.com', password: 'site123' } }
   ];
 
   console.log('=== Verifying Login API Endpoint ===\n');

@@ -318,6 +318,131 @@ export const getUserProfile = async (req, res, next) => {
   }
 };
 
+// @desc    Update authenticated user's own profile (Self-update)
+// @route   PUT /api/auth/profile, PUT /api/users/profile
+// @access  Private (Any authenticated user)
+export const updateUserProfile = async (req, res, next) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      res.status(404);
+      throw new Error('User not found');
+    }
+
+    const {
+      firstName,
+      lastName,
+      phone,
+      contactNumber,
+      alternatePhone,
+      name,
+      avatarUrl,
+      profilePicture,
+      settings,
+      currentPassword,
+      newPassword
+    } = req.body;
+
+    // Handle password update if requested
+    if (newPassword) {
+      if (!isStrongPassword(newPassword)) {
+        res.status(400);
+        throw new Error('Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character.');
+      }
+      if (!currentPassword) {
+        res.status(400);
+        throw new Error('Current password is required to change password');
+      }
+      const isMatch = await user.matchPassword(currentPassword);
+      if (!isMatch) {
+        res.status(400);
+        throw new Error('Incorrect current password');
+      }
+      user.password = newPassword;
+      user.passwordChangedAt = new Date();
+    }
+
+    // Basic personal details
+    if (firstName !== undefined) user.firstName = firstName.trim();
+    if (lastName !== undefined) user.lastName = lastName.trim();
+
+    const effectivePhone = phone !== undefined ? phone : contactNumber;
+    if (effectivePhone !== undefined) user.phone = effectivePhone.trim();
+    if (alternatePhone !== undefined) user.alternatePhone = alternatePhone.trim();
+
+    const effectiveAvatar = avatarUrl !== undefined ? avatarUrl : profilePicture;
+    if (effectiveAvatar !== undefined) user.avatarUrl = effectiveAvatar;
+
+    // Update display name if supplied or sync from firstName/lastName
+    const combinedName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+    if (name) {
+      user.name = name.trim();
+    } else if (combinedName) {
+      user.name = combinedName;
+    }
+
+    if (settings !== undefined) {
+      user.settings = {
+        system: {
+          darkMode: settings.system?.darkMode !== undefined ? settings.system.darkMode : user.settings?.system?.darkMode,
+          notifications: {
+            systemAlerts: settings.system?.notifications?.systemAlerts !== undefined ? settings.system.notifications.systemAlerts : user.settings?.system?.notifications?.systemAlerts,
+            emailNotifs: settings.system?.notifications?.emailNotifs !== undefined ? settings.system.notifications.emailNotifs : user.settings?.system?.notifications?.emailNotifs,
+            desktopNotifs: settings.system?.notifications?.desktopNotifs !== undefined ? settings.system.notifications.desktopNotifs : user.settings?.system?.notifications?.desktopNotifs
+          },
+          locale: {
+            language: settings.system?.locale?.language !== undefined ? settings.system.locale.language : user.settings?.system?.locale?.language,
+            timezone: settings.system?.locale?.timezone !== undefined ? settings.system.locale.timezone : user.settings?.system?.locale?.timezone,
+            dateFormat: settings.system?.locale?.dateFormat !== undefined ? settings.system.locale.dateFormat : user.settings?.system?.locale?.dateFormat
+          }
+        },
+        profile: {
+          sidebarCollapsed: settings.profile?.sidebarCollapsed !== undefined ? settings.profile.sidebarCollapsed : user.settings?.profile?.sidebarCollapsed,
+          twoFactorEnabled: settings.profile?.twoFactorEnabled !== undefined ? settings.profile.twoFactorEnabled : user.settings?.profile?.twoFactorEnabled
+        }
+      };
+    }
+
+    const updatedUser = await user.save();
+
+    // Audit log
+    const ipAddress = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
+    await AuditLog.create({
+      userId: user._id,
+      userName: user.name,
+      action: `Profile Updated: ${user.name}`,
+      module: 'User Management',
+      ipAddress,
+      timestamp: new Date(),
+      status: 'Success'
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Account information saved successfully',
+      data: {
+        _id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        role: updatedUser.role,
+        status: updatedUser.status,
+        lastLogin: updatedUser.lastLogin,
+        firstName: updatedUser.firstName || '',
+        lastName: updatedUser.lastName || '',
+        phone: updatedUser.phone || '',
+        contactNumber: updatedUser.phone || '',
+        avatarUrl: updatedUser.avatarUrl || '/uploads/default-avatar.png',
+        profilePicture: updatedUser.avatarUrl || '/uploads/default-avatar.png',
+        settings: updatedUser.settings || {}
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Get all users
 // @route   GET /api/auth/users
 // @access  Private (Admin Only)
@@ -335,7 +460,7 @@ export const getUsers = async (req, res, next) => {
 // @access  Private (Admin Only)
 export const updateUser = async (req, res, next) => {
   try {
-    const { name, email, role, currentPassword, newPassword, firstName, lastName, phone, alternatePhone, username, employeeId, gender, avatarUrl, settings, status } = req.body;
+    const { name, email, role, currentPassword, newPassword, firstName, lastName, phone, contactNumber, alternatePhone, username, employeeId, gender, avatarUrl, profilePicture, settings, status } = req.body;
     const user = await User.findById(req.params.id);
 
     if (!user) {
@@ -439,9 +564,11 @@ export const updateUser = async (req, res, next) => {
     if (lastName !== undefined) user.lastName = lastName;
     if (username !== undefined) user.username = username;
     if (gender !== undefined) user.gender = gender;
-    if (phone !== undefined) user.phone = phone;
+    const effectivePhone = phone !== undefined ? phone : contactNumber;
+    if (effectivePhone !== undefined) user.phone = effectivePhone;
     if (alternatePhone !== undefined) user.alternatePhone = alternatePhone;
-    if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
+    const effectiveAvatar = avatarUrl !== undefined ? avatarUrl : profilePicture;
+    if (effectiveAvatar !== undefined) user.avatarUrl = effectiveAvatar;
     
     if (settings !== undefined) {
       user.settings = {

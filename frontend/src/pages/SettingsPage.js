@@ -75,7 +75,7 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
     // Update preference in DB
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`${API_BASE}/api/auth/users/${user._id}`, {
+      const res = await fetch(`${API_BASE}/api/users/profile`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -123,13 +123,13 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
         setImgError(false);
 
         // Save avatar url to user document
-        const updateRes = await fetch(`${API_BASE}/api/auth/users/${user._id}`, {
+        const updateRes = await fetch(`${API_BASE}/api/users/profile`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`
           },
-          body: JSON.stringify({ avatarUrl: uploadedPath })
+          body: JSON.stringify({ avatarUrl: uploadedPath, profilePicture: uploadedPath })
         });
         const updateData = await updateRes.json();
         if (updateRes.ok && updateData.success) {
@@ -161,13 +161,13 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
     setNotice(null);
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const updateRes = await fetch(`${API_BASE}/api/auth/users/${user._id}`, {
+      const updateRes = await fetch(`${API_BASE}/api/users/profile`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ avatarUrl: '' })
+        body: JSON.stringify({ avatarUrl: '', profilePicture: '' })
       });
       const updateData = await updateRes.json();
       if (updateRes.ok && updateData.success) {
@@ -193,13 +193,19 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
       // The sidebar/header and business fields (requestedBy, approvedBy, createdBy, etc.)
       // across the app read `user.name`, not firstName/lastName, so keep it in sync.
       const combinedName = `${firstName} ${lastName}`.trim();
-      const res = await fetch(`${API_BASE}/api/auth/users/${user._id}`, {
+      const res = await fetch(`${API_BASE}/api/users/profile`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ firstName, lastName, phone, name: combinedName || undefined })
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          phone,
+          contactNumber: phone,
+          name: combinedName || undefined
+        })
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -234,7 +240,7 @@ const SettingsPage = ({ user, onLogout, onUserUpdate }) => {
     setLoading(true);
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
-      const res = await fetch(`${API_BASE}/api/auth/users/${user._id}`, {
+      const res = await fetch(`${API_BASE}/api/users/profile`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

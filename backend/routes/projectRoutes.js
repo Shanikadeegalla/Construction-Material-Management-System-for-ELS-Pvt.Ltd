@@ -98,8 +98,7 @@ router.get('/next-id', protect, checkPermission('Create Project'), async (req, r
 // @access  Private (Project Manager)
 router.get('/pm-stats', protect, checkPermission('Create Project'), async (req, res) => {
   try {
-    // Same ownership rule as GET /api/projects: a PM only sees their own projects.
-    const projectQuery = req.user.role === 'ProjectManager' ? { createdBy: req.user._id } : {};
+    const projectQuery = req.query.myProjects === 'true' ? { createdBy: req.user._id } : {};
     const projectIds = await Project.find(projectQuery).distinct('_id');
 
     const [activeProjects, pendingBomApprovals] = await Promise.all([
@@ -185,17 +184,23 @@ router.post('/', protect, checkPermission('Create Project'), uploadProjectFiles,
   }
 });
 
-// @desc    List all projects (filtered by creator if role is PM)
+// @desc    List all projects (all company projects or optional ?myProjects=true)
 // @route   GET /api/projects
 // @access  Private
 router.get('/', protect, checkPermission('View Projects'), async (req, res) => {
   try {
-    const query = req.user.role === 'ProjectManager' ? { createdBy: req.user._id } : {};
+    // If explicitly requested, filter by creator; otherwise return all registered projects in the registry
+    const query = req.query.myProjects === 'true' ? { createdBy: req.user._id } : {};
     const projects = await Project.find(query)
       .populate('createdBy', 'name email')
       .sort({ createdAt: -1 });
 
-    res.status(200).json({ success: true, count: projects.length, data: projects });
+    res.status(200).json({
+      success: true,
+      count: projects.length,
+      data: projects,
+      projects
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

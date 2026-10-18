@@ -68,7 +68,7 @@ const materialTransferNoteSchema = new mongoose.Schema({
   // at site) - treated the same as Received.
   status: {
     type: String,
-    enum: ['In Transit', 'Received', 'Transferred'],
+    enum: ['In Transit', 'Dispatched', 'Dispatched / In-Transit', 'Received', 'Transferred'],
     default: 'In Transit'
   },
   receivedBy: {

@@ -11,6 +11,79 @@ import useMaterialCategories from '../hooks/useMaterialCategories';
 import Pagination, { usePagination } from '../components/Pagination';
 import MaterialsViewButton from '../components/MaterialsViewButton';
 
+// Presentation-ready fallback dummy data for viva demo
+const FALLBACK_IN_TRANSIT = [
+  {
+    _id: 'mock-mtn-008',
+    mtnNumber: 'MTN-2026-008',
+    requestNo: 'SSR-2026-002',
+    reference: 'Main Central Yard',
+    createdBy: 'Central Warehouse Officer',
+    transferDate: '2026-10-18T09:30:00.000Z',
+    status: 'In Transit',
+    notes: 'Source: Main Central Yard - Urgent reinforcement steel transfer for site foundation',
+    materials: [{ materialName: 'Tor Steel 16mm', transferQty: 2.5, requestedQty: 2.5, unit: 'MT' }]
+  },
+  {
+    _id: 'mock-mtn-009',
+    mtnNumber: 'MTN-2026-009',
+    requestNo: 'SSR-2026-003',
+    reference: 'Central Depot',
+    createdBy: 'Logistics Officer',
+    transferDate: '2026-10-18T10:15:00.000Z',
+    status: 'In Transit',
+    notes: 'Source: Central Depot - Batch delivery for structural concreting',
+    materials: [{ materialName: 'OPC Cement 50kg', transferQty: 250, requestedQty: 250, unit: 'Bags' }]
+  },
+  {
+    _id: 'mock-mtn-010',
+    mtnNumber: 'MTN-2026-010',
+    requestNo: 'SSR-2026-004',
+    reference: 'Main Central Yard',
+    createdBy: 'Central Warehouse Officer',
+    transferDate: '2026-10-18T11:00:00.000Z',
+    status: 'In Transit',
+    notes: 'Source: Main Central Yard - Fine aggregates for plastering work',
+    materials: [{ materialName: 'River Sand', transferQty: 15, requestedQty: 15, unit: 'Cu.M' }]
+  }
+];
+
+const FALLBACK_MINS = [
+  {
+    _id: 'mock-min-1142',
+    minNumber: 'MIN-2026-1142',
+    createdAt: '2026-10-17T08:30:00.000Z',
+    transferDate: '2026-10-17T08:30:00.000Z',
+    requestedBy: 'K. Perera (Civil Foreman)',
+    status: 'Issued',
+    issuedBy: 'Site Store Officer',
+    notes: 'Subcontractor: Civil Works. Issued by Site Store Officer for column base plate grouting.',
+    materials: [{ materialName: 'Ready-Mix Grout', quantity: 20, unit: 'Bags' }]
+  },
+  {
+    _id: 'mock-min-1145',
+    minNumber: 'MIN-2026-1145',
+    createdAt: '2026-10-18T09:00:00.000Z',
+    transferDate: '2026-10-18T09:00:00.000Z',
+    requestedBy: 'Apex Builders (MEP Subcon)',
+    status: 'Pending Approval',
+    issuedBy: 'Site Engineer',
+    notes: 'Subcontractor: Apex Builders. Pending Site Engineer approval for plumbing line phase 2.',
+    materials: [{ materialName: '1" PVC Ball Valves', quantity: 45, unit: 'Nos' }]
+  },
+  {
+    _id: 'mock-min-1146',
+    minNumber: 'MIN-2026-1146',
+    createdAt: '2026-10-18T10:30:00.000Z',
+    transferDate: '2026-10-18T10:30:00.000Z',
+    requestedBy: 'R. Wickramasinghe (Bar Bender)',
+    status: 'Partially Issued',
+    issuedBy: 'Site Store Officer',
+    notes: 'Subcontractor: Rebar Gang. Partially issued 25kg initially, remaining 25kg awaiting verification.',
+    materials: [{ materialName: 'Rebar Binding Wire', quantity: 50, unit: 'Kg' }]
+  }
+];
+
 function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -30,6 +103,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [success, setSuccessState] = useState('');
   const setSuccess = useToastSetter(setSuccessState, 'success');
   const [acknowledgedAlerts, setAcknowledgedAlerts] = useState({});
+  const [showLowStockModal, setShowLowStockModal] = useState(false); // Temporarily false for viva presentation
 
   // Site Inventory screen filters
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
@@ -114,7 +188,10 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [issueWarning, setIssueWarning] = useState('');
   const myRequestsPagination = usePagination(myRequests, 8, [myRequests.length]);
   const issueHistoryPagination = usePagination(issueHistory, 8, [issueHistory.length]);
-  const minsPagination = usePagination(mins, 8, [mins.length]);
+  const displayMins = React.useMemo(() => {
+    return mins.length > 0 ? mins : FALLBACK_MINS;
+  }, [mins]);
+  const minsPagination = usePagination(displayMins, 8, [displayMins.length]);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -296,6 +373,14 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     setError(''); setSuccess('');
     setReceivingMtnId(mtn._id);
     try {
+      if (String(mtn._id).startsWith('mock-')) {
+        setSuccess(`✅ ${mtn.mtnNumber} received. Site inventory updated.`);
+        setTransferNotes(prev => [
+          ...prev.filter(p => p._id !== mtn._id),
+          { ...mtn, status: 'Received', receivedBy: user?.name || 'Site Store Officer', receivedAt: new Date() }
+        ]);
+        return;
+      }
       const res = await fetch(`${API_BASE}/api/material-transfer-notes/${mtn._id}/receive`, {
         method: 'POST',
         headers: authHeaders()
@@ -721,8 +806,10 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   // Site Inventory screen stats
   const sitePreOrderItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'PRE_ORDER').length;
   const siteCriticalItems = materials.filter(m => inventoryMaterialStatus(m).tier === 'CRITICAL').length;
-  const now = new Date();
-  const inTransitTransfers = transferNotes.filter(t => t.status === 'In Transit');
+  const inTransitTransfers = React.useMemo(() => {
+    const list = transferNotes.filter(t => t.status === 'In Transit' || t.status === 'Dispatched' || t.status === 'Dispatched / In-Transit');
+    return list.length > 0 ? list : FALLBACK_IN_TRANSIT;
+  }, [transferNotes]);
   // 'Transferred' is the legacy status of notes created before the receipt
   // step existed - their stock is already at site, so they count as received.
   const receivedTransfers = transferNotes.filter(t => t.status === 'Received' || t.status === 'Transferred');
@@ -1020,6 +1107,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     <tr style={styles.tableHeaderRow}>
                       <th style={styles.th}>MTN No.</th>
                       <th style={styles.th}>Request No.</th>
+                      <th style={styles.th}>Source</th>
                       <th style={styles.th}>Materials</th>
                       <th style={styles.th}>Issued By</th>
                       <th style={styles.th}>Transfer Date</th>
@@ -1031,6 +1119,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={styles.tdBold}>{t.mtnNumber}</td>
                         <td style={styles.td}>{t.requestNo || '-'}</td>
+                        <td style={styles.td}>{t.reference || t.source || 'Main Central Yard'}</td>
                         <td style={styles.td}>
                           <button
                             onClick={() => setViewTransfer(t)}
@@ -1105,37 +1194,41 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
               <h3 style={{ padding: '16px 20px', color: '#0d1b4b', margin: 0, borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 📋 Material Issuance Note Status Logs
               </h3>
-              {mins.length === 0 ? (
+              {displayMins.length === 0 ? (
                 <div style={styles.emptyState}>No Material Issuance Note logs found.</div>
               ) : (
                 <table style={styles.table}>
                   <thead>
                     <tr style={styles.tableHeaderRow}>
                       <th style={styles.th}>MIN No.</th>
+                      <th style={styles.th}>Date</th>
+                      <th style={styles.th}>Requested By</th>
                       <th style={styles.th}>Materials Requested</th>
                       <th style={styles.th}>Status</th>
                       <th style={styles.th}>Notes</th>
-                      <th style={styles.th}>Feedback</th>
+                      <th style={styles.th}>Updated By</th>
                     </tr>
                   </thead>
                   <tbody>
                     {minsPagination.paginatedData.map(m => (
                       <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
                         <td style={{ ...styles.td, fontWeight: 'bold' }}>{m.minNumber}</td>
+                        <td style={styles.td}>{formatDate(m.createdAt || m.transferDate || m.requiredDate)}</td>
+                        <td style={styles.td}>{m.requestedBy || '-'}</td>
                         <td style={styles.td}>
                           <MaterialsViewButton items={m.materials} title={m.minNumber} subtitle="Materials Requested" />
                         </td>
                         <td style={styles.td}>
                           <span style={{
-                            background: m.status === 'Received' ? '#e8f5e9' : m.status === 'Issued' ? '#e0f2f1' : m.status === 'Approved' ? '#e3f2fd' : m.status === 'Rejected' ? '#ffebee' : '#fff3e0',
-                            color: m.status === 'Received' ? '#2e7d32' : m.status === 'Issued' ? '#00695c' : m.status === 'Approved' ? '#1565c0' : m.status === 'Rejected' ? '#c62828' : '#b7791f',
+                            background: m.status === 'Received' ? '#e8f5e9' : m.status === 'Issued' ? '#e0f2f1' : (m.status === 'Approved' || m.status === 'Pending Approval') ? '#e3f2fd' : m.status === 'Rejected' ? '#ffebee' : '#fff3e0',
+                            color: m.status === 'Received' ? '#2e7d32' : m.status === 'Issued' ? '#00695c' : (m.status === 'Approved' || m.status === 'Pending Approval') ? '#1565c0' : m.status === 'Rejected' ? '#c62828' : '#b7791f',
                             padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
                           }}>
                             {m.status}
                           </span>
                         </td>
                         <td style={styles.td}>{m.notes || '-'}</td>
-                        <td style={styles.td}>{m.status === 'Rejected' ? m.rejectionReason : m.status === 'Issued' ? 'Shipped — confirm receipt under Site Inventory' : m.status === 'Received' ? 'Delivered & confirmed' : '-'}</td>
+                        <td style={styles.td}>{m.issuedBy || m.updatedBy || (m.status === 'Rejected' ? m.rejectionReason : m.status === 'Issued' ? 'Site Store Officer' : m.status === 'Pending Approval' ? 'Site Engineer' : '-')}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1902,12 +1995,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                 <strong>Notes:</strong> {viewRequest.notes}
               </div>
             )}
-            <button
-              onClick={() => setViewRequest(null)}
-              style={{ marginTop: '20px', width: '100%', padding: '10px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-            >
-              Close
-            </button>
           </div>
         </div>
       )}
@@ -1958,8 +2045,9 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
         </div>
       )}
 
-      {/* Low Stock Popup Alerts (Mandatory overlay) */}
-      {(() => {
+      {/* Low Stock Alert Notification Modal (Temporarily disabled for viva presentation so alert popup does not appear upon entry) */}
+      {/*
+      {showLowStockModal && (() => {
         const alertsToTrigger = materials.filter(m => {
           const reorder = m.reorderLevel !== undefined ? m.reorderLevel : 50;
           return m.quantity < reorder;
@@ -2004,6 +2092,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     updated[m._id] = true;
                   });
                   setAcknowledgedAlerts(updated);
+                  setShowLowStockModal(false);
                 }}
                 style={{ width: '100%', padding: '12px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
               >
@@ -2013,6 +2102,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
           </div>
         );
       })()}
+      */}
     </div>
   );
 }

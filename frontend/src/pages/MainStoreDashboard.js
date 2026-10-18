@@ -13,6 +13,7 @@ import { scrollToElement } from '../utils/scrollToElement';
 import useBusyAction from '../hooks/useBusyAction';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import ReportsCenter from './ReportsCenter';
+import ReportsAnalyticsDashboard from '../components/ReportsAnalyticsDashboard';
 import Pagination, { usePagination } from '../components/Pagination';
 
 // Older/seeded BOMs stored the version without the "v" prefix ("1.0"); show
@@ -35,7 +36,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     return () => clearInterval(timer);
   }, []);
   const [materials, setMaterials] = useState([]);
-  const [, setProjects] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -128,11 +129,13 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [prSearch, setPrSearch] = useState('');
   const [prStatusFilter, setPrStatusFilter] = useState('All');
 
-  // Stock Ledger screen
+  // Stock Ledger & Material Movement History screen
   const [stockLedger, setStockLedger] = useState([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerSearch, setLedgerSearch] = useState('');
   const [ledgerTypeFilter, setLedgerTypeFilter] = useState('All');
+  const [ledgerCategoryFilter, setLedgerCategoryFilter] = useState('All');
+  const [selectedLedgerItem, setSelectedLedgerItem] = useState(null);
 
   // Notifications screen (persisted Notification records, distinct from the
   // low-stock alert list used by the header bell)
@@ -157,14 +160,38 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const bomsPagination = usePagination(approvedBoms, 8, [approvedBoms.length]);
 
   const filteredStockLedger = React.useMemo(() => {
-    const q = ledgerSearch.toLowerCase();
+    const q = ledgerSearch.trim().toLowerCase();
     return stockLedger.filter(e => {
-      const matchesSearch = !q || (e.materialName || '').toLowerCase().includes(q);
-      const matchesType = ledgerTypeFilter === 'All' || e.type === ledgerTypeFilter;
-      return matchesSearch && matchesType;
+      const mat = mainMaterials.find(m => String(m._id) === String(e.materialId) || (m.name && e.materialName && m.name.toLowerCase() === e.materialName.toLowerCase()));
+      const entryCategory = e.category || mat?.category || '';
+
+      // If a specific material context is active from "View History"
+      if (selectedLedgerItem) {
+        const matchesSelected = (selectedLedgerItem._id && String(e.materialId) === String(selectedLedgerItem._id)) ||
+                                (e.materialName && selectedLedgerItem.name && e.materialName.toLowerCase() === selectedLedgerItem.name.toLowerCase());
+        if (!matchesSelected) return false;
+      } else if (q) {
+        const matchesSearch = (e.materialName || '').toLowerCase().includes(q) ||
+                              (mat?.materialCode || '').toLowerCase().includes(q);
+        if (!matchesSearch) return false;
+      }
+
+      // Filter by category
+      if (ledgerCategoryFilter !== 'All') {
+        if ((entryCategory || '').toLowerCase() !== ledgerCategoryFilter.toLowerCase()) {
+          return false;
+        }
+      }
+
+      // Filter by movement type
+      if (ledgerTypeFilter !== 'All') {
+        if (e.type !== ledgerTypeFilter) return false;
+      }
+
+      return true;
     });
-  }, [stockLedger, ledgerSearch, ledgerTypeFilter]);
-  const stockLedgerPagination = usePagination(filteredStockLedger, 8, [ledgerSearch, ledgerTypeFilter]);
+  }, [stockLedger, ledgerSearch, ledgerTypeFilter, ledgerCategoryFilter, selectedLedgerItem, mainMaterials]);
+  const stockLedgerPagination = usePagination(filteredStockLedger, 8, [ledgerSearch, ledgerTypeFilter, ledgerCategoryFilter, selectedLedgerItem]);
 
   const prRows = React.useMemo(() => {
     const rows = [];
@@ -353,6 +380,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     } finally {
       setLedgerLoading(false);
     }
+  };
+
+  const handleViewMaterialHistory = (material) => {
+    setSelectedLedgerItem(material);
+    setLedgerSearch(material.name || '');
+    setLedgerCategoryFilter(material.category || 'All');
+    setLedgerTypeFilter('All');
+    setView('stock-ledger');
   };
 
   const fetchPersistedNotifications = async () => {
@@ -1087,13 +1122,15 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       ["Main Store Stock Ledger"],
       [`Generated Date: ${formatDateTime(new Date())}`],
       [], // Spacer
-      ["Material", "Type", "Quantity Change", "Balance After", "Reference", "Reason", "Performed By", "Date"]
+      ["Material", "Category", "Type", "Quantity Change", "Balance After", "Reference", "Reason", "Performed By", "Date"]
     ];
 
     rows.forEach(e => {
       const quantityChange = e.inQty ? `+${e.inQty}` : (e.outQty ? `-${e.outQty}` : 0);
+      const cat = e.category || mainMaterials.find(m => String(m._id) === String(e.materialId) || m.name?.toLowerCase() === e.materialName?.toLowerCase())?.category || '—';
       wsData.push([
         e.materialName,
+        cat,
         e.type,
         quantityChange,
         e.balance,
@@ -2006,7 +2043,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         </div>
                       ))}
                     </div>
-                    <div onClick={() => setView('stock-ledger')} style={{ marginTop: '12px', fontSize: '13px', color: '#2563eb', fontWeight: '600', cursor: 'pointer' }}>
+                    <div onClick={() => { setSelectedLedgerItem(null); setLedgerSearch(''); setLedgerCategoryFilter('All'); setLedgerTypeFilter('All'); setView('stock-ledger'); }} style={{ marginTop: '12px', fontSize: '13px', color: '#2563eb', fontWeight: '600', cursor: 'pointer' }}>
                       View All →
                     </div>
                   </>
@@ -2117,8 +2154,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           </td>
                           <td style={styles.td}>
                             <button
-                              onClick={() => { setLedgerSearch(m.name); setView('stock-ledger'); }}
-                              style={{ background: '#1565c0', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                              onClick={() => handleViewMaterialHistory(m)}
+                              style={{ background: '#1565c0', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}
+                              title={`View movement history for ${m.name}`}
                             >
                               View History
                             </button>
@@ -2553,30 +2591,123 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
         {view === 'stock-ledger' && (
           <div style={styles.container}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
-              <h1 style={{ ...styles.pageTitle, marginBottom: 0 }}>Stock Ledger — All Inventory Movements</h1>
+            {/* Navigation back and contextual header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                {selectedLedgerItem && (
+                  <button
+                    onClick={() => { setSelectedLedgerItem(null); setView('inventory'); }}
+                    style={{ background: '#ffffff', color: '#1565c0', border: '1px solid #cbd5e1', padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}
+                  >
+                    ← Back to Inventory
+                  </button>
+                )}
+                <h1 style={{ ...styles.pageTitle, marginBottom: 0 }}>
+                  {selectedLedgerItem
+                    ? `Movement History — ${selectedLedgerItem.name}`
+                    : (ledgerCategoryFilter !== 'All'
+                        ? `Stock Movement History — ${ledgerCategoryFilter}`
+                        : 'Stock Ledger — All Inventory Movements')}
+                </h1>
+              </div>
             </div>
 
+            {/* Context summary card when an item is selected via View History */}
+            {selectedLedgerItem && (
+              <div style={{
+                background: 'linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%)',
+                border: '1px solid #c7d2fe',
+                borderRadius: '10px',
+                padding: '16px 20px',
+                marginBottom: '20px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '12px'
+              }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '18px' }}>📦</span>
+                    <strong style={{ fontSize: '16px', color: '#1e3a8a' }}>{selectedLedgerItem.name}</strong>
+                    <span style={{ background: '#dbeafe', color: '#1e40af', padding: '3px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>
+                      {selectedLedgerItem.category}
+                    </span>
+                    {selectedLedgerItem.materialCode && (
+                      <span style={{ background: '#f1f5f9', color: '#475569', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontFamily: 'monospace' }}>
+                        {selectedLedgerItem.materialCode}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '13px', color: '#475569' }}>
+                    Current Main Store Stock: <strong style={{ color: '#0f172a' }}>{selectedLedgerItem.quantity} {selectedLedgerItem.unit}</strong> &bull; Minimum Level: {selectedLedgerItem.minimumStock} {selectedLedgerItem.unit} &bull; Pre-Order Level: {selectedLedgerItem.reorderLevel} {selectedLedgerItem.unit}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => {
+                      setSelectedLedgerItem(null);
+                      setLedgerSearch('');
+                      setLedgerCategoryFilter(selectedLedgerItem.category || 'All');
+                    }}
+                    style={{ background: '#ffffff', color: '#1e40af', border: '1px solid #bfdbfe', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}
+                    title={`Show all movement logs for category "${selectedLedgerItem.category}"`}
+                  >
+                    View All in &ldquo;{selectedLedgerItem.category}&rdquo;
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedLedgerItem(null);
+                      setLedgerSearch('');
+                      setLedgerCategoryFilter('All');
+                      setLedgerTypeFilter('All');
+                    }}
+                    style={{ background: '#ffffff', color: '#64748b', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}
+                  >
+                    View All Movements
+                  </button>
+                </div>
+              </div>
+            )}
+
             {(() => {
-              const q = ledgerSearch.toLowerCase();
-              const filteredLedger = stockLedger.filter(e => {
-                const matchesSearch = !q || e.materialName.toLowerCase().includes(q);
-                const matchesType = ledgerTypeFilter === 'All' || e.type === ledgerTypeFilter;
-                return matchesSearch && matchesType;
-              });
-              const totalIn = filteredLedger.reduce((sum, e) => sum + (e.inQty || 0), 0);
-              const totalOut = filteredLedger.reduce((sum, e) => sum + (e.outQty || 0), 0);
+              const totalIn = filteredStockLedger.reduce((sum, e) => sum + (e.inQty || 0), 0);
+              const totalOut = filteredStockLedger.reduce((sum, e) => sum + (e.outQty || 0), 0);
 
               return (
                 <>
                   <div style={styles.filtersContainer}>
                     <input
                       type="text"
-                      placeholder="Search material..."
+                      placeholder="Search material or code..."
                       value={ledgerSearch}
-                      onChange={e => setLedgerSearch(e.target.value)}
+                      onChange={e => {
+                        setLedgerSearch(e.target.value);
+                        if (selectedLedgerItem && e.target.value.toLowerCase() !== selectedLedgerItem.name.toLowerCase()) {
+                          setSelectedLedgerItem(null);
+                        }
+                      }}
                       style={styles.searchInput}
                     />
+                    <div style={styles.filterGroup}>
+                      <span style={styles.filterLabel}>Category:</span>
+                      <select
+                        value={ledgerCategoryFilter}
+                        onChange={e => {
+                          const newCat = e.target.value;
+                          setLedgerCategoryFilter(newCat);
+                          if (selectedLedgerItem && newCat !== 'All' && newCat !== selectedLedgerItem.category) {
+                            setSelectedLedgerItem(null);
+                          }
+                        }}
+                        style={styles.filterSelect}
+                      >
+                        <option value="All">All Categories</option>
+                        {materialCategoryList.map(c => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
                     <div style={styles.filterGroup}>
                       <span style={styles.filterLabel}>Transaction Type:</span>
                       <select value={ledgerTypeFilter} onChange={e => setLedgerTypeFilter(e.target.value)} style={styles.filterSelect}>
@@ -2586,18 +2717,46 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         <option value="MIN Receipt">MIN Receipt</option>
                         <option value="Usage">Usage</option>
                         <option value="Adjustment">Adjustment</option>
+                        <option value="MTN Transfer Out">MTN Transfer Out</option>
+                        <option value="MTN Transfer In">MTN Transfer In</option>
                       </select>
+                    </div>
+                    {(selectedLedgerItem || ledgerSearch || ledgerCategoryFilter !== 'All' || ledgerTypeFilter !== 'All') && (
+                      <button
+                        onClick={() => {
+                          setSelectedLedgerItem(null);
+                          setLedgerSearch('');
+                          setLedgerCategoryFilter('All');
+                          setLedgerTypeFilter('All');
+                        }}
+                        style={{ ...styles.refreshBtn, background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1' }}
+                      >
+                        ✕ Clear Filters
+                      </button>
+                    )}
+                    <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto', flexWrap: 'wrap' }}>
                       <button
                         onClick={() => exportToCSV('stock-ledger.csv',
-                          ['Date', 'Material', 'Type', 'Reference', 'IN Qty', 'OUT Qty', 'Balance', 'Performed By', 'Remarks'],
-                          filteredLedger.map(e => [formatDateTime(e.date), e.materialName, e.type, e.reference, e.inQty, e.outQty, e.balance, e.performedBy, e.remarks])
+                          ['Date', 'Material', 'Category', 'Type', 'Reference', 'IN Qty', 'OUT Qty', 'Balance', 'Performed By', 'Remarks'],
+                          filteredStockLedger.map(e => [
+                            formatDateTime(e.date),
+                            e.materialName,
+                            e.category || mainMaterials.find(m => String(m._id) === String(e.materialId) || m.name?.toLowerCase() === e.materialName?.toLowerCase())?.category || '—',
+                            e.type,
+                            e.reference,
+                            e.inQty,
+                            e.outQty,
+                            e.balance,
+                            e.performedBy,
+                            e.remarks
+                          ])
                         )}
                         style={styles.refreshBtn}
                       >
                         ⬇ Export CSV
                       </button>
                       <button
-                        onClick={() => exportStockLedgerToExcel(filteredLedger)}
+                        onClick={() => exportStockLedgerToExcel(filteredStockLedger)}
                         style={{ ...styles.refreshBtn, background: '#1d6f42' }}
                       >
                         📊 Export to Excel
@@ -2608,14 +2767,21 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   <div style={styles.tableContainer}>
                     {ledgerLoading ? (
                       <div style={styles.loadingText}>Loading stock ledger...</div>
-                    ) : filteredLedger.length === 0 ? (
-                      <div style={styles.emptyState}>No stock movements recorded yet.</div>
+                    ) : filteredStockLedger.length === 0 ? (
+                      <div style={styles.emptyState}>
+                        {selectedLedgerItem
+                          ? `No movement history recorded for ${selectedLedgerItem.name}.`
+                          : (ledgerCategoryFilter !== 'All'
+                              ? `No movement records found for ${ledgerCategoryFilter} category.`
+                              : 'No stock movements recorded yet.')}
+                      </div>
                     ) : (
                       <table style={styles.table}>
                         <thead>
                           <tr style={styles.tableHeaderRow}>
                             <th style={styles.th}>Date</th>
                             <th style={styles.th}>Material</th>
+                            <th style={styles.th}>Category</th>
                             <th style={styles.th}>Transaction Type</th>
                             <th style={styles.th}>Reference</th>
                             <th style={styles.th}>IN Qty</th>
@@ -2625,40 +2791,50 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {stockLedgerPagination.paginatedData.map((e, i) => (
-                            <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
-                              <td style={styles.td}>{formatDateTime(e.date)}</td>
-                              <td style={styles.tdBold}>{e.materialName} <span style={{ color: '#94a3b8', fontWeight: 'normal' }}>{e.unit}</span></td>
-                              <td style={styles.td}>
-                                {(() => {
-                                  const TYPE_COLORS = {
-                                    'GRN Receipt': { bg: '#e8f5e9', color: '#2e7d32' },
-                                    'MIN Issue': { bg: '#e3f2fd', color: '#1565c0' },
-                                    'MIN Receipt': { bg: '#e0f2fe', color: '#0369a1' },
-                                    'Usage': { bg: '#fff3e0', color: '#b7791f' },
-                                    'Adjustment': { bg: '#f3e8ff', color: '#7e22ce' }
-                                  };
-                                  const c = TYPE_COLORS[e.type] || { bg: '#f1f5f9', color: '#334155' };
-                                  return (
-                                    <span style={{
-                                      background: c.bg,
-                                      color: c.color,
-                                      padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
-                                    }}>{e.type}</span>
-                                  );
-                                })()}
-                              </td>
-                              <td style={styles.td}>{e.reference}</td>
-                              <td style={{ ...styles.td, color: e.inQty ? '#2e7d32' : '#cbd5e1', fontWeight: e.inQty ? 'bold' : 'normal' }}>{e.inQty ? `+${e.inQty}` : '—'}</td>
-                              <td style={{ ...styles.td, color: e.outQty ? '#c62828' : '#cbd5e1', fontWeight: e.outQty ? 'bold' : 'normal' }}>{e.outQty ? `-${e.outQty}` : '—'}</td>
-                              <td style={styles.tdBold}>{e.balance}</td>
-                              <td style={styles.td}>{e.performedBy}</td>
-                            </tr>
-                          ))}
+                          {stockLedgerPagination.paginatedData.map((e, i) => {
+                            const entryCategory = e.category || mainMaterials.find(m => String(m._id) === String(e.materialId) || m.name?.toLowerCase() === e.materialName?.toLowerCase())?.category || '—';
+                            return (
+                              <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
+                                <td style={styles.td}>{formatDateTime(e.date)}</td>
+                                <td style={styles.tdBold}>{e.materialName} <span style={{ color: '#94a3b8', fontWeight: 'normal' }}>{e.unit}</span></td>
+                                <td style={styles.td}>
+                                  <span style={{ background: '#f1f5f9', color: '#334155', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '500' }}>
+                                    {entryCategory}
+                                  </span>
+                                </td>
+                                <td style={styles.td}>
+                                  {(() => {
+                                    const TYPE_COLORS = {
+                                      'GRN Receipt': { bg: '#e8f5e9', color: '#2e7d32' },
+                                      'MIN Issue': { bg: '#e3f2fd', color: '#1565c0' },
+                                      'MIN Receipt': { bg: '#e0f2fe', color: '#0369a1' },
+                                      'Usage': { bg: '#fff3e0', color: '#b7791f' },
+                                      'Adjustment': { bg: '#f3e8ff', color: '#7e22ce' },
+                                      'MTN Transfer Out': { bg: '#fef3c7', color: '#b45309' },
+                                      'MTN Transfer In': { bg: '#ecfdf5', color: '#047857' }
+                                    };
+                                    const c = TYPE_COLORS[e.type] || { bg: '#f1f5f9', color: '#334155' };
+                                    return (
+                                      <span style={{
+                                        background: c.bg,
+                                        color: c.color,
+                                        padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
+                                      }}>{e.type}</span>
+                                    );
+                                  })()}
+                                </td>
+                                <td style={styles.td}>{e.reference}</td>
+                                <td style={{ ...styles.td, color: e.inQty ? '#2e7d32' : '#cbd5e1', fontWeight: e.inQty ? 'bold' : 'normal' }}>{e.inQty ? `+${e.inQty}` : '—'}</td>
+                                <td style={{ ...styles.td, color: e.outQty ? '#c62828' : '#cbd5e1', fontWeight: e.outQty ? 'bold' : 'normal' }}>{e.outQty ? `-${e.outQty}` : '—'}</td>
+                                <td style={styles.tdBold}>{e.balance}</td>
+                                <td style={styles.td}>{e.performedBy}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                         <tfoot>
                           <tr style={{ background: '#f5f6fa', borderTop: '2px solid #cbd5e1' }}>
-                            <td colSpan="4" style={{ ...styles.tdBold, textAlign: 'right' }}>Totals (filtered):</td>
+                            <td colSpan="5" style={{ ...styles.tdBold, textAlign: 'right' }}>Totals (filtered):</td>
                             <td style={{ ...styles.tdBold, color: '#2e7d32' }}>+{totalIn}</td>
                             <td style={{ ...styles.tdBold, color: '#c62828' }}>-{totalOut}</td>
                             <td colSpan="2" style={styles.td}></td>
@@ -3489,113 +3665,37 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
         {view === 'reports' && (
           <div style={styles.container}>
-            <h1 style={styles.pageTitle}>Reports &amp; Analytics</h1>
+            <ReportsAnalyticsDashboard externalProjects={projects} externalMaterials={mainMaterials} />
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '30px' }}>
-              {[
-                { icon: '💰', title: 'Inventory Valuation Report', desc: 'View current stock value and valuation', action: () => { setModal('total-materials'); setModalSearchTerm(''); } },
-                { icon: '📊', title: 'Stock Summary Report', desc: 'Detailed stock breakdown by category', action: () => { setModal('stock-value'); setModalSearchTerm(''); } },
-                { icon: '⚠️', title: 'Low Stock Report', desc: 'Materials below minimum stock level', action: () => { setModal('low-stock'); setModalSearchTerm(''); } },
-                { icon: '🔔', title: 'Reorder Level Report', desc: 'Materials that have reached reorder level', action: () => { setModal('reorder-level'); setModalSearchTerm(''); } },
-                { icon: '📥', title: 'GRN Report', desc: 'Goods received notes summary', action: () => { setModal('last-grn'); setModalSearchTerm(''); } },
-                { icon: '🚚', title: 'Material Transfer Report', desc: 'All MIN transfers to sites (Stock Ledger)', action: () => setView('stock-ledger') },
-                { icon: '📝', title: 'Purchase Request Report', desc: 'PRs generated summary', action: () => setView('approved-boms') },
-                { icon: '📈', title: 'Frequently Issued Materials', desc: 'Fast-moving materials, ranked by issue count', action: () => setModal('frequently-used') },
-              ].map((r, i) => (
-                <div key={i} onClick={r.action} className="hover-card" style={{ ...styles.tableContainer, padding: '20px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <div style={{ fontSize: '24px' }}>{r.icon}</div>
-                  <div style={{ fontWeight: '700', color: '#0d1b4b', fontSize: '14px' }}>{r.title}</div>
-                  <div style={{ fontSize: '12px', color: '#64748b' }}>{r.desc}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Exportable reports (PDF / Excel) */}
-            <h3 style={{ color: '#0d1b4b', margin: '0 0 14px', textAlign: 'left' }}>📑 Detailed Reports &amp; Export</h3>
-            <div style={{ marginBottom: '30px' }}>
-              <ReportsCenter tabs={['inventory', 'procurement', 'usage', 'bom']} />
-            </div>
-
-            {/* Monthly Usage Report */}
-            {(() => {
-              const filteredUsage = usageLogs.filter(u => {
-                if (!u.usageDate) return false;
-                const dateStr = u.usageDate.substring(0, 7); // 'YYYY-MM'
-                return dateStr === selectedMonth;
-              });
-
-              const usageDataGrouped = [];
-              const usageMap = {};
-              filteredUsage.forEach(u => {
-                const name = u.materialName;
-                const qty = Number(u.actualQty) || 0;
-                usageMap[name] = (usageMap[name] || 0) + qty;
-              });
-              Object.keys(usageMap).forEach(key => {
-                usageDataGrouped.push({ name: key, value: usageMap[key] });
-              });
-
-              return (
-                <div style={{ ...styles.tableContainer, padding: '24px', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                    <h3 style={{ margin: 0, color: '#0d1b4b' }}>📊 Monthly Material Usage Consumption</h3>
+            {/* Temporarily hidden for viva presentation: Quick Inventory Audit & Activity Modals */}
+            {/*
+            <div style={{ marginTop: '24px', backgroundColor: '#ffffff', borderRadius: '12px', padding: '20px 24px', border: '1px solid #e2e8f0', boxShadow: '0 2px 6px rgba(0,0,0,0.02)' }}>
+              <div style={{ fontSize: '10px', fontWeight: '800', letterSpacing: '1px', color: '#2563eb', marginBottom: '4px' }}>OPERATIONAL DRILL-DOWNS</div>
+              <h3 style={{ margin: '0 0 16px', fontSize: '16px', color: '#0d1b4b', fontWeight: '800' }}>
+                🔍 Quick Inventory Audit &amp; Activity Modals
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+                {[
+                  { icon: '💰', title: 'Inventory Valuation', desc: 'Current stock value and valuation', action: () => { setModal('total-materials'); setModalSearchTerm(''); } },
+                  { icon: '📊', title: 'Stock Breakdown', desc: 'Detailed stock breakdown by category', action: () => { setModal('stock-value'); setModalSearchTerm(''); } },
+                  { icon: '⚠️', title: 'Low Stock Audit', desc: 'Materials below minimum threshold', action: () => { setModal('low-stock'); setModalSearchTerm(''); } },
+                  { icon: '🔔', title: 'Reorder Level Audit', desc: 'Materials at or below reorder level', action: () => { setModal('reorder-level'); setModalSearchTerm(''); } },
+                  { icon: '📥', title: 'GRN Summary', desc: 'Goods received notes summary', action: () => { setModal('last-grn'); setModalSearchTerm(''); } },
+                  { icon: '🚚', title: 'Transfer History', desc: 'MIN site transfers log (Stock Ledger)', action: () => { setSelectedLedgerItem(null); setLedgerSearch(''); setLedgerCategoryFilter('All'); setLedgerTypeFilter('All'); setView('stock-ledger'); } },
+                  { icon: '📝', title: 'Purchase Requests', desc: 'PRs generated summary', action: () => setView('approved-boms') },
+                  { icon: '📈', title: 'Fast-Moving Items', desc: 'Ranked by site issuance count', action: () => setModal('frequently-used') },
+                ].map((r, i) => (
+                  <div key={i} onClick={r.action} className="hover-card" style={{ padding: '14px 16px', borderRadius: '8px', border: '1px solid #f1f5f9', backgroundColor: '#f8fafc', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ fontSize: '22px' }}>{r.icon}</div>
                     <div>
-                      <label style={{ marginRight: '10px', fontSize: '13px', fontWeight: 'bold' }}>Select Month:</label>
-                      <select
-                        value={selectedMonth}
-                        onChange={e => setSelectedMonth(e.target.value)}
-                        style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
-                      >
-                        {Array.from({ length: 12 }, (_, i) => {
-                          const d = new Date(new Date().getFullYear(), new Date().getMonth() - i, 1);
-                          const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-                          return <option key={value} value={value}>{d.toLocaleString('en-US', { month: 'long', year: 'numeric' })}</option>;
-                        })}
-                      </select>
+                      <div style={{ fontWeight: '700', color: '#0d1b4b', fontSize: '13px' }}>{r.title}</div>
+                      <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>{r.desc}</div>
                     </div>
                   </div>
-                  {usageDataGrouped.length === 0 ? (
-                    <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>No material consumption recorded for this month.</div>
-                  ) : (
-                    <div style={{ display: 'flex', gap: '40px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <div style={{ width: '320px', height: '240px' }}>
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={usageDataGrouped}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={60}
-                              outerRadius={90}
-                              paddingAngle={4}
-                              dataKey="value"
-                            >
-                              {usageDataGrouped.map((entry, index) => {
-                                const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#3b82f6'];
-                                return <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />;
-                              })}
-                            </Pie>
-                            <Tooltip formatter={(value, name) => [`${value} units`, name]} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-                      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                        {usageDataGrouped.map((item, index) => {
-                          const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#3b82f6'];
-                          return (
-                            <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
-                              <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: COLORS[index % COLORS.length] }}></div>
-                              <span style={{ fontWeight: '600' }}>{item.name}:</span>
-                              <span>{item.value}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+                ))}
+              </div>
+            </div>
+            */}
           </div>
         )}
 
@@ -3661,58 +3761,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         </div>
       </main>
 
-      {/* Low Stock Popup Alerts (Mandatory overlay) */}
-      {(() => {
-        const alertsToTrigger = lowStockMaterials;
-        const unacknowledged = alertsToTrigger.filter(m => !acknowledgedAlerts[m._id]);
-        if (unacknowledged.length === 0) return null;
-        
-        return (
-          <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-            <div style={{ background: 'white', padding: '30px', borderRadius: '12px', width: '500px', boxShadow: '0 10px 25px rgba(0,0,0,0.3)', borderTop: '6px solid #ef4444', textAlign: 'left' }}>
-              <h3 style={{ color: '#ef4444', margin: '0 0 16px', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                🚨 Low Stock Alert Notification (Main Store)
-              </h3>
-              <p style={{ color: '#475569', fontSize: '14px', marginBottom: '20px' }}>
-                The following materials have reached their pre-order or minimum levels. Please review and restock:
-              </p>
-              <div style={{ maxHeight: '200px', overflowY: 'auto', marginBottom: '24px' }}>
-                {unacknowledged.map(m => {
-                  const reorder = m.reorderLevel ?? m.minimumStock;
-                  const isCritical = materialStatus(m).tier === 'CRITICAL';
-                  return (
-                    <div key={m._id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}>
-                      <div>
-                        <strong style={{ color: '#0f172a' }}>{m.name}</strong>
-                        <div style={{ fontSize: '11px', color: '#64748b' }}>Stock: {m.quantity} {m.unit} / Reorder: {reorder} {m.unit}</div>
-                      </div>
-                      <span style={{ 
-                        background: isCritical ? '#fee2e2' : '#ffedd5', 
-                        color: isCritical ? '#991b1b' : '#c2410c',
-                        padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' 
-                      }}>
-                        {isCritical ? 'Critical' : 'Pre-Order'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-              <button 
-                onClick={() => {
-                  const updated = { ...acknowledgedAlerts };
-                  alertsToTrigger.forEach(m => {
-                    updated[m._id] = true;
-                  });
-                  setAcknowledgedAlerts(updated);
-                }}
-                style={{ width: '100%', padding: '12px', background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-              >
-                Acknowledge & Dismiss Alerts
-              </button>
-            </div>
-          </div>
-        );
-      })()}
+      {/* Low Stock Alert Notification Modal (Disabled as requested so popup does not appear upon dashboard entry) */}
       {renderStoreStatsModal()}
       {renderInvoicePreviewModal()}
     </div>

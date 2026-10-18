@@ -10,7 +10,7 @@ import { scrollToElement } from '../utils/scrollToElement';
 import useBusyAction from '../hooks/useBusyAction';
 import Pagination, { usePagination } from '../components/Pagination';
 
-const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
+const PMDashboard = ({ user, onLogout, onUserUpdate, initialPage = 'dashboard' }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -18,7 +18,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
     return () => clearInterval(timer);
   }, []);
 
-  const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'bom', 'settings'
+  const [activePage, setActivePage] = useState(initialPage); // 'dashboard', 'bom', 'settings'
   const [boms, setBoms] = useState([]);
   const [message, setMessageState] = useState('');
   const setMessage = useToastSetter(setMessageState, 'auto');
@@ -184,13 +184,16 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
       });
       const data = await res.json();
       if (data.success) {
-        setProjects(data.data || []);
+        const list = Array.isArray(data.data) ? data.data : Array.isArray(data.projects) ? data.projects : Array.isArray(data) ? data : [];
+        setProjects(list);
+        return list;
       } else {
-        setProjects([]);
+        console.warn('GET /api/projects warning:', data.message);
+        return [];
       }
     } catch (err) {
       console.error('Error fetching projects:', err);
-      setProjects([]);
+      return [];
     }
   };
 
@@ -282,7 +285,18 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
 
       const data = await res.json();
       if (data.success) {
-        setMessage(`✅ Success! Project saved with ID: ${data.data.projectId}`);
+        const savedProject = data.data || data;
+        setMessage(`✅ Success! Project saved with ID: ${savedProject.projectId || data.projectId}`);
+
+        // Immediately update local state so the project appears in the registry table instantly
+        setProjects(prev => {
+          const list = Array.isArray(prev) ? prev : [];
+          if (editingProjectId) {
+            return list.map(p => (p._id === savedProject._id ? savedProject : p));
+          }
+          return [savedProject, ...list.filter(p => p._id !== savedProject._id && p.projectId !== savedProject.projectId)];
+        });
+
         setProjectForm({
           projectName: '',
           clientName: '',
@@ -302,7 +316,9 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
         const specsInput = document.getElementById('projectSpecsInput');
         if (specsInput) specsInput.value = '';
 
-        fetchProjects();
+        // Synchronize with backend
+        await fetchProjects();
+        await fetchPmStats();
       } else {
         setMessage(`⚠️ Error: ${data.message}`);
       }
@@ -1037,25 +1053,25 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
               <tbody>
                 {projectsPagination.paginatedData.map((p, idx) => (
                   <tr key={p._id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '12px', fontSize: '13px', fontWeight: '700', color: '#0d1b4b' }}>{p.projectId}</td>
-                    <td style={{ padding: '12px', fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{p.projectName}</td>
-                    <td style={{ padding: '12px', fontSize: '13px', color: '#1e293b' }}>{p.clientName}</td>
-                    <td style={{ padding: '12px', fontSize: '13px', color: '#1e293b' }}>{p.location}</td>
+                    <td style={{ padding: '12px', fontSize: '13px', fontWeight: '700', color: '#0d1b4b' }}>{p.projectId || p.id || '-'}</td>
+                    <td style={{ padding: '12px', fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>{p.projectName || p.name || '-'}</td>
+                    <td style={{ padding: '12px', fontSize: '13px', color: '#1e293b' }}>{p.clientName || p.client || '-'}</td>
+                    <td style={{ padding: '12px', fontSize: '13px', color: '#1e293b' }}>{p.location || '-'}</td>
                     <td style={{ padding: '12px' }}>
                       <span style={{
                         background: p.status === 'Active' ? '#e8f5e9' : p.status === 'Completed' ? '#e3f2fd' : p.status === 'On Hold' || p.status === 'OnHold' ? '#ffebee' : '#dbeafe',
                         color: p.status === 'Active' ? '#2e7d32' : p.status === 'Completed' ? '#1565c0' : p.status === 'On Hold' || p.status === 'OnHold' ? '#c62828' : '#0d1b4b',
                         padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: '700'
-                      }}>{p.status}</span>
+                      }}>{p.status || 'Planning'}</span>
                     </td>
                     <td style={{ padding: '12px', fontSize: '12px', color: '#64748b' }}>
                       {formatDate(p.startDate)}
                     </td>
                     <td style={{ padding: '12px', fontSize: '13px', fontWeight: '600', color: '#1e293b' }}>
-                      {Number(p.budget).toLocaleString()}
+                      {Number(p.budget || 0).toLocaleString()}
                     </td>
                     <td style={{ padding: '12px', fontSize: '13px', color: '#1e293b' }}>
-                      {p.createdBy?.name || user?.name || '-'}
+                      {p.createdBy?.name || (typeof p.createdBy === 'string' ? p.createdBy : '') || user?.name || '-'}
                     </td>
                     <td style={{ padding: '12px' }}>
                       <div style={{ display: 'flex', gap: '6px' }}>
@@ -1073,14 +1089,14 @@ const PMDashboard = ({ user, onLogout, onUserUpdate }) => {
                             setEditingProjectId(p._id);
                             setShowProjectForm(true);
                             setProjectForm({
-                              projectName: p.projectName,
-                              clientName: p.clientName,
-                              location: p.location,
-                              startDate: new Date(p.startDate).toISOString().substring(0, 10),
-                              expectedEndDate: new Date(p.expectedEndDate).toISOString().substring(0, 10),
-                              budget: p.budget,
+                              projectName: p.projectName || p.name || '',
+                              clientName: p.clientName || p.client || '',
+                              location: p.location || '',
+                              startDate: p.startDate ? new Date(p.startDate).toISOString().substring(0, 10) : '',
+                              expectedEndDate: p.expectedEndDate ? new Date(p.expectedEndDate).toISOString().substring(0, 10) : '',
+                              budget: p.budget || '',
                               description: p.description || '',
-                              status: p.status
+                              status: p.status || 'Planning'
                             });
                           }}
                           style={{ background: '#2563eb', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}

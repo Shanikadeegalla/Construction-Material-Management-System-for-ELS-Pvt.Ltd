@@ -6,6 +6,7 @@ import {
   registerUser,
   loginUser,
   getUserProfile,
+  updateUserProfile,
   getUsers,
   updateUser,
   deactivateUser,
@@ -69,10 +70,24 @@ router.post('/login', loginUser);
 router.post('/reset-all-passwords', resetAllPasswords);
 router.get('/me', protect, getUserProfile);
 
-// User management (gated by the Roles & Permissions matrix)
+// Dedicated profile endpoints (Self profile update for any authenticated user)
+router.get('/profile', protect, getUserProfile);
+router.put('/profile', protect, updateUserProfile);
+
+// Authorization check for updating user by ID:
+// If the authenticated user is updating their own account, allow without requiring admin-level 'Create/Edit Users'.
+// Only require 'Create/Edit Users' when an administrator is modifying another user's account.
+const checkUserUpdateAuth = (req, res, next) => {
+  if (req.user && req.params.id && req.user._id.toString() === req.params.id.toString()) {
+    return next();
+  }
+  return checkPermission('Create/Edit Users')(req, res, next);
+};
+
+// User management (gated by the Roles & Permissions matrix for administrative actions)
 router.get('/next-employee-id', protect, checkPermission('Create/Edit Users'), getNextEmployeeId);
 router.get('/users', protect, checkPermission('View User List'), getUsers);
-router.put('/users/:id', protect, checkPermission('Create/Edit Users'), updateUser);
+router.put('/users/:id', protect, checkUserUpdateAuth, updateUser);
 router.put('/users/:id/deactivate', protect, checkPermission('Create/Edit Users'), deactivateUser);
 router.put('/users/:id/activate', protect, checkPermission('Create/Edit Users'), activateUser);
 router.put('/users/:id/reset-password', protect, checkPermission('Create/Edit Users'), resetUserPassword);
