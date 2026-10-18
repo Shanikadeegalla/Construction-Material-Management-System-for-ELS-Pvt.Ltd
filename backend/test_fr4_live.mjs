@@ -10,7 +10,7 @@ async function runFR4Tests() {
   const mainRes = await fetch(`${base}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'mainstore@elslanka.com', password: 'Password123!' })
+    body: JSON.stringify({ email: 'store@els.com', password: 'store123' })
   });
   const mainData = await mainRes.json();
   const mainToken = mainData.data?.token || mainData.token;
@@ -18,7 +18,7 @@ async function runFR4Tests() {
   const siteRes = await fetch(`${base}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'sitestore@elslanka.com', password: 'Password123!' })
+    body: JSON.stringify({ email: 'sitestore@els.com', password: 'site123' })
   });
   const siteData = await siteRes.json();
   const siteToken = siteData.data?.token || siteData.token;

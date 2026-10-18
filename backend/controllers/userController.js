@@ -96,3 +96,5 @@ export const updateUserEmail = async (req, res, next) => {
     next(error);
   }
 };
+
+export { updateUserProfile, updateUser } from './authController.js';

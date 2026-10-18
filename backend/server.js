@@ -58,6 +58,7 @@ console.log(`Serving uploads from: ${UPLOAD_DIR}`);
 
 // Mount routes
 app.use('/api/auth', authRoutes);
+app.use('/api/users', authRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/purchase-requests', purchaseRequestRoutes);

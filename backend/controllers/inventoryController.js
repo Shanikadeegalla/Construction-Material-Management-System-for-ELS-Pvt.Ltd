@@ -661,7 +661,7 @@ export const getNotifications = async (req, res) => {
 // @access  Private
 export const getStockLedger = async (req, res) => {
   try {
-    const { material, materialId, type, from, to } = req.query;
+    const { material, materialId, category, type, from, to } = req.query;
 
     const query = {};
     if (materialId && mongoose.Types.ObjectId.isValid(materialId)) {
@@ -676,11 +676,16 @@ export const getStockLedger = async (req, res) => {
       if (to) query.createdAt.$lte = new Date(to);
     }
 
-    const movements = await StockMovement.find(query).sort({ createdAt: -1 });
+    const movements = await StockMovement.find(query)
+      .populate('material', 'category materialCode')
+      .sort({ createdAt: -1 });
 
     let entries = movements.map(m => ({
       date: m.createdAt,
-      materialId: String(m.material),
+      material: String(m.material?._id || m.material),
+      materialId: String(m.material?._id || m.material),
+      materialCode: m.material?.materialCode || '',
+      category: m.material?.category || '',
       materialName: m.materialName,
       unit: m.unit,
       type: m.type,
@@ -691,6 +696,11 @@ export const getStockLedger = async (req, res) => {
       performedBy: m.performedBy,
       remarks: m.reason ? `${m.reason}${m.notes ? ' — ' + m.notes : ''}` : (m.notes || '')
     }));
+
+    if (category && category !== 'All') {
+      const catLower = String(category).toLowerCase();
+      entries = entries.filter(e => (e.category || '').toLowerCase() === catLower);
+    }
 
     if (material) {
       const q = String(material).toLowerCase();

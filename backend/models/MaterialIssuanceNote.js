@@ -98,7 +98,7 @@ const materialIssuanceNoteSchema = new mongoose.Schema({
   // Received (Site Store confirmed, added to Site Store stock).
   status: {
     type: String,
-    enum: ['Pending', 'Approved', 'Rejected', 'Issued', 'Received'],
+    enum: ['Pending', 'Pending Approval', 'Approved', 'Rejected', 'Issued', 'Partially Issued', 'Received'],
     default: 'Pending'
   },
   notes: {

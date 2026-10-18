@@ -88,6 +88,13 @@ const runPostConnectTasks = async () => {
   }
 
   try {
+    const { seedSiteStoreDemoData } = await import('../scripts/seedSiteStoreDummyData.js');
+    await seedSiteStoreDemoData();
+  } catch (err) {
+    console.error('[SiteStore Demo Seeder Error]:', err.message);
+  }
+
+  try {
     const User = (await import('../models/userModel.js')).default;
     const result = await User.updateMany({ role: 'PurchaseOfficer' }, { role: 'PurchaseManager' });
     if (result.modifiedCount > 0) {

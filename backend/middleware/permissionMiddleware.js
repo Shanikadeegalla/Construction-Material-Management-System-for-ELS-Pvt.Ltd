@@ -16,7 +16,7 @@ export const checkPermission = (action) => async (req, res, next) => {
       return next();
     }
     const permission = await Permission.findOne({ role: req.user.role, module: action });
-    if (!permission) {
+    if (!permission || permission.permissionLevel === 'None') {
       res.status(403);
       throw new Error(`Your role does not have permission to perform "${action}".`);
     }
@@ -24,15 +24,15 @@ export const checkPermission = (action) => async (req, res, next) => {
     const level = permission.permissionLevel;
     const method = req.method ? req.method.toUpperCase() : 'GET';
 
-    if (level === 'View') {
+    if (['View', 'Partial'].includes(level)) {
       if (['GET', 'HEAD'].includes(method)) {
         return next();
       }
       res.status(403);
-      throw new Error(`Your role level "View" does not permit modifying data.`);
+      throw new Error(`Your role level "${level}" does not permit modifying data.`);
     }
 
-    if (['Edit', 'Full'].includes(level)) {
+    if (['Edit', 'Full', 'Approve'].includes(level)) {
       return next();
     }
 
