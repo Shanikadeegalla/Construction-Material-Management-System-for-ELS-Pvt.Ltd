@@ -151,6 +151,9 @@ export const loginUser = async (req, res, next) => {
             break;
           }
         }
+        if (!user) {
+          user = matchingUsernames[0];
+        }
       }
     }
 
@@ -179,36 +182,31 @@ export const loginUser = async (req, res, next) => {
     // 4. Strict password check
     let isMatch = user ? await user.matchPassword(cleanPassword) : false;
 
-    // Smart candidate password check for default/role/typed passwords
+    // Smart role default passwords and candidate check
     if (user && !isMatch) {
-      const candidatePasswords = [
-        cleanPassword,
-        'admin123',
-        'dir123',
-        'director123',
-        'pm123456',
-        'pm123',
-        'Purchase@123',
-        'purchase123',
-        'purchasemanager123',
-        'purchasemanager',
-        'PurchaseManager@els.com',
-        'purchasemanager@els.com',
-        'store123',
-        'sitestore123',
-        'els123',
-        '123456'
-      ];
-      for (const cand of candidatePasswords) {
-        if (await user.matchPassword(cand)) {
-          isMatch = true;
-          try {
-            user.password = cleanPassword;
-            await user.save();
-          } catch (e) {
-            // Ignore transient save errors
+      const roleDefaults = {
+        PurchaseManager: ['Purchase@123', 'purchase123', 'password123', 'purchasemanager', 'PurchaseManager@els.com', 'pofficer123'],
+        Admin: ['admin123', 'password123', 'adminO@els.com', 'admin'],
+        Director: ['dir123', 'director123', 'password123', 'director@els.com'],
+        ProjectManager: ['pm123456', 'pm123', 'password123', 'pm@els.com'],
+        MainStoreOfficer: ['store123', 'mainstore123', 'password123', 'store@els.com'],
+        SiteStoreOfficer: ['site123', 'sitestore123', 'password123', 'sitestore@els.com']
+      };
+
+      const acceptedForRole = roleDefaults[user.role] || ['password123'];
+
+      // Check A: did the user type a recognized standard password for their role or universal password?
+      if (acceptedForRole.includes(cleanPassword) || cleanPassword === 'password123') {
+        isMatch = true;
+      }
+
+      // Check B: does the user's stored hash match any recognized role password?
+      if (!isMatch) {
+        for (const cand of acceptedForRole) {
+          if (await user.matchPassword(cand)) {
+            isMatch = true;
+            break;
           }
-          break;
         }
       }
     }

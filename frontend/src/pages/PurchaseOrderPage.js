@@ -15,8 +15,10 @@ import useBusyAction from '../hooks/useBusyAction';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import Pagination, { usePagination } from '../components/Pagination';
 import MaterialsViewButton from '../components/MaterialsViewButton';
+import { useToast } from '../context/ToastContext';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
+  const { toast } = useToast() || {};
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -156,8 +158,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     );
   }, [suppliers, supplierSearch]);
 
+  const sortedPurchaseRequests = React.useMemo(() => {
+    return [...purchaseRequests].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  }, [purchaseRequests]);
+
   const poPagination = usePagination(filteredOrders, 8, [poSearchTerm]);
-  const prPagination = usePagination(purchaseRequests, 8, [purchaseRequests.length]);
+  const prPagination = usePagination(sortedPurchaseRequests, 8, [sortedPurchaseRequests.length]);
   const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
   const invoicesPagination = usePagination(invoices, 8, [invoices.length], { storageKey: 'po_invoices' });
 
@@ -200,10 +206,11 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       const prData = await prRes.json();
       if (prData.success) setPendingPRs(prData.data);
 
-      // Fetch ALL PRs
+      // Fetch ALL PRs (sorted descending by creation date)
       const allPrRes = await fetch(`${API_BASE}/api/purchase-requests`, { headers });
       const allPrData = await allPrRes.json();
       let prList = allPrData.success ? allPrData.data : [];
+      prList.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
       setPurchaseRequests(prList);
 
       // Fetch Invoices / Payments
@@ -293,6 +300,111 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     return () => clearInterval(interval);
   }, []);
 
+  // Real-time synchronization via Server-Sent Events (SSE)
+  useEffect(() => {
+    if (!hasSession()) return undefined;
+
+    const token = JSON.parse(localStorage.getItem('user'))?.token;
+    if (!token) return undefined;
+
+    const sseUrl = `${API_BASE}/api/realtime/events?token=${encodeURIComponent(token)}`;
+    let eventSource = null;
+    let reconnectTimer = null;
+
+    const connectSSE = () => {
+      try {
+        eventSource = new EventSource(sseUrl);
+
+        eventSource.addEventListener('PR_CREATED', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            const alertMsg = data.message || `New Purchase Request submitted for ${data.pr?.projectName || 'Project'}`;
+
+            // 1. Popup / toast alert for Purchase Manager
+            if (toast?.notify) {
+              toast.notify(alertMsg, 'New Purchase Request 📋');
+            } else if (toast?.info) {
+              toast.info(alertMsg);
+            }
+            setMessage(`🔔 ${alertMsg}`);
+
+            // 2. Increment bell unread badge count & update notifications
+            setPrUnreadCount(prev => prev + 1);
+            if (data.notification) {
+              setPrNotifications(prev => [data.notification, ...prev.filter(n => n._id !== data.notification._id)]);
+            }
+
+            // 3. Immediately prepend new PR to table sorted by createdAt descending
+            if (data.pr) {
+              setPurchaseRequests(prev => {
+                const filtered = prev.filter(p => p._id !== data.pr._id);
+                return [data.pr, ...filtered].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+              });
+              setPendingPRs(prev => {
+                if (prev.some(p => p._id === data.pr._id)) return prev;
+                return [data.pr, ...prev];
+              });
+            }
+
+            // 4. Live recalculation / re-fetch of KPI cards (Total, Pending, Sent, Delivered POs)
+            fetchData();
+            fetchPrNotifications();
+          } catch (err) {
+            console.error('Error handling PR_CREATED event:', err);
+          }
+        });
+
+        eventSource.addEventListener('PR_STATUS_CHANGED', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data.prId) {
+              setPurchaseRequests(prev => prev.map(p => p._id === data.prId ? { ...p, status: data.status } : p));
+              setPendingPRs(prev => data.status === 'Pending' ? prev : prev.filter(p => p._id !== data.prId));
+            }
+            // Automatically re-fetch and recalculate KPI metrics
+            fetchData();
+          } catch (err) {
+            console.error('Error handling PR_STATUS_CHANGED event:', err);
+          }
+        });
+
+        eventSource.addEventListener('PO_CREATED', () => {
+          // Re-fetch orders to update KPI metrics in real time
+          fetchData();
+          fetchPrNotifications();
+        });
+
+        eventSource.addEventListener('PO_STATUS_CHANGED', () => {
+          // Re-fetch orders to recalculate KPI cards in real time
+          fetchData();
+          fetchPrNotifications();
+        });
+
+        eventSource.onerror = () => {
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          if (!reconnectTimer) {
+            reconnectTimer = setTimeout(() => {
+              reconnectTimer = null;
+              connectSSE();
+            }, 5000);
+          }
+        };
+      } catch (err) {
+        console.warn('Failed to establish real-time SSE connection:', err);
+      }
+    };
+
+    connectSSE();
+
+    return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (eventSource) eventSource.close();
+    };
+  }, [toast]);
+
   const handlePayInvoice = async (invoiceId) => {
     if (!hasSession()) return;
     setError(''); setMessage('');
@@ -343,6 +455,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
       return d.toISOString().substring(0, 10);
     };
+    if (!['Cash', 'Cheque'].includes(manualPayForm.method)) {
+      errors.method = 'Please select a payment method (Cash or Cheque).';
+    }
     if (!manualPayForm.paidAt) {
       errors.paidAt = 'Payment date is required.';
     } else if (manualPayForm.paidAt > localToday()) {
@@ -1144,7 +1259,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {purchaseRequests.slice(0, 5).map((pr, i) => (
+                  {sortedPurchaseRequests.slice(0, 5).map((pr, i) => (
                     <tr key={pr._id || i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
                       <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
@@ -1889,29 +2004,92 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
             {manualPayError && <div style={{ background: '#ffebee', border: '1px solid #ef5350', color: '#c62828', padding: '8px 12px', borderRadius: '6px', marginBottom: '12px', fontSize: '13px' }}>{manualPayError}</div>}
 
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Payment Method *</label>
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
-              {['Cash', 'Cheque'].map(mth => (
-                <button
-                  type="button"
-                  key={mth}
-                  onClick={() => setManualPayForm({ ...manualPayForm, method: mth })}
-                  style={{ flex: 1, padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: '700', fontSize: '13px', border: manualPayForm.method === mth ? '2px solid #ff9800' : '1px solid #cbd5e1', background: manualPayForm.method === mth ? '#fff7ed' : 'white', color: '#0d1b4b' }}
-                >
-                  {mth === 'Cash' ? '💵 Cash' : '🏦 Cheque'}
-                </button>
-              ))}
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '8px' }}>
+              Payment Method * <span style={{ fontWeight: 'normal', color: '#64748b', fontSize: '11px' }}>(Choose Cash or Cheque)</span>
+            </label>
+            <div
+              role="radiogroup"
+              aria-label="Payment Method Selection"
+              style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}
+            >
+              {[
+                { value: 'Cash', label: 'Cash Payment', icon: '💵', sub: 'Cash disbursement' },
+                { value: 'Cheque', label: 'Cheque Payment', icon: '🏦', sub: '6-digit bank cheque' }
+              ].map(opt => {
+                const isSelected = manualPayForm.method === opt.value;
+                return (
+                  <label
+                    key={opt.value}
+                    htmlFor={`payMethod_${opt.value}`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: isSelected ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                      background: isSelected ? '#eff6ff' : '#ffffff',
+                      boxShadow: isSelected ? '0 2px 6px rgba(37,99,235,0.12)' : 'none',
+                      transition: 'all 0.15s ease-in-out'
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      id={`payMethod_${opt.value}`}
+                      name="paymentMethod"
+                      value={opt.value}
+                      checked={isSelected}
+                      onChange={() => {
+                        setManualPayForm(prev => ({ ...prev, method: opt.value }));
+                        setManualPayFieldErrors(prev => {
+                          const next = { ...prev };
+                          delete next.method;
+                          delete next.reference;
+                          delete next.bankName;
+                          delete next.chequeDate;
+                          return next;
+                        });
+                      }}
+                      style={{ cursor: 'pointer', accentColor: '#2563eb', width: '16px', height: '16px', margin: 0 }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: '700', fontSize: '13px', color: isSelected ? '#1e40af' : '#0d1b4b', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span>{opt.icon}</span> {opt.value}
+                      </div>
+                      <div style={{ fontSize: '11px', color: isSelected ? '#3b82f6' : '#64748b', marginTop: '2px' }}>
+                        {opt.sub}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
             </div>
+            {payFieldError('method')}
 
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>
-              {manualPayForm.method === 'Cheque' ? 'Cheque Number *' : 'Voucher / Receipt No.'}
+            <label htmlFor="manualPayReference" style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>
+              {manualPayForm.method === 'Cheque' ? (
+                <>Cheque Number <span style={{ color: '#dc2626' }}>* (Required)</span></>
+              ) : (
+                <>Voucher / Receipt Reference <span style={{ color: '#94a3b8', fontWeight: 400 }}>(Optional)</span></>
+              )}
             </label>
             <input
+              id="manualPayReference"
               type="text"
+              required={manualPayForm.method === 'Cheque'}
               value={manualPayForm.reference}
               onChange={e => setManualPayForm({ ...manualPayForm, reference: e.target.value })}
-              placeholder={manualPayForm.method === 'Cheque' ? '6 digits, e.g. 004512' : 'Optional'}
-              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
+              placeholder={manualPayForm.method === 'Cheque' ? '6-digit cheque number (e.g. 004512)' : 'Optional voucher or cash receipt #'}
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                border: manualPayFieldErrors.reference ? '1px solid #ef5350' : '1px solid #cbd5e1',
+                borderRadius: '6px',
+                fontSize: '13px',
+                marginBottom: manualPayFieldErrors.reference ? '4px' : '14px',
+                boxSizing: 'border-box'
+              }}
             />
             {payFieldError('reference')}
 
