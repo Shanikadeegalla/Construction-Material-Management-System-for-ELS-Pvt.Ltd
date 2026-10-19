@@ -7,6 +7,7 @@ import User from '../models/userModel.js';
 import mongoose from 'mongoose';
 import { createNotificationHelper, notifyRoles } from './notificationController.js';
 import { sendMail, escapeHtml } from '../utils/mailer.js';
+import { broadcastRealtimeEvent } from '../utils/realtimeEvents.js';
 
 // Helper to resolve material name to an ObjectId, creating a Material if it doesn't exist
 const resolveMaterial = async (materialName, unit) => {
@@ -180,15 +181,31 @@ export const getPurchaseOrders = async (req, res) => {
   }
 };
 
-// Next free PO-YYYY-XXX number, skipping any already taken
+// Next free PO-YYYY-XXX number based on the latest created PO record sorted by createdAt: -1
 const generateNextPoNumber = async () => {
-  const year = new Date().getFullYear();
-  let next = (await PurchaseOrder.countDocuments()) + 1;
-  let candidate;
-  do {
-    candidate = `PO-${year}-${String(next).padStart(3, '0')}`;
-    next++;
-  } while (await PurchaseOrder.findOne({ poNumber: candidate }));
+  const currentYear = new Date().getFullYear();
+  // Find the latest created PO record sorted by createdAt: -1
+  const latestPo = await PurchaseOrder.findOne().sort({ createdAt: -1, _id: -1 });
+
+  let nextSeq = 1;
+  if (latestPo && latestPo.poNumber) {
+    // Extract sequence number (e.g. from PO-2026-028 -> 028 -> 28, or PO-2026-029 -> 29)
+    const match = latestPo.poNumber.match(/PO-(\d{4})-(\d+)/i) || latestPo.poNumber.match(/(\d+)$/);
+    if (match) {
+      const seqStr = match.length > 2 ? match[2] : match[1];
+      const parsedSeq = parseInt(seqStr, 10);
+      if (!isNaN(parsedSeq)) {
+        nextSeq = parsedSeq + 1;
+      }
+    }
+  }
+
+  // Safely construct candidate (e.g. PO-2026-029) and increment if candidate already exists
+  let candidate = `PO-${currentYear}-${String(nextSeq).padStart(3, '0')}`;
+  while (await PurchaseOrder.findOne({ poNumber: candidate })) {
+    nextSeq++;
+    candidate = `PO-${currentYear}-${String(nextSeq).padStart(3, '0')}`;
+  }
   return candidate;
 };
 
@@ -285,13 +302,33 @@ export const createPurchaseOrder = async (req, res) => {
       poData.prId = prId;
     }
 
-    const po = new PurchaseOrder(poData);
-    await po.save();
+    let po;
+    try {
+      po = new PurchaseOrder(poData);
+      await po.save();
+    } catch (saveErr) {
+      if (saveErr.code === 11000 && (saveErr.keyPattern?.poNumber || String(saveErr.message).includes('poNumber'))) {
+        // Concurrency safeguard: retry once with fresh incremented sequence number
+        poData.poNumber = await generateNextPoNumber();
+        po = new PurchaseOrder(poData);
+        await po.save();
+      } else {
+        throw saveErr;
+      }
+    }
 
     // 4. Update PR status to "PO Created"
     if (prId && mongoose.Types.ObjectId.isValid(prId)) {
       await PurchaseRequest.findByIdAndUpdate(prId, { status: 'PO Created' });
+      broadcastRealtimeEvent('PR_STATUS_CHANGED', {
+        prId,
+        status: 'PO Created'
+      });
     }
+
+    broadcastRealtimeEvent('PO_CREATED', {
+      po
+    });
 
     // 5. Notify Directors that a new PO is awaiting their approval
     try {
@@ -383,6 +420,12 @@ export const updatePurchaseOrderStatus = async (req, res) => {
       { new: true }
     ).populate('prId');
 
+    broadcastRealtimeEvent('PO_STATUS_CHANGED', {
+      poId: po._id,
+      status: po.status,
+      po
+    });
+
     res.status(200).json({ success: true, message: `Purchase Order status updated to ${status}!`, data: po });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -457,6 +500,12 @@ export const approvePurchaseOrder = async (req, res) => {
       '/main-store-dashboard'
     );
 
+    broadcastRealtimeEvent('PO_STATUS_CHANGED', {
+      poId: po._id,
+      status: po.status,
+      po
+    });
+
     res.status(200).json({ success: true, message: `Purchase Order ${po.poNumber} approved${sendNote}.`, data: po });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -494,6 +543,12 @@ export const rejectPurchaseOrder = async (req, res) => {
     } catch (nErr) {
       console.error('Error creating PO rejection notifications:', nErr);
     }
+
+    broadcastRealtimeEvent('PO_STATUS_CHANGED', {
+      poId: po._id,
+      status: po.status,
+      po
+    });
 
     res.status(200).json({ success: true, message: 'Purchase Order rejected successfully!', data: po });
   } catch (error) {
@@ -614,6 +669,12 @@ export const sendPurchaseOrder = async (req, res) => {
     } catch (nErr) {
       console.error('Error creating PO sent notifications:', nErr);
     }
+
+    broadcastRealtimeEvent('PO_STATUS_CHANGED', {
+      poId: po._id,
+      status: po.status,
+      po
+    });
 
     res.status(200).json({
       success: true,

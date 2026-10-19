@@ -24,6 +24,7 @@ import materialTransferNoteRoutes from './routes/materialTransferNoteRoutes.js';
 import quotationRoutes from './routes/quotations.js';
 import invoiceRoutes from './routes/invoices.js';
 import paymentRoutes from './routes/paymentRoutes.js';
+import realtimeRoutes from './routes/realtimeRoutes.js';
 import { fileURLToPath } from 'url';
 import { handleWebhook } from './controllers/paymentController.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
@@ -78,6 +79,7 @@ app.use('/api/material-transfer-notes', materialTransferNoteRoutes);
 app.use('/api/quotations', quotationRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/realtime', realtimeRoutes);
 app.use('/api', siteInventoryRoutes);
 
 // Root route

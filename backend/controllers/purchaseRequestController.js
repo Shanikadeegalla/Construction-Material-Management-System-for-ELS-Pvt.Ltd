@@ -7,6 +7,7 @@ import User from '../models/userModel.js';
 import mongoose from 'mongoose';
 import { createNotificationHelper } from './notificationController.js';
 import { getLatestApprovedBOM, computeBOMStockCheck } from './bomController.js';
+import { broadcastRealtimeEvent } from '../utils/realtimeEvents.js';
 
 // @desc    Get all purchase requests
 // @route   GET /api/purchase-requests
@@ -68,6 +69,23 @@ export const createPurchaseRequest = async (req, res) => {
     });
     if (!projectDoc) {
       return res.status(400).json({ success: false, message: `Project "${finalProjectName}" not found.` });
+    }
+
+    // Validation: prevent creating duplicate PRs if a project already has an active/pending PR
+    const activePendingPr = await PurchaseRequest.findOne({
+      $or: [
+        { project: finalProjectName },
+        { projectName: finalProjectName },
+        ...(projectDoc.projectName ? [{ project: projectDoc.projectName }, { projectName: projectDoc.projectName }] : []),
+        ...(projectDoc.name ? [{ project: projectDoc.name }, { projectName: projectDoc.name }] : [])
+      ],
+      status: { $regex: /^pending$/i }
+    });
+    if (activePendingPr) {
+      return res.status(400).json({
+        success: false,
+        message: `Project "${finalProjectName}" already has an active/pending Purchase Request (${activePendingPr.prNumber || activePendingPr._id}). Please resolve it before creating a new one.`
+      });
     }
 
     // 2. Find the approved BOM for this project
@@ -149,15 +167,25 @@ export const createPurchaseRequest = async (req, res) => {
     await pr.save();
 
     // Notify Purchase Managers so they can convert the PR into a PO
+    let createdNotification = null;
     try {
       const purchaseManagers = await User.find({ role: 'PurchaseManager' });
       const msg = `New Purchase Request from Main Store for ${finalProjectName} (${mappedMaterials.length} item${mappedMaterials.length === 1 ? '' : 's'}) awaiting PO conversion`;
       for (const pmUser of purchaseManagers) {
-        await createNotificationHelper(pmUser._id, msg, 'PR_SUBMITTED', '/purchase-orders');
+        const notif = await createNotificationHelper(pmUser._id, msg, 'PR_SUBMITTED', '/purchase-orders');
+        if (!createdNotification) createdNotification = notif;
       }
     } catch (nErr) {
       console.error('Error creating PR submission notifications:', nErr);
     }
+
+    // Real-time notification and update broadcast
+    broadcastRealtimeEvent('PR_CREATED', {
+      pr,
+      message: `New Purchase Request from Main Store for ${finalProjectName} (${mappedMaterials.length} item${mappedMaterials.length === 1 ? '' : 's'}) awaiting PO conversion`,
+      notification: createdNotification,
+      unreadIncrement: 1
+    });
 
     res.status(201).json({ success: true, message: 'Purchase request submitted successfully!', data: pr });
   } catch (error) {
@@ -196,6 +224,26 @@ export const createPurchaseRequestFromBOM = async (req, res) => {
     const latestBom = await getLatestApprovedBOM(bom.projectId._id);
     if (!latestBom || String(latestBom._id) !== String(bom._id)) {
       return res.status(400).json({ success: false, message: 'A newer approved BOM exists for this project. Please use the latest approved BOM.' });
+    }
+
+    const projectName = bom.projectId.projectName || bom.projectId.name || bom.projectName;
+
+    // Validation: prevent creating duplicate PRs if a project already has an active/pending PR
+    const activePendingPr = await PurchaseRequest.findOne({
+      $or: [
+        { project: projectName },
+        { projectName: projectName },
+        ...(bom.projectId.projectName ? [{ project: bom.projectId.projectName }, { projectName: bom.projectId.projectName }] : []),
+        ...(bom.projectId.name ? [{ project: bom.projectId.name }, { projectName: bom.projectId.name }] : []),
+        { bomId: bom._id }
+      ],
+      status: { $regex: /^pending$/i }
+    });
+    if (activePendingPr) {
+      return res.status(400).json({
+        success: false,
+        message: `Project "${projectName}" already has an active/pending Purchase Request (${activePendingPr.prNumber || activePendingPr._id}). Please resolve it before creating a new one.`
+      });
     }
 
     const stockCheck = await computeBOMStockCheck(bom);
@@ -245,9 +293,7 @@ export const createPurchaseRequestFromBOM = async (req, res) => {
         estimatedUnitCost: row.estimatedUnitCost
       });
     }
-
-    const projectName = bom.projectId.projectName || bom.projectId.name || bom.projectName;
-
+ 
     const pr = new PurchaseRequest({
       project: projectName,
       projectName,
@@ -263,15 +309,25 @@ export const createPurchaseRequestFromBOM = async (req, res) => {
     await pr.save();
 
     // Notify Purchase Managers so they can convert the PR into a PO
+    let createdNotification = null;
     try {
       const purchaseManagers = await User.find({ role: 'PurchaseManager' });
       const msg = `New Purchase Request from Main Store for ${projectName} (${mappedMaterials.length} item${mappedMaterials.length === 1 ? '' : 's'}) awaiting PO conversion`;
       for (const pmUser of purchaseManagers) {
-        await createNotificationHelper(pmUser._id, msg, 'PR_SUBMITTED', '/purchase-orders');
+        const notif = await createNotificationHelper(pmUser._id, msg, 'PR_SUBMITTED', '/purchase-orders');
+        if (!createdNotification) createdNotification = notif;
       }
     } catch (nErr) {
       console.error('Error creating PR submission notifications:', nErr);
     }
+
+    // Real-time notification and update broadcast
+    broadcastRealtimeEvent('PR_CREATED', {
+      pr,
+      message: `New Purchase Request from Main Store for ${projectName} (${mappedMaterials.length} item${mappedMaterials.length === 1 ? '' : 's'}) awaiting PO conversion`,
+      notification: createdNotification,
+      unreadIncrement: 1
+    });
 
     res.status(201).json({ success: true, message: 'Purchase request submitted successfully!', data: pr });
   } catch (error) {
@@ -312,6 +368,12 @@ export const updatePurchaseRequestStatus = async (req, res) => {
     } catch (nErr) {
       console.error('Error creating PR decline notification:', nErr);
     }
+
+    broadcastRealtimeEvent('PR_STATUS_CHANGED', {
+      prId: pr._id,
+      status: pr.status,
+      pr
+    });
 
     res.status(200).json({ success: true, message: 'Purchase request declined.', data: pr });
   } catch (error) {

@@ -1792,7 +1792,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           {[
             { id: 'dashboard', label: 'Dashboard', icon: '📊' },
             { id: 'inventory', label: 'Inventory', icon: '📦' },
-            { id: 'approved-boms', label: 'Approved BOMs', icon: '✅' },
+            { id: 'approved-boms', label: 'Purchase Request', icon: '✅' },
             { id: 'grn', label: 'Goods Received Note', icon: '📥' },
             { id: 'min', label: 'Material Transfer Note', icon: '🚚' },
             { id: 'stock-adjustments', label: 'Stock Adjustments', icon: '⚖️' },
