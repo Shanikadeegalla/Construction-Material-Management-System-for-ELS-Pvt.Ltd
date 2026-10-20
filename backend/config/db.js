@@ -120,28 +120,32 @@ const runPostConnectTasks = async () => {
 const connectDB = async () => {
   const primaryUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/ConstructionDB';
   const localUri = 'mongodb://127.0.0.1:27017/ConstructionDB';
+  const allowLocalFallback = process.env.ALLOW_LOCAL_FALLBACK === 'true';
 
   try {
-    const conn = await mongoose.connect(primaryUri, { serverSelectionTimeoutMS: 3000, socketTimeoutMS: 5000 });
+    const conn = await mongoose.connect(primaryUri, { serverSelectionTimeoutMS: 10000, socketTimeoutMS: 15000 });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
     await runPostConnectTasks();
     return;
   } catch (error) {
-    console.error(`Primary MongoDB connection error (${primaryUri}): ${error.message}`);
+    console.error(`Primary MongoDB connection error: ${error.message}`);
     
-    if (primaryUri !== localUri) {
+    if (primaryUri !== localUri && allowLocalFallback) {
       try {
-        console.log(`Attempting fallback connection to local MongoDB: ${localUri}`);
-        const conn = await mongoose.connect(localUri, { serverSelectionTimeoutMS: 3000, socketTimeoutMS: 5000 });
+        console.warn(`[DB Warning] Primary MongoDB failed. ALLOW_LOCAL_FALLBACK is enabled; attempting connection to local database: ${localUri}`);
+        const conn = await mongoose.connect(localUri, { serverSelectionTimeoutMS: 5000, socketTimeoutMS: 10000 });
         console.log(`MongoDB Connected (Local Fallback): ${conn.connection.host}`);
         await runPostConnectTasks();
         return;
       } catch (localErr) {
         console.error(`Local MongoDB fallback connection error: ${localErr.message}`);
       }
+    } else if (primaryUri !== localUri && !allowLocalFallback) {
+      console.warn(`[DB Notice] Local MongoDB fallback is disabled to prevent database divergence. Retrying primary connection in 5 seconds... (Set ALLOW_LOCAL_FALLBACK=true in .env if local offline mode is intended)`);
+    } else {
+      console.warn(`Please ensure MongoDB is running on 127.0.0.1:27017, or configure MONGO_URI in your backend/.env file.`);
     }
 
-    console.warn(`Please ensure MongoDB is running locally on 127.0.0.1:27017, or configure MONGO_URI in your backend/.env file.`);
     console.log('Retrying MongoDB connection in 5 seconds...');
     setTimeout(connectDB, 5000);
   }
