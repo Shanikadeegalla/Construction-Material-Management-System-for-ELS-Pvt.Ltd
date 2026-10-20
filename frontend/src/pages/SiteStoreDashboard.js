@@ -10,6 +10,7 @@ import LoadingButton from '../components/LoadingButton';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import Pagination, { usePagination } from '../components/Pagination';
 import MaterialsViewButton from '../components/MaterialsViewButton';
+import { SHOW_SITE_STORE_SUMMARY_CARDS } from '../config/featureFlags';
 
 // Presentation-ready fallback dummy data for viva demo
 const FALLBACK_IN_TRANSIT = [
@@ -1303,20 +1304,22 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
             </div>
 
             {/* Stats row */}
-            <div style={styles.statsGrid}>
-              <div style={styles.statCard}>
-                <div style={styles.statLabel}>Site Materials (SKUs)</div>
-                <div style={styles.statValue}>{totalSiteSKUs}</div>
+            {SHOW_SITE_STORE_SUMMARY_CARDS && (
+              <div style={styles.statsGrid}>
+                <div style={styles.statCard}>
+                  <div style={styles.statLabel}>Site Materials (SKUs)</div>
+                  <div style={styles.statValue}>{totalSiteSKUs}</div>
+                </div>
+                <div style={styles.statCard}>
+                  <div style={styles.statLabel}>Site Stock Value</div>
+                  <div style={styles.statValue}>LKR {siteStockValue.toLocaleString()}</div>
+                </div>
+                <div style={{ ...styles.statCard, borderLeft: siteWarningItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
+                  <div style={styles.statLabel}>Stock Warnings</div>
+                  <div style={{ ...styles.statValue, color: siteWarningItems > 0 ? '#ef4444' : '#0d1b4b' }}>{siteWarningItems}</div>
+                </div>
               </div>
-              <div style={styles.statCard}>
-                <div style={styles.statLabel}>Site Stock Value</div>
-                <div style={styles.statValue}>LKR {siteStockValue.toLocaleString()}</div>
-              </div>
-              <div style={{ ...styles.statCard, borderLeft: siteWarningItems > 0 ? '4px solid #ef4444' : '4px solid #0d1b4b' }}>
-                <div style={styles.statLabel}>Stock Warnings</div>
-                <div style={{ ...styles.statValue, color: siteWarningItems > 0 ? '#ef4444' : '#0d1b4b' }}>{siteWarningItems}</div>
-              </div>
-            </div>
+            )}
 
             {/* Low Stock Alert Section */}
             <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '8px', padding: '16px', marginBottom: '24px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)', textAlign: 'left' }}>
