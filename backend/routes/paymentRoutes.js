@@ -53,6 +53,14 @@ router.get(
   getPayments
 );
 
+// Allow POST directly to /api/payments for manual payment recording
+router.post(
+  '/',
+  protect,
+  authorizeRoles('PurchaseManager', 'Admin'),
+  recordManualPayment
+);
+
 // Protected PDF payment report generation
 router.get(
   '/report',
