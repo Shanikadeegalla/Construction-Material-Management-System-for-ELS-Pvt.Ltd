@@ -146,7 +146,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
   const filteredMaterials = React.useMemo(() => {
     return mainMaterials.filter(item => {
-      const name = item.materialCode ? `${item.materialCode} ${item.name || item.materialName}` : (item.name || item.materialName || '');
+      const fallbackCode = item.materialCode || item.code || item.itemCode || (item._id ? `MAT-${String(item._id).slice(-4).toUpperCase()}` : '');
+      const name = `${fallbackCode} ${item.name || item.materialName || ''}`;
       const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCat = categoryFilter === 'All' || item.category === categoryFilter;
       return matchesSearch && matchesCat;
@@ -259,17 +260,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   // attached this pre-fills Invoice Amount, until the officer types their own
   // figure because the supplier's bill differs.
   const [invoiceAmountEdited, setInvoiceAmountEdited] = useState(false);
-  const grnPoItems = purchaseOrders.find(p => p._id === selectedGrnPO)?.items || [];
-  const grnPoAmount = Math.round(grnForm.items.reduce(
-    (sum, item) => sum + (Number(item.receivedQty) || 0) * (Number(grnPoItems.find(p => p.materialName === item.materialName)?.unitPrice) || 0),
-    0
-  ) * 100) / 100;
+  const selectedPO = purchaseOrders.find(p => p._id === selectedGrnPO);
+  const poTotalAmount = Number(selectedPO?.totalAmount || 0);
 
   useEffect(() => {
     if (invoiceAmountEdited) return;
-    const amount = invoiceFile && grnPoAmount > 0 ? String(grnPoAmount) : '';
+    const amount = invoiceFile && poTotalAmount > 0 ? String(poTotalAmount) : '';
     setInvoiceForm(prev => (prev.amount === amount ? prev : { ...prev, amount }));
-  }, [invoiceFile, grnPoAmount, invoiceAmountEdited]);
+  }, [invoiceFile, poTotalAmount, invoiceAmountEdited]);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -636,13 +634,18 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
       let successMsg = data.message || '✅ GRN processed successfully!';
 
-      if (invoiceForm.amount) {
+      if (invoiceForm.amount || invoiceFile) {
+        const matchedPO = purchaseOrders.find(p => p._id === poIdForInvoice);
+        if (!matchedPO) {
+          setError('Could not attach invoice: Matched Purchase Order not found.');
+          return;
+        }
         try {
           const fd = new FormData();
           fd.append('supplier', supplierIdForInvoice || '');
           fd.append('po', poIdForInvoice);
           fd.append('grn', data.grn._id);
-          fd.append('amount', invoiceForm.amount);
+          fd.append('amount', matchedPO.totalAmount);
           fd.append('invoiceDate', invoiceForm.invoiceDate);
           if (invoiceFile) fd.append('file', invoiceFile);
 
@@ -1507,7 +1510,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       } else {
         const poRef = invoiceOrGrn.poReference || invoiceOrGrn.po;
         const matchedPO = purchaseOrders.find(p => p.poNumber === poRef || p._id === poRef);
-        
+        if (!matchedPO) {
+          toast.error('Could not upload invoice: Matched Purchase Order not found.');
+          return;
+        }
+
         let supplierVal = invoiceOrGrn.supplierId || invoiceOrGrn.supplier;
         if (!supplierVal && matchedPO) {
           supplierVal = matchedPO.supplier?._id || matchedPO.supplier;
@@ -1517,9 +1524,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         }
 
         fd.append('supplier', supplierVal || 'Supplier');
-        fd.append('po', matchedPO ? matchedPO._id : (invoiceOrGrn.poId || invoiceOrGrn.po || invoiceOrGrn._id));
+        fd.append('po', matchedPO._id);
         fd.append('grn', invoiceOrGrn._id);
-        fd.append('amount', matchedPO ? (matchedPO.totalAmount || 1) : 1);
+        fd.append('amount', matchedPO.totalAmount);
         fd.append('invoiceDate', new Date().toISOString());
 
         res = await fetch(`${API_BASE}/api/invoices`, {
@@ -2136,11 +2143,34 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {inventoryPagination.paginatedData.map(m => {
+                    {inventoryPagination.paginatedData.map((m, idx) => {
                       const status = materialStatus(m);
+                      const rawCode = m.materialCode || m.code || m.itemCode;
+                      const hasValidCode = Boolean(rawCode && String(rawCode).trim() !== '' && rawCode !== '-');
+                      const displayCode = hasValidCode
+                        ? rawCode
+                        : (m._id ? `MAT-${String(m._id).slice(-4).toUpperCase()}` : `MAT${String(idx + 1).padStart(4, '0')}`);
+
                       return (
                         <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: status.tier !== 'NORMAL' ? 'rgba(239,68,68,0.05)' : 'white' }}>
-                          <td style={styles.td}>{m.materialCode}</td>
+                          <td style={styles.td}>
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                fontSize: '12px',
+                                fontWeight: '600',
+                                fontFamily: 'monospace',
+                                backgroundColor: hasValidCode ? '#f1f5f9' : '#fef3c7',
+                                color: hasValidCode ? '#0d1b4b' : '#92400e',
+                                border: hasValidCode ? '1px solid #cbd5e1' : '1px dashed #f59e0b'
+                              }}
+                              title={hasValidCode ? `Item Code: ${displayCode}` : `Temporary fallback code generated from ID (${m._id || 'unassigned'})`}
+                            >
+                              {displayCode}
+                            </span>
+                          </td>
                           <td style={{ ...styles.tdBold, color: status.tier !== 'NORMAL' ? '#c62828' : '#0d1b4b' }}>{m.name}</td>
                           <td style={styles.td}>{m.category}</td>
                           <td style={styles.td}>{m.unit}</td>

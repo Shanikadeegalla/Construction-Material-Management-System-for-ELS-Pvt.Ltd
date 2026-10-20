@@ -196,17 +196,19 @@ const settlePayment = async (payment, session = null) => {
     await notifyRoles(['MainStoreOfficer'], msg, 'PAYMENT_RECORDED', '/main-store-dashboard');
   }
 
-  let emailSent = !!payment.emailSentAt;
-  if (!emailSent) {
-    const supplierDoc = await Supplier.findById(payment.supplier);
-    try {
-      emailSent = await sendPaymentConfirmation({ payment, po, supplierDoc, invoice });
-    } catch (mailErr) {
-      console.error('Error sending payment confirmation email:', mailErr);
-    }
+  // Isolated non-blocking email dispatch: never blocks database response or triggers retries
+  if (!payment.emailSentAt) {
+    setImmediate(async () => {
+      try {
+        const supplierDoc = await Supplier.findById(payment.supplier);
+        await sendPaymentConfirmation({ payment, po, supplierDoc, invoice });
+      } catch (mailErr) {
+        console.error('[Payment Email Error] Non-blocking dispatch failed:', mailErr.message);
+      }
+    });
   }
 
-  return emailSent;
+  return !!payment.emailSentAt;
 };
 
 // @desc    Create a Stripe Checkout Session to pay a Director-approved supplier invoice
@@ -222,27 +224,31 @@ export const createCheckoutSession = async (req, res) => {
 
     let invoice;
     if (invoiceId) {
-      invoice = await Invoice.findById(invoiceId);
+      invoice = await Invoice.findById(invoiceId).populate('po');
     } else if (purchaseOrderId) {
-      invoice = await Invoice.findOne({ po: purchaseOrderId, status: 'Approved' })
-        || await Invoice.findOne({ po: purchaseOrderId }).sort({ createdAt: -1 });
+      invoice = await Invoice.findOne({ po: purchaseOrderId, status: 'Approved' }).populate('po')
+        || await Invoice.findOne({ po: purchaseOrderId }).sort({ createdAt: -1 }).populate('po');
     }
 
     if (!invoice) {
       return res.status(404).json({ success: false, message: 'Invoice not found.' });
     }
 
-    const targetPoId = purchaseOrderId || (invoice.po ? invoice.po.toString() : null);
+    const targetPoId = purchaseOrderId || (invoice.po ? (invoice.po._id || invoice.po).toString() : null);
     if (!targetPoId) {
       return res.status(400).json({ success: false, message: 'purchaseOrderId is required.' });
     }
 
-    const po = await PurchaseOrder.findById(targetPoId);
+    const po = invoice.po && invoice.po.totalAmount !== undefined
+      ? invoice.po
+      : await PurchaseOrder.findById(targetPoId);
     if (!po) {
       return res.status(404).json({ success: false, message: 'Purchase Order for this invoice was not found.' });
     }
 
-    if (invoice.po && invoice.po.toString() !== po._id.toString()) {
+    const currentPoId = (po._id || po).toString();
+    const invPoId = invoice.po ? (invoice.po._id || invoice.po).toString() : null;
+    if (invPoId && invPoId !== currentPoId) {
       return res.status(400).json({ success: false, message: 'Invoice does not belong to the specified Purchase Order.' });
     }
 
@@ -258,8 +264,10 @@ export const createCheckoutSession = async (req, res) => {
       });
     }
 
-    if (amount !== undefined && amount !== null && Math.abs(Number(amount) - Number(invoice.amount)) > 0.01) {
-      return res.status(400).json({ success: false, message: `Provided payment amount (${amount}) does not match invoice amount (${invoice.amount}).` });
+    const poTotalAmount = Number(po.totalAmount);
+
+    if (amount !== undefined && amount !== null && Math.abs(Number(amount) - poTotalAmount) > 0.01) {
+      return res.status(400).json({ success: false, message: `Provided payment amount (${amount}) does not match PO total (${poTotalAmount}).` });
     }
 
     const supplierDoc = await Supplier.findById(invoice.supplier);
@@ -278,7 +286,7 @@ export const createCheckoutSession = async (req, res) => {
             name: `Invoice ${invoice.invoiceNumber}`,
             description: `PO ${po.poNumber} - Supplier: ${supplierName}`
           },
-          unit_amount: Math.round(Number(invoice.amount) * 100)
+          unit_amount: Math.round(poTotalAmount * 100)
         },
         quantity: 1
       }],
@@ -298,7 +306,7 @@ export const createCheckoutSession = async (req, res) => {
         invoice: invoice._id,
         purchaseOrder: po._id,
         supplier: invoice.supplier,
-        amount: invoice.amount,
+        amount: poTotalAmount,
         currency: CURRENCY,
         method: 'Stripe',
         stripeSessionId: session.id,
@@ -358,8 +366,15 @@ export const recordManualPayment = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Only Purchase Manager or Admin can record payments.' });
     }
 
-    const { purchaseOrderId, paidAt, notes: inputNotes, chequeDate: inputChequeDate } = req.body;
-    let { invoiceId } = req.body;
+    const { purchaseOrderId, notes: inputNotes, chequeDate: inputChequeDate } = req.body;
+    let { invoiceId, invoiceNo } = req.body;
+    const paidAt = req.body.paidAt || req.body.paymentDate;
+
+    // Support lookup by invoiceNo if invoiceId not provided
+    if (!invoiceId && invoiceNo) {
+      const foundInv = await Invoice.findOne({ invoiceNumber: String(invoiceNo).trim() });
+      if (foundInv) invoiceId = foundInv._id;
+    }
 
     // A caller that only knows the Purchase Order pays that PO's approved invoice.
     if (!invoiceId && purchaseOrderId) {
@@ -372,7 +387,7 @@ export const recordManualPayment = async (req, res) => {
     }
 
     if (!invoiceId) {
-      return res.status(400).json({ success: false, message: 'invoiceId or purchaseOrderId is required.' });
+      return res.status(400).json({ success: false, message: 'invoiceId, invoiceNo, or purchaseOrderId is required.' });
     }
 
     const invoice = await Invoice.findById(invoiceId);
@@ -396,7 +411,7 @@ export const recordManualPayment = async (req, res) => {
       }
     }
 
-    const method = (req.body.method || '').trim();
+    const method = (req.body.paymentMethod || req.body.method || '').trim();
     if (!['Cash', 'Cheque'].includes(method)) {
       return res.status(400).json({ success: false, message: 'Payment method must be Cash or Cheque.' });
     }
@@ -424,9 +439,9 @@ export const recordManualPayment = async (req, res) => {
       }
     }
 
-    let reference = (req.body.reference || '').trim();
+    let reference = (req.body.voucherNo || req.body.reference || '').trim();
     let bankName = (req.body.bankName || '').trim();
-    let chequeNumber = (req.body.chequeNumber || req.body.reference || '').trim();
+    let chequeNumber = (req.body.chequeNumber || req.body.voucherNo || req.body.reference || '').trim();
     let chequeDate = inputChequeDate ? new Date(inputChequeDate) : null;
 
     if (method === 'Cash') {
