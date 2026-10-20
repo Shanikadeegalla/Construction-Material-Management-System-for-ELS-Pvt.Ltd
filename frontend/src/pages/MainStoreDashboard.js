@@ -1936,30 +1936,30 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               </div>
             </div>
 
-            {/* Stock Status + Action Required */}
+            {/* Recent Activity + Action Required */}
             <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: '24px', marginBottom: '24px' }}>
               <div style={{ ...styles.tableContainer, padding: '20px' }}>
-                <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>Stock Status</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  {[
-                    { label: 'Normal', count: normalStockItems, color: '#2e7d32' },
-                    { label: 'Pre-Order', count: preOrderItems, color: '#b7791f' },
-                    { label: 'Critical', count: criticalStockItems, color: '#ef4444' }
-                  ].map(s => {
-                    const pct = totalSKUs > 0 ? (s.count / totalSKUs) * 100 : 0;
-                    return (
-                      <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px' }}>
-                        <span style={{ width: '80px', fontWeight: '600', color: '#334155' }}>{s.label}</span>
-                        <div style={{ flex: 1, height: '10px', background: '#f1f5f9', borderRadius: '5px', overflow: 'hidden' }}>
-                          <div style={{ width: `${pct}%`, height: '100%', background: s.color, borderRadius: '5px' }}></div>
+                <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>Recent Activity</h3>
+                {recentActivities.length === 0 ? (
+                  <div style={{ color: '#64748b', fontSize: '13px' }}>No recent activity recorded.</div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {recentActivities.map((a, i) => (
+                        <div key={i} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', paddingBottom: '10px', borderBottom: i === recentActivities.length - 1 ? 'none' : '1px solid #f1f5f9' }}>
+                          <span style={{ fontSize: '16px' }}>{a.icon}</span>
+                          <div>
+                            <div style={{ fontSize: '13px', color: '#0d1b4b', fontWeight: '500' }}>{a.text}</div>
+                            <div style={{ fontSize: '11px', color: '#94a3b8' }}>{formatDateTime(a.date)}</div>
+                          </div>
                         </div>
-                        <span style={{ width: '90px', textAlign: 'right', color: '#64748b' }}>
-                          <strong style={{ color: '#0d1b4b' }}>{s.count}</strong> · {pct.toFixed(0)}%
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                      ))}
+                    </div>
+                    <div onClick={() => { setSelectedLedgerItem(null); setLedgerSearch(''); setLedgerCategoryFilter('All'); setLedgerTypeFilter('All'); setView('stock-ledger'); }} style={{ marginTop: '12px', fontSize: '13px', color: '#2563eb', fontWeight: '600', cursor: 'pointer' }}>
+                      View All →
+                    </div>
+                  </>
+                )}
               </div>
               <div style={{ ...styles.tableContainer, padding: '20px' }}>
                 <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>Action Required</h3>
@@ -1985,96 +1985,96 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               </div>
             </div>
 
-            {/* Low Stock Materials + Recent Activity */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: '24px', marginBottom: '24px' }}>
-              <div id="low-stock-materials" style={{ ...styles.tableContainer, padding: '20px' }}>
-                <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>Low Stock Materials (Pre-Order &amp; Critical)</h3>
-                {lowStockMaterials.length === 0 ? (
-                  <div style={{ color: '#64748b', fontSize: '13px' }}>All Main Store material stock levels are normal.</div>
-                ) : (
-                  <div style={{ maxHeight: '320px', overflow: 'auto' }}>
-                    <table style={styles.table}>
-                      <thead>
-                        <tr style={{ background: '#f5f6fa' }}>
-                          <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Material Name</th>
-                          <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Current Qty</th>
-                          <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Min Level</th>
-                          <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Pre-Order Level</th>
-                          <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Unit</th>
-                          <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lowStockPagination.paginatedData.map(m => {
-                          const status = materialStatus(m);
-                          return (
-                            <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                              <td style={{ ...styles.tdBold, padding: '10px 12px', fontSize: '13px' }}>{m.name}</td>
-                              <td style={{ ...styles.td, padding: '10px 12px', fontSize: '13px' }}>{m.quantity}</td>
-                              <td style={{ ...styles.td, padding: '10px 12px', fontSize: '13px' }}>{m.minimumStock}</td>
-                              <td style={{ ...styles.td, padding: '10px 12px', fontSize: '13px' }}>{m.reorderLevel}</td>
-                              <td style={{ ...styles.td, padding: '10px 12px', fontSize: '13px' }}>{m.unit}</td>
-                              <td style={{ ...styles.td, padding: '10px 12px', fontSize: '13px' }}>
-                                <span style={{ background: status.bg, color: status.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{status.label}</span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    <Pagination pagination={lowStockPagination} />
-                  </div>
-                )}
-              </div>
-              <div style={{ ...styles.tableContainer, padding: '20px' }}>
-                <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>Recent Activity</h3>
-                {recentActivities.length === 0 ? (
-                  <div style={{ color: '#64748b', fontSize: '13px' }}>No recent activity recorded.</div>
-                ) : (
-                  <>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {recentActivities.map((a, i) => (
-                        <div key={i} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', paddingBottom: '10px', borderBottom: i === recentActivities.length - 1 ? 'none' : '1px solid #f1f5f9' }}>
-                          <span style={{ fontSize: '16px' }}>{a.icon}</span>
-                          <div>
-                            <div style={{ fontSize: '13px', color: '#0d1b4b', fontWeight: '500' }}>{a.text}</div>
-                            <div style={{ fontSize: '11px', color: '#94a3b8' }}>{formatDateTime(a.date)}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <div onClick={() => { setSelectedLedgerItem(null); setLedgerSearch(''); setLedgerCategoryFilter('All'); setLedgerTypeFilter('All'); setView('stock-ledger'); }} style={{ marginTop: '12px', fontSize: '13px', color: '#2563eb', fontWeight: '600', cursor: 'pointer' }}>
-                      View All →
-                    </div>
-                  </>
-                )}
-              </div>
+            {/* Low Stock Materials */}
+            <div id="low-stock-materials" style={{ ...styles.tableContainer, padding: '20px', marginBottom: '24px' }}>
+              <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>Low Stock Materials (Pre-Order &amp; Critical)</h3>
+              {lowStockMaterials.length === 0 ? (
+                <div style={{ color: '#64748b', fontSize: '13px' }}>All Main Store material stock levels are normal.</div>
+              ) : (
+                <div style={{ maxHeight: '320px', overflow: 'auto' }}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr style={{ background: '#f5f6fa' }}>
+                        <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Material Name</th>
+                        <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Current Qty</th>
+                        <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Min Level</th>
+                        <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Pre-Order Level</th>
+                        <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Unit</th>
+                        <th style={{ ...styles.th, color: '#333', padding: '10px 12px' }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lowStockPagination.paginatedData.map(m => {
+                        const status = materialStatus(m);
+                        return (
+                          <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                            <td style={{ ...styles.tdBold, padding: '10px 12px', fontSize: '13px' }}>{m.name}</td>
+                            <td style={{ ...styles.td, padding: '10px 12px', fontSize: '13px' }}>{m.quantity}</td>
+                            <td style={{ ...styles.td, padding: '10px 12px', fontSize: '13px' }}>{m.minimumStock}</td>
+                            <td style={{ ...styles.td, padding: '10px 12px', fontSize: '13px' }}>{m.reorderLevel}</td>
+                            <td style={{ ...styles.td, padding: '10px 12px', fontSize: '13px' }}>{m.unit}</td>
+                            <td style={{ ...styles.td, padding: '10px 12px', fontSize: '13px' }}>
+                              <span style={{ background: status.bg, color: status.color, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{status.label}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <Pagination pagination={lowStockPagination} />
+                </div>
+              )}
             </div>
 
-            {/* Inventory Value by Category */}
-            <div style={{ ...styles.tableContainer, padding: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
-                <h3 style={{ margin: 0, color: '#0d1b4b' }}>Inventory Value by Category</h3>
-                <span style={{ fontSize: '13px', color: '#64748b' }}>Total: <strong style={{ color: '#0d1b4b' }}>LKR {stockValue.toLocaleString()}</strong></span>
-              </div>
-              {categoryBars.length === 0 ? (
-                <div style={{ color: '#64748b', fontSize: '13px' }}>No stock value recorded yet.</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {categoryBars.map(c => {
-                    const pct = stockValue > 0 ? (c.value / stockValue) * 100 : 0;
+            {/* Stock Status + Inventory Value by Category */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+              <div style={{ ...styles.tableContainer, padding: '20px' }}>
+                <h3 style={{ margin: '0 0 16px', color: '#0d1b4b' }}>Stock Status</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {[
+                    { label: 'Normal', count: normalStockItems, color: '#2e7d32' },
+                    { label: 'Pre-Order', count: preOrderItems, color: '#b7791f' },
+                    { label: 'Critical', count: criticalStockItems, color: '#ef4444' }
+                  ].map(s => {
+                    const pct = totalSKUs > 0 ? (s.count / totalSKUs) * 100 : 0;
                     return (
-                      <div key={c.name} title={`LKR ${c.value.toLocaleString()}`} style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px' }}>
-                        <span style={{ width: '200px', fontWeight: '600', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                      <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px' }}>
+                        <span style={{ width: '80px', fontWeight: '600', color: '#334155' }}>{s.label}</span>
                         <div style={{ flex: 1, height: '10px', background: '#f1f5f9', borderRadius: '5px', overflow: 'hidden' }}>
-                          <div style={{ width: `${(c.value / categoryBars[0].value) * 100}%`, height: '100%', background: c.isRest ? '#94a3b8' : '#2563eb', borderRadius: '5px' }}></div>
+                          <div style={{ width: `${pct}%`, height: '100%', background: s.color, borderRadius: '5px' }}></div>
                         </div>
-                        <span style={{ width: '50px', textAlign: 'right', color: '#64748b' }}>{pct.toFixed(1)}%</span>
+                        <span style={{ width: '90px', textAlign: 'right', color: '#64748b' }}>
+                          <strong style={{ color: '#0d1b4b' }}>{s.count}</strong> · {pct.toFixed(0)}%
+                        </span>
                       </div>
                     );
                   })}
                 </div>
-              )}
+              </div>
+              <div style={{ ...styles.tableContainer, padding: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
+                  <h3 style={{ margin: 0, color: '#0d1b4b' }}>Inventory Value by Category</h3>
+                  <span style={{ fontSize: '13px', color: '#64748b' }}>Total: <strong style={{ color: '#0d1b4b' }}>LKR {stockValue.toLocaleString()}</strong></span>
+                </div>
+                {categoryBars.length === 0 ? (
+                  <div style={{ color: '#64748b', fontSize: '13px' }}>No stock value recorded yet.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {categoryBars.map(c => {
+                      const pct = stockValue > 0 ? (c.value / stockValue) * 100 : 0;
+                      return (
+                        <div key={c.name} title={`LKR ${c.value.toLocaleString()}`} style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px' }}>
+                          <span style={{ width: '200px', fontWeight: '600', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                          <div style={{ flex: 1, height: '10px', background: '#f1f5f9', borderRadius: '5px', overflow: 'hidden' }}>
+                            <div style={{ width: `${(c.value / categoryBars[0].value) * 100}%`, height: '100%', background: c.isRest ? '#94a3b8' : '#2563eb', borderRadius: '5px' }}></div>
+                          </div>
+                          <span style={{ width: '50px', textAlign: 'right', color: '#64748b' }}>{pct.toFixed(1)}%</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
