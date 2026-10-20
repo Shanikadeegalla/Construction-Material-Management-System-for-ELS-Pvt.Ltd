@@ -135,13 +135,10 @@ const buildDeliveryCheck = (invoice) => {
 // @access  Private (Create Invoice)
 export const createInvoice = async (req, res) => {
   try {
-    const { supplier, po, grn, amount, invoiceDate, dueDate, notes } = req.body;
+    const { supplier, po, grn, invoiceDate, dueDate, notes } = req.body;
 
-    if (!supplier || !po || !amount) {
-      return res.status(400).json({ success: false, message: 'Supplier, purchase order and amount are required.' });
-    }
-    if (!(Number(amount) > 0)) {
-      return res.status(400).json({ success: false, message: 'Invoice amount must be greater than 0.' });
+    if (!supplier || !po) {
+      return res.status(400).json({ success: false, message: 'Supplier and purchase order are required.' });
     }
 
     // An invoice is only payable for goods that have actually arrived.
@@ -151,6 +148,12 @@ export const createInvoice = async (req, res) => {
     }
     if (!grn && poDoc.status !== 'Delivered') {
       return res.status(400).json({ success: false, message: 'An invoice can only be recorded against a delivered Purchase Order or a GRN.' });
+    }
+
+    // Requirement: invoice amount must always equal the Purchase Order's Total (po.totalAmount)
+    const invoiceAmount = Number(poDoc.totalAmount);
+    if (!(invoiceAmount > 0)) {
+      return res.status(400).json({ success: false, message: 'Referenced Purchase Order has an invalid total amount.' });
     }
 
     const invoiceNumber = await generateNextInvoiceNumber();
@@ -167,7 +170,7 @@ export const createInvoice = async (req, res) => {
       supplier,
       po,
       grn: grn || undefined,
-      amount: Number(amount),
+      amount: invoiceAmount,
       invoiceDate: invoiceDate || new Date(),
       dueDate: dueDate || undefined,
       notes: notes || '',
