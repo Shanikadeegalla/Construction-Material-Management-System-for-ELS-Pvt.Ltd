@@ -87,6 +87,17 @@ export const addMaterial = async (req, res) => {
       ...req.body,
       location: req.body.location || 'MainStore'
     };
+
+    // Sanitize materialCode: if empty, whitespace, or placeholder, omit to let pre-save auto-generate MATXXXX
+    if (materialData.materialCode !== undefined) {
+      const codeStr = String(materialData.materialCode).trim();
+      if (!codeStr || codeStr === '-') {
+        delete materialData.materialCode;
+      } else {
+        materialData.materialCode = codeStr;
+      }
+    }
+
     if (materialData.location === 'SiteStore') {
       materialData.name = encryptDB(materialData.name);
       materialData.quantity = encryptDB(String(materialData.quantity || 0));
@@ -118,6 +129,17 @@ export const updateMaterial = async (req, res) => {
     // Current stock is always calculated from system transactions (GRN,
     // MIN, Usage, Stock Adjustment) — this endpoint may never overwrite it.
     delete updateData.quantity;
+
+    // Never overwrite an existing code with blank/null or placeholder
+    if (updateData.materialCode !== undefined) {
+      const codeStr = String(updateData.materialCode).trim();
+      if (!codeStr || codeStr === '-') {
+        delete updateData.materialCode; // preserve existing code
+      } else {
+        updateData.materialCode = codeStr;
+      }
+    }
+
     const loc = updateData.location || existing.location;
     if (loc === 'SiteStore') {
       if (updateData.name) updateData.name = encryptDB(updateData.name);

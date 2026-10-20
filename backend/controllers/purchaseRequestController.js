@@ -198,6 +198,21 @@ export const createPurchaseRequestFromBOM = async (req, res) => {
       return res.status(400).json({ success: false, message: 'A newer approved BOM exists for this project. Please use the latest approved BOM.' });
     }
 
+    // Atomic idempotency check: verify if an active PR already exists for this BOM
+    const existingActivePR = await PurchaseRequest.findOne({
+      bomId: bom._id,
+      status: { $in: ['Pending', 'PO Created'] }
+    });
+
+    if (existingActivePR) {
+      return res.status(200).json({
+        success: true,
+        message: 'An active Purchase Request for this approved BOM already exists.',
+        data: existingActivePR,
+        isExisting: true
+      });
+    }
+
     const stockCheck = await computeBOMStockCheck(bom);
     const reason = `Shortage vs approved BOM ${bom.bomNumber || ''} (${bom.version || 'v1.0'})`;
 
@@ -275,6 +290,19 @@ export const createPurchaseRequestFromBOM = async (req, res) => {
 
     res.status(201).json({ success: true, message: 'Purchase request submitted successfully!', data: pr });
   } catch (error) {
+    if (error.code === 11000) {
+      try {
+        const existingPR = await PurchaseRequest.findOne({ bomId: req.body.bomId, status: { $ne: 'Declined' } });
+        if (existingPR) {
+          return res.status(200).json({
+            success: true,
+            message: 'An active Purchase Request for this approved BOM already exists.',
+            data: existingPR,
+            isExisting: true
+          });
+        }
+      } catch (findErr) {}
+    }
     res.status(400).json({ success: false, message: error.message });
   }
 };
