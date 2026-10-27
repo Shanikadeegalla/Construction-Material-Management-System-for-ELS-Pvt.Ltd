@@ -10,14 +10,24 @@ function PaymentCancel({ onReturnToPOs }) {
   }, []);
 
   return (
-    <div style={{
-      minHeight: '80vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '40px 20px',
-      backgroundColor: '#f8fafc'
-    }}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        backgroundColor: '#f8fafc',
+        overflowY: 'auto'
+      }}
+    >
       <div style={{
         backgroundColor: '#ffffff',
         borderRadius: '16px',

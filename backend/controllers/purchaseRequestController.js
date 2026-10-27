@@ -228,6 +228,21 @@ export const createPurchaseRequestFromBOM = async (req, res) => {
 
     const projectName = bom.projectId.projectName || bom.projectId.name || bom.projectName;
 
+    // Atomic idempotency check: verify if an active PR already exists for this BOM
+    const existingActivePR = await PurchaseRequest.findOne({
+      bomId: bom._id,
+      status: { $in: ['Pending', 'PO Created'] }
+    });
+
+    if (existingActivePR) {
+      return res.status(200).json({
+        success: true,
+        message: 'An active Purchase Request for this approved BOM already exists.',
+        data: existingActivePR,
+        isExisting: true
+      });
+    }
+
     // Validation: prevent creating duplicate PRs if a project already has an active/pending PR
     const activePendingPr = await PurchaseRequest.findOne({
       $or: [
@@ -293,7 +308,7 @@ export const createPurchaseRequestFromBOM = async (req, res) => {
         estimatedUnitCost: row.estimatedUnitCost
       });
     }
- 
+
     const pr = new PurchaseRequest({
       project: projectName,
       projectName,
@@ -331,6 +346,19 @@ export const createPurchaseRequestFromBOM = async (req, res) => {
 
     res.status(201).json({ success: true, message: 'Purchase request submitted successfully!', data: pr });
   } catch (error) {
+    if (error.code === 11000) {
+      try {
+        const existingPR = await PurchaseRequest.findOne({ bomId: req.body.bomId, status: { $ne: 'Declined' } });
+        if (existingPR) {
+          return res.status(200).json({
+            success: true,
+            message: 'An active Purchase Request for this approved BOM already exists.',
+            data: existingPR,
+            isExisting: true
+          });
+        }
+      } catch (findErr) {}
+    }
     res.status(400).json({ success: false, message: error.message });
   }
 };

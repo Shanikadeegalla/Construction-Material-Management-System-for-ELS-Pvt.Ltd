@@ -23,6 +23,7 @@ import {
 import { API_BASE } from '../config';
 import useToastSetter from '../hooks/useToastSetter';
 import LoadingButton from '../components/LoadingButton';
+import { SHOW_DIRECTOR_SUMMARY_CARDS } from '../config/featureFlags';
 import useBusyAction from '../hooks/useBusyAction';
 
 const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
@@ -1058,31 +1059,6 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
           {activePage === 'dashboard' && (
             <div>
-
-              {/* Stats Cards */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                {[
-                  { label: 'Active Projects Profile', value: activeProjectsCount, color: '#0d1b4b', type: 'active-projects' },
-                  { label: 'BOMs Awaiting Approval', value: pendingBomsCount, color: '#2563eb', type: 'pending-boms' },
-                  { label: 'Budget Utilized (LKR)', value: `Rs. ${budgetUtilized.toLocaleString()}`, color: '#2e7d32', type: 'budget-utilized' },
-                  { label: 'Material Variance (Avg)', value: `${aggregateVariance}%`, color: Number(aggregateVariance) > 15 ? '#c62828' : Number(aggregateVariance) > 5 ? '#f59e0b' : '#2e7d32', type: 'material-variance' }
-                ].map((stat, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      background: 'white',
-                      borderRadius: '8px',
-                      padding: '20px',
-                      boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                      borderTop: `4px solid ${stat.color}`
-                    }}
-                  >
-                    <div style={{ fontSize: '24px', fontWeight: '700', color: stat.color }}>{stat.value}</div>
-                    <div style={{ fontSize: '13px', color: '#666', marginTop: '6px' }}>{stat.label}</div>
-                  </div>
-                ))}
-              </div>
-
               {/* Quick Checklist Section */}
               <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
                 <h3 style={{ margin: '0 0 16px', color: '#0d1b4b', fontSize: '15px', fontWeight: 'bold' }}>📋 Recent BOM Activity</h3>

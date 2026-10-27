@@ -78,6 +78,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     return () => clearTimeout(t);
   }, [showTransferForm]);
   const [transferForm, setTransferForm] = useState({
+    mtnNumber: '',
     sourceRequestId: '',
     requestNo: '',
     siteStoreId: '',
@@ -146,7 +147,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
   const filteredMaterials = React.useMemo(() => {
     return mainMaterials.filter(item => {
-      const name = item.materialCode ? `${item.materialCode} ${item.name || item.materialName}` : (item.name || item.materialName || '');
+      const fallbackCode = item.materialCode || item.code || item.itemCode || (item._id ? `MAT-${String(item._id).slice(-4).toUpperCase()}` : '');
+      const name = `${fallbackCode} ${item.name || item.materialName || ''}`;
       const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCat = categoryFilter === 'All' || item.category === categoryFilter;
       return matchesSearch && matchesCat;
@@ -259,17 +261,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   // attached this pre-fills Invoice Amount, until the officer types their own
   // figure because the supplier's bill differs.
   const [invoiceAmountEdited, setInvoiceAmountEdited] = useState(false);
-  const grnPoItems = purchaseOrders.find(p => p._id === selectedGrnPO)?.items || [];
-  const grnPoAmount = Math.round(grnForm.items.reduce(
-    (sum, item) => sum + (Number(item.receivedQty) || 0) * (Number(grnPoItems.find(p => p.materialName === item.materialName)?.unitPrice) || 0),
-    0
-  ) * 100) / 100;
+  const selectedPO = purchaseOrders.find(p => p._id === selectedGrnPO);
+  const poTotalAmount = Number(selectedPO?.totalAmount || 0);
 
   useEffect(() => {
     if (invoiceAmountEdited) return;
-    const amount = invoiceFile && grnPoAmount > 0 ? String(grnPoAmount) : '';
+    const amount = invoiceFile && poTotalAmount > 0 ? String(poTotalAmount) : '';
     setInvoiceForm(prev => (prev.amount === amount ? prev : { ...prev, amount }));
-  }, [invoiceFile, grnPoAmount, invoiceAmountEdited]);
+  }, [invoiceFile, poTotalAmount, invoiceAmountEdited]);
 
   const getHeaders = () => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -636,13 +635,18 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
 
       let successMsg = data.message || '✅ GRN processed successfully!';
 
-      if (invoiceForm.amount) {
+      if (invoiceForm.amount || invoiceFile) {
+        const matchedPO = purchaseOrders.find(p => p._id === poIdForInvoice);
+        if (!matchedPO) {
+          setError('Could not attach invoice: Matched Purchase Order not found.');
+          return;
+        }
         try {
           const fd = new FormData();
           fd.append('supplier', supplierIdForInvoice || '');
           fd.append('po', poIdForInvoice);
           fd.append('grn', data.grn._id);
-          fd.append('amount', invoiceForm.amount);
+          fd.append('amount', matchedPO.totalAmount);
           fd.append('invoiceDate', invoiceForm.invoiceDate);
           if (invoiceFile) fd.append('file', invoiceFile);
 
@@ -721,15 +725,53 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
+  // Fetches or calculates the upcoming sequential MTN number
+  const fetchNextMtnNumber = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/material-transfer-notes/next-number`, { headers: getHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        let finalData = data;
+        if (data && data.ciphertext) {
+          finalData = JSON.parse(decryptTransit(data.ciphertext));
+        }
+        if (finalData.success && (finalData.nextMtnNumber || finalData.data?.nextMtnNumber)) {
+          return finalData.nextMtnNumber || finalData.data?.nextMtnNumber;
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching next MTN number:', err);
+    }
+    const mtnPrefix = `MTN-${new Date().getFullYear()}-`;
+    const lastSeq = (transferNotes || []).reduce((max, n) => {
+      if (n.mtnNumber && n.mtnNumber.startsWith(mtnPrefix)) {
+        return Math.max(max, parseInt(n.mtnNumber.slice(mtnPrefix.length), 10) || 0);
+      }
+      return max;
+    }, 0);
+    return `${mtnPrefix}${String(lastSeq + 1).padStart(3, '0')}`;
+  };
+
   // Opens the Create Material Transfer Note form. With no argument it opens
   // blank for a brand new ad hoc Main Store-initiated transfer. Passed a
   // Pending Site Store request, it pre-fills the destination Site Store,
   // materials and reference from that request so Main Store only reviews
   // and confirms the transfer quantities rather than re-entering them.
-  const openTransferForm = (sourceRequest) => {
+  const openTransferForm = async (sourceRequest) => {
     setError(''); setSuccess('');
+
+    const mtnPrefix = `MTN-${new Date().getFullYear()}-`;
+    const lastSeq = (transferNotes || []).reduce((max, n) => {
+      if (n.mtnNumber && n.mtnNumber.startsWith(mtnPrefix)) {
+        return Math.max(max, parseInt(n.mtnNumber.slice(mtnPrefix.length), 10) || 0);
+      }
+      return max;
+    }, 0);
+    const initialMtn = `${mtnPrefix}${String(lastSeq + 1).padStart(3, '0')}`;
+
     if (sourceRequest) {
       setTransferForm({
+        mtnNumber: initialMtn,
         sourceRequestId: sourceRequest._id,
         requestNo: sourceRequest.requestNo,
         siteStoreId: sourceRequest.siteStoreId,
@@ -754,6 +796,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       });
     } else {
       setTransferForm({
+        mtnNumber: initialMtn,
         sourceRequestId: '',
         requestNo: '',
         siteStoreId: '',
@@ -765,6 +808,13 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       });
     }
     setShowTransferForm(true);
+
+    // Fetch authoritative next MTN number from server
+    fetchNextMtnNumber().then(serverMtn => {
+      if (serverMtn) {
+        setTransferForm(prev => ({ ...prev, mtnNumber: serverMtn }));
+      }
+    });
   };
 
   const handleTransferItemChange = (idx, field, value) => {
@@ -812,6 +862,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     setTransferSubmitting(true);
     try {
       const payload = {
+        mtnNumber: transferForm.mtnNumber,
         transferDate: transferForm.transferDate,
         reference: transferForm.reference,
         notes: transferForm.notes,
@@ -1507,7 +1558,11 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       } else {
         const poRef = invoiceOrGrn.poReference || invoiceOrGrn.po;
         const matchedPO = purchaseOrders.find(p => p.poNumber === poRef || p._id === poRef);
-        
+        if (!matchedPO) {
+          toast.error('Could not upload invoice: Matched Purchase Order not found.');
+          return;
+        }
+
         let supplierVal = invoiceOrGrn.supplierId || invoiceOrGrn.supplier;
         if (!supplierVal && matchedPO) {
           supplierVal = matchedPO.supplier?._id || matchedPO.supplier;
@@ -1517,9 +1572,9 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         }
 
         fd.append('supplier', supplierVal || 'Supplier');
-        fd.append('po', matchedPO ? matchedPO._id : (invoiceOrGrn.poId || invoiceOrGrn.po || invoiceOrGrn._id));
+        fd.append('po', matchedPO._id);
         fd.append('grn', invoiceOrGrn._id);
-        fd.append('amount', matchedPO ? (matchedPO.totalAmount || 1) : 1);
+        fd.append('amount', matchedPO.totalAmount);
         fd.append('invoiceDate', new Date().toISOString());
 
         res = await fetch(`${API_BASE}/api/invoices`, {
@@ -2136,11 +2191,34 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {inventoryPagination.paginatedData.map(m => {
+                    {inventoryPagination.paginatedData.map((m, idx) => {
                       const status = materialStatus(m);
+                      const rawCode = m.materialCode || m.code || m.itemCode;
+                      const hasValidCode = Boolean(rawCode && String(rawCode).trim() !== '' && rawCode !== '-');
+                      const displayCode = hasValidCode
+                        ? rawCode
+                        : (m._id ? `MAT-${String(m._id).slice(-4).toUpperCase()}` : `MAT${String(idx + 1).padStart(4, '0')}`);
+
                       return (
                         <tr key={m._id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: status.tier !== 'NORMAL' ? 'rgba(239,68,68,0.05)' : 'white' }}>
-                          <td style={styles.td}>{m.materialCode}</td>
+                          <td style={styles.td}>
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                fontSize: '12px',
+                                fontWeight: '600',
+                                fontFamily: 'monospace',
+                                backgroundColor: hasValidCode ? '#f1f5f9' : '#fef3c7',
+                                color: hasValidCode ? '#0d1b4b' : '#92400e',
+                                border: hasValidCode ? '1px solid #cbd5e1' : '1px dashed #f59e0b'
+                              }}
+                              title={hasValidCode ? `Item Code: ${displayCode}` : `Temporary fallback code generated from ID (${m._id || 'unassigned'})`}
+                            >
+                              {displayCode}
+                            </span>
+                          </td>
                           <td style={{ ...styles.tdBold, color: status.tier !== 'NORMAL' ? '#c62828' : '#0d1b4b' }}>{m.name}</td>
                           <td style={styles.td}>{m.category}</td>
                           <td style={styles.td}>{m.unit}</td>
@@ -2986,7 +3064,16 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   {transferForm.sourceRequestId ? `Transfer Materials for Request ${transferForm.reference}` : 'Create Material Transfer Note'}
                 </h3>
                 <form id="transfer-form-section" onSubmit={handleCreateTransferSubmit} style={{ display: 'grid', gap: '16px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+                    <div>
+                      <label style={styles.fieldLabel}>MTN Number</label>
+                      <input
+                        type="text"
+                        value={transferForm.mtnNumber || ''}
+                        style={{ ...styles.formInput, background: '#f1f5f9', fontWeight: 'bold', color: '#1a365d' }}
+                        readOnly
+                      />
+                    </div>
                     <div>
                       <label style={styles.fieldLabel}>Destination</label>
                       <input

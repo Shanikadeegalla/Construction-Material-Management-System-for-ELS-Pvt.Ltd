@@ -73,10 +73,23 @@ const purchaseRequestSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  notes: {
-    type: String,
-    trim: true
+    notes: {
+      type: String,
+      trim: true
+    }
+  }, { timestamps: true });
+
+  // Compound index ensuring idempotency: at most one active PR (Pending or PO Created) per BOM
+  purchaseRequestSchema.index(
+  { bomId: 1, status: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      bomId: { $type: 'objectId' },
+      status: { $in: ['Pending', 'PO Created'] }
+    }
   }
-}, { timestamps: true });
+);
 
 export default mongoose.model('PurchaseRequest', purchaseRequestSchema);
+
