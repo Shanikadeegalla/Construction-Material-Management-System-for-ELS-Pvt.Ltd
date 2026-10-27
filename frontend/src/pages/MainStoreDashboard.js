@@ -78,6 +78,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     return () => clearTimeout(t);
   }, [showTransferForm]);
   const [transferForm, setTransferForm] = useState({
+    mtnNumber: '',
     sourceRequestId: '',
     requestNo: '',
     siteStoreId: '',
@@ -724,15 +725,53 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
+  // Fetches or calculates the upcoming sequential MTN number
+  const fetchNextMtnNumber = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/material-transfer-notes/next-number`, { headers: getHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        let finalData = data;
+        if (data && data.ciphertext) {
+          finalData = JSON.parse(decryptTransit(data.ciphertext));
+        }
+        if (finalData.success && (finalData.nextMtnNumber || finalData.data?.nextMtnNumber)) {
+          return finalData.nextMtnNumber || finalData.data?.nextMtnNumber;
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching next MTN number:', err);
+    }
+    const mtnPrefix = `MTN-${new Date().getFullYear()}-`;
+    const lastSeq = (transferNotes || []).reduce((max, n) => {
+      if (n.mtnNumber && n.mtnNumber.startsWith(mtnPrefix)) {
+        return Math.max(max, parseInt(n.mtnNumber.slice(mtnPrefix.length), 10) || 0);
+      }
+      return max;
+    }, 0);
+    return `${mtnPrefix}${String(lastSeq + 1).padStart(3, '0')}`;
+  };
+
   // Opens the Create Material Transfer Note form. With no argument it opens
   // blank for a brand new ad hoc Main Store-initiated transfer. Passed a
   // Pending Site Store request, it pre-fills the destination Site Store,
   // materials and reference from that request so Main Store only reviews
   // and confirms the transfer quantities rather than re-entering them.
-  const openTransferForm = (sourceRequest) => {
+  const openTransferForm = async (sourceRequest) => {
     setError(''); setSuccess('');
+
+    const mtnPrefix = `MTN-${new Date().getFullYear()}-`;
+    const lastSeq = (transferNotes || []).reduce((max, n) => {
+      if (n.mtnNumber && n.mtnNumber.startsWith(mtnPrefix)) {
+        return Math.max(max, parseInt(n.mtnNumber.slice(mtnPrefix.length), 10) || 0);
+      }
+      return max;
+    }, 0);
+    const initialMtn = `${mtnPrefix}${String(lastSeq + 1).padStart(3, '0')}`;
+
     if (sourceRequest) {
       setTransferForm({
+        mtnNumber: initialMtn,
         sourceRequestId: sourceRequest._id,
         requestNo: sourceRequest.requestNo,
         siteStoreId: sourceRequest.siteStoreId,
@@ -757,6 +796,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       });
     } else {
       setTransferForm({
+        mtnNumber: initialMtn,
         sourceRequestId: '',
         requestNo: '',
         siteStoreId: '',
@@ -768,6 +808,13 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       });
     }
     setShowTransferForm(true);
+
+    // Fetch authoritative next MTN number from server
+    fetchNextMtnNumber().then(serverMtn => {
+      if (serverMtn) {
+        setTransferForm(prev => ({ ...prev, mtnNumber: serverMtn }));
+      }
+    });
   };
 
   const handleTransferItemChange = (idx, field, value) => {
@@ -815,6 +862,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     setTransferSubmitting(true);
     try {
       const payload = {
+        mtnNumber: transferForm.mtnNumber,
         transferDate: transferForm.transferDate,
         reference: transferForm.reference,
         notes: transferForm.notes,
@@ -3016,7 +3064,16 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                   {transferForm.sourceRequestId ? `Transfer Materials for Request ${transferForm.reference}` : 'Create Material Transfer Note'}
                 </h3>
                 <form id="transfer-form-section" onSubmit={handleCreateTransferSubmit} style={{ display: 'grid', gap: '16px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+                    <div>
+                      <label style={styles.fieldLabel}>MTN Number</label>
+                      <input
+                        type="text"
+                        value={transferForm.mtnNumber || ''}
+                        style={{ ...styles.formInput, background: '#f1f5f9', fontWeight: 'bold', color: '#1a365d' }}
+                        readOnly
+                      />
+                    </div>
                     <div>
                       <label style={styles.fieldLabel}>Destination</label>
                       <input

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import SettingsPage from './SettingsPage';
 import { Calendar } from 'lucide-react';
 import SupplierProfile from '../components/SupplierProfile';
@@ -168,13 +168,13 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
   const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
   const invoicesPagination = usePagination(invoices, 8, [invoices.length], { storageKey: 'po_invoices' });
 
-  const getHeaders = () => {
+  const getHeaders = useCallback(() => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
     return {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`
     };
-  };
+  }, []);
 
   const hasSession = () => {
     try {
@@ -1815,7 +1815,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           // Normal Display Row
                           <>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '600' }}>{s.supplierId || '-'}</td>
-                            <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#1d4ed8', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setViewingSupplierId(s._id)}>{s.name || '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#1d4ed8', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setViewingSupplierId(s._id || s.id || s.supplierId)}>{s.name || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '500' }}>{s.contactPerson || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '500' }}>{s.phone || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b' }}>{s.email || '-'}</td>
@@ -1829,7 +1829,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               }}>{s.status}</span>
                             </td>
                             <td style={{ padding: '14px 16px' }}>
-                              <button onClick={() => setViewingSupplierId(s._id)}
+                              <button onClick={() => setViewingSupplierId(s._id || s.id || s.supplierId)}
                                 style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px' }}>
                                 View
                               </button>
@@ -1868,7 +1868,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
+                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Status', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
@@ -1915,9 +1915,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px' }}>{inv.supplier?.name || '-'}</td>
                           <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px', fontWeight: '600' }}>{Number(inv.amount).toLocaleString()}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{formatDate(inv.invoiceDate)}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '12px', color: isOverdue ? '#991b1b' : '#666', fontWeight: isOverdue ? '600' : 'normal' }}>
-                            {inv.dueDate ? formatDate(inv.dueDate) : '-'}
-                          </td>
                           <td style={{ padding: '14px 16px' }}>
                             <span style={{
                               background: statusBg,
@@ -1976,7 +1973,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     })}
                     {invoices.length === 0 && (
                       <tr>
-                        <td colSpan={11} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
+                        <td colSpan={10} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
                           No invoices recorded yet. Invoices are submitted by Main Store when goods are received against a PO.
                         </td>
                       </tr>

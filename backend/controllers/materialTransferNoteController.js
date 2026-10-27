@@ -22,6 +22,26 @@ const findSiteMaterialByName = async (materialName) => {
 // that request's per-line fulfilledQty/status and notifies the requester.
 // Site Store inventory is NOT touched here: it only increases once the Site
 // Store confirms receipt (receiveTransferNote).
+// Generate the next sequential MTN number (e.g. MTN-2026-011)
+export const generateNextMtnNumber = async () => {
+  const mtnPrefix = `MTN-${new Date().getFullYear()}-`;
+  const existingNotes = await MaterialTransferNote.find({ mtnNumber: { $regex: `^${mtnPrefix}` } }).select('mtnNumber');
+  const lastSeq = existingNotes.reduce((max, n) => Math.max(max, parseInt(n.mtnNumber.slice(mtnPrefix.length), 10) || 0), 0);
+  return `${mtnPrefix}${String(lastSeq + 1).padStart(3, '0')}`;
+};
+
+// @desc    Get the next upcoming sequential MTN number
+// @route   GET /api/material-transfer-notes/next-number
+// @access  Private
+export const getNextMtnNumber = async (req, res) => {
+  try {
+    const nextMtnNumber = await generateNextMtnNumber();
+    res.status(200).json({ success: true, nextMtnNumber, data: { nextMtnNumber } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const executeTransfer = async ({
   materials,
   mainMatsByName,
@@ -31,15 +51,22 @@ const executeTransfer = async ({
   transferDate,
   reference,
   notes,
-  createdBy
+  createdBy,
+  requestedMtnNumber
 }) => {
-  // Next number = highest existing sequence for the year + 1, not a document
-  // count: a count collides with an existing mtnNumber (unique) as soon as
-  // any note other than the latest has been removed.
-  const mtnPrefix = `MTN-${new Date().getFullYear()}-`;
-  const existingNotes = await MaterialTransferNote.find({ mtnNumber: { $regex: `^${mtnPrefix}` } }).select('mtnNumber');
-  const lastSeq = existingNotes.reduce((max, n) => Math.max(max, parseInt(n.mtnNumber.slice(mtnPrefix.length), 10) || 0), 0);
-  const mtnNumber = `${mtnPrefix}${String(lastSeq + 1).padStart(3, '0')}`;
+  // If a valid unassigned MTN number was pre-allocated on the form, reuse it;
+  // otherwise generate the next sequence number.
+  let mtnNumber = null;
+  if (requestedMtnNumber && typeof requestedMtnNumber === 'string' && requestedMtnNumber.trim()) {
+    const candidate = requestedMtnNumber.trim();
+    const existing = await MaterialTransferNote.findOne({ mtnNumber: candidate });
+    if (!existing) {
+      mtnNumber = candidate;
+    }
+  }
+  if (!mtnNumber) {
+    mtnNumber = await generateNextMtnNumber();
+  }
 
   // Issue stock: decrease Main Store for every material. Every step up to
   // here was validated above, so this loop should not fail under normal
@@ -158,7 +185,7 @@ const executeTransfer = async ({
 // @access  Private (MainStoreOfficer - "Issue Materials" permission)
 export const createTransferNote = async (req, res) => {
   try {
-    const { sourceRequestId, transferDate, reference, notes, materials } = req.body;
+    const { sourceRequestId, transferDate, reference, notes, materials, mtnNumber } = req.body;
     const createdBy = req.user ? req.user.name : 'Main Store Officer';
 
     if (!transferDate || !materials || !Array.isArray(materials) || materials.length === 0) {
@@ -229,7 +256,8 @@ export const createTransferNote = async (req, res) => {
       transferDate,
       reference,
       notes,
-      createdBy
+      createdBy,
+      requestedMtnNumber: mtnNumber
     });
 
     res.status(201).json({ success: true, message: 'Material Transfer Note issued. Stock is in transit until the Site Store confirms receipt.', data: mtn });

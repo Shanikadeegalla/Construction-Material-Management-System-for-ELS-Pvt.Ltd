@@ -1,5 +1,7 @@
+import mongoose from 'mongoose';
 import Supplier from '../models/Supplier.js';
 import PurchaseOrder from '../models/PurchaseOrder.js';
+import PurchaseRequest from '../models/PurchaseRequest.js';
 import Quotation from '../models/Quotation.js';
 import Invoice from '../models/Invoice.js';
 import GRN from '../models/GRN.js';
@@ -275,11 +277,26 @@ export const activateSupplier = async (req, res) => {
 
 export const deleteSupplier = deactivateSupplier; // Alias for compatibility with other imports if any
 
+// Helper to look up a supplier by either Mongo _id, custom supplierId (e.g. SUP-0001), or name
+const findSupplier = async (idParam) => {
+  if (!idParam) return null;
+  if (mongoose.Types.ObjectId.isValid(idParam)) {
+    const s = await Supplier.findById(idParam);
+    if (s) return s;
+  }
+  return await Supplier.findOne({
+    $or: [
+      { supplierId: idParam },
+      { name: idParam }
+    ]
+  });
+};
+
 // Get a single supplier by ID
 // GET /api/suppliers/:id
 export const getSupplierById = async (req, res) => {
   try {
-    const supplier = await Supplier.findById(req.params.id);
+    const supplier = await findSupplier(req.params.id);
     if (!supplier) {
       return res.status(404).json({ success: false, message: 'Supplier not found' });
     }
@@ -293,7 +310,7 @@ export const getSupplierById = async (req, res) => {
 // GET /api/suppliers/:id/profile
 export const getSupplierProfile = async (req, res) => {
   try {
-    const supplier = await Supplier.findById(req.params.id);
+    const supplier = await findSupplier(req.params.id);
     if (!supplier) {
       return res.status(404).json({ success: false, message: 'Supplier not found' });
     }
@@ -301,9 +318,14 @@ export const getSupplierProfile = async (req, res) => {
     const formattedSupplier = formatSupplierDoc(supplier);
 
     const [purchaseOrders, quotations, invoices] = await Promise.all([
-      PurchaseOrder.find({ supplier: supplier._id }).populate('prId', 'project projectName').sort({ createdAt: -1 }),
-      Quotation.find({ supplier: supplier._id }).sort({ createdAt: -1 }),
-      Invoice.find({ supplier: supplier._id }).populate('po', 'poNumber').populate('grn', 'grnNumber').sort({ createdAt: -1 })
+      PurchaseOrder.find({
+        $or: [
+          { supplier: supplier._id },
+          { supplierId: supplier.supplierId }
+        ]
+      }).populate('prId', 'project projectName').sort({ createdAt: -1 }).catch(() => []),
+      Quotation.find({ supplier: supplier._id }).sort({ createdAt: -1 }).catch(() => []),
+      Invoice.find({ supplier: supplier._id }).populate('po', 'poNumber').populate('grn', 'grnNumber').sort({ createdAt: -1 }).catch(() => [])
     ]);
 
     // GRNs aren't reliably linked by ObjectId for older records, so fall back to a
@@ -313,16 +335,16 @@ export const getSupplierProfile = async (req, res) => {
         { supplierId: supplier._id },
         { supplier: new RegExp(`^${supplier.name || ''}$`, 'i') }
       ]
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).catch(() => []);
 
     res.status(200).json({
       success: true,
       data: {
         supplier: formattedSupplier,
-        purchaseOrders,
-        quotations,
-        invoices,
-        grns
+        purchaseOrders: purchaseOrders || [],
+        quotations: quotations || [],
+        invoices: invoices || [],
+        grns: grns || []
       }
     });
   } catch (error) {

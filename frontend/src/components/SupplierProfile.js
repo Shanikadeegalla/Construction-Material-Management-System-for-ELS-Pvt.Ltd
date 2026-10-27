@@ -63,19 +63,47 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
   const [quoteFile, setQuoteFile] = useState(null);
 
   const fetchProfile = useCallback(async () => {
+    if (!supplierId) {
+      setError('No supplier ID provided.');
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError('');
     // Give up after 10 seconds instead of leaving the profile loading forever.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
-      const res = await fetch(`${API_BASE}/api/suppliers/${supplierId}/profile`, { headers: getHeaders(), signal: controller.signal });
-      const data = await res.json();
-      if (data.success) {
-        setProfile(data.data);
-      } else {
-        setError(data.message || 'Failed to load supplier profile.');
+      const headers = typeof getHeaders === 'function' ? getHeaders() : {};
+      const res = await fetch(`${API_BASE}/api/suppliers/${supplierId}/profile`, { headers, signal: controller.signal });
+      
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.data) {
+          setProfile(data.data);
+          return;
+        }
       }
+
+      // Fallback: If /profile endpoint fails, fetch single supplier details from GET /api/suppliers/:id
+      const singleRes = await fetch(`${API_BASE}/api/suppliers/${supplierId}`, { headers, signal: controller.signal });
+      if (singleRes.ok) {
+        const singleData = await singleRes.json();
+        const supplierDoc = singleData.data || singleData;
+        if (supplierDoc && (supplierDoc._id || supplierDoc.supplierId || supplierDoc.name)) {
+          setProfile({
+            supplier: supplierDoc,
+            purchaseOrders: [],
+            quotations: [],
+            invoices: [],
+            grns: []
+          });
+          return;
+        }
+      }
+
+      const errData = await res.json().catch(() => ({}));
+      setError(errData.message || 'Failed to load supplier profile.');
     } catch (err) {
       setError(err.name === 'AbortError'
         ? 'Could not load supplier details (request timed out). Please retry.'
@@ -133,11 +161,12 @@ const SupplierProfile = ({ supplierId, onBack, getHeaders, canManageQuotations, 
     return <div style={{ padding: '40px', fontFamily: 'Segoe UI, Arial, sans-serif' }}>Loading supplier profile...</div>;
   }
 
-  if (error && !profile) {
+  if (!profile) {
     return (
       <div style={{ padding: '40px', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
-        <button onClick={onBack} style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '16px' }}>← Back</button>
-        <div style={{ color: '#c62828' }}>{error}</div>
+        <button onClick={onBack} style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '16px' }}>← Back to Suppliers</button>
+        <div style={{ color: '#c62828', marginBottom: '16px' }}>{error || 'Failed to load supplier details.'}</div>
+        <button onClick={fetchProfile} style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>Retry</button>
       </div>
     );
   }

@@ -10,7 +10,7 @@ export const SHOW_PURCHASE_MANAGER_PAYMENT_KPI = false;
 export const SHOW_PURCHASE_MANAGER_KPI = SHOW_PURCHASE_MANAGER_PAYMENT_KPI;
 
 // Controls the top summary cards on the Executive Board (Director) dashboard
-export const SHOW_DIRECTOR_SUMMARY_CARDS = true;
+export const SHOW_DIRECTOR_SUMMARY_CARDS = false;
 
 // Controls the summary cards under the "Site Store Operations Center" header
 export const SHOW_SITE_STORE_SUMMARY_CARDS = true;
