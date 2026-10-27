@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import SettingsPage from './SettingsPage';
 import { Calendar } from 'lucide-react';
 import SupplierProfile from '../components/SupplierProfile';
@@ -15,9 +15,11 @@ import useBusyAction from '../hooks/useBusyAction';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import Pagination, { usePagination } from '../components/Pagination';
 import MaterialsViewButton from '../components/MaterialsViewButton';
-import { SHOW_PURCHASE_MANAGER_KPI } from '../config/featureFlags';
+import { SHOW_PURCHASE_MANAGER_PAYMENT_KPI } from '../config/featureFlags';
+import { useToast } from '../context/ToastContext';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
+  const { toast } = useToast() || {};
   const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -157,18 +159,22 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     );
   }, [suppliers, supplierSearch]);
 
+  const sortedPurchaseRequests = React.useMemo(() => {
+    return [...purchaseRequests].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  }, [purchaseRequests]);
+
   const poPagination = usePagination(filteredOrders, 8, [poSearchTerm]);
-  const prPagination = usePagination(purchaseRequests, 8, [purchaseRequests.length]);
+  const prPagination = usePagination(sortedPurchaseRequests, 8, [sortedPurchaseRequests.length]);
   const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
   const invoicesPagination = usePagination(invoices, 8, [invoices.length], { storageKey: 'po_invoices' });
 
-  const getHeaders = () => {
+  const getHeaders = useCallback(() => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
     return {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`
     };
-  };
+  }, []);
 
   const hasSession = () => {
     try {
@@ -201,10 +207,11 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       const prData = await prRes.json();
       if (prData.success) setPendingPRs(prData.data);
 
-      // Fetch ALL PRs
+      // Fetch ALL PRs (sorted descending by creation date)
       const allPrRes = await fetch(`${API_BASE}/api/purchase-requests`, { headers });
       const allPrData = await allPrRes.json();
       let prList = allPrData.success ? allPrData.data : [];
+      prList.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
       setPurchaseRequests(prList);
 
       // Fetch Invoices / Payments
@@ -294,6 +301,111 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     return () => clearInterval(interval);
   }, []);
 
+  // Real-time synchronization via Server-Sent Events (SSE)
+  useEffect(() => {
+    if (!hasSession()) return undefined;
+
+    const token = JSON.parse(localStorage.getItem('user'))?.token;
+    if (!token) return undefined;
+
+    const sseUrl = `${API_BASE}/api/realtime/events?token=${encodeURIComponent(token)}`;
+    let eventSource = null;
+    let reconnectTimer = null;
+
+    const connectSSE = () => {
+      try {
+        eventSource = new EventSource(sseUrl);
+
+        eventSource.addEventListener('PR_CREATED', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            const alertMsg = data.message || `New Purchase Request submitted for ${data.pr?.projectName || 'Project'}`;
+
+            // 1. Popup / toast alert for Purchase Manager
+            if (toast?.notify) {
+              toast.notify(alertMsg, 'New Purchase Request 📋');
+            } else if (toast?.info) {
+              toast.info(alertMsg);
+            }
+            setMessage(`🔔 ${alertMsg}`);
+
+            // 2. Increment bell unread badge count & update notifications
+            setPrUnreadCount(prev => prev + 1);
+            if (data.notification) {
+              setPrNotifications(prev => [data.notification, ...prev.filter(n => n._id !== data.notification._id)]);
+            }
+
+            // 3. Immediately prepend new PR to table sorted by createdAt descending
+            if (data.pr) {
+              setPurchaseRequests(prev => {
+                const filtered = prev.filter(p => p._id !== data.pr._id);
+                return [data.pr, ...filtered].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+              });
+              setPendingPRs(prev => {
+                if (prev.some(p => p._id === data.pr._id)) return prev;
+                return [data.pr, ...prev];
+              });
+            }
+
+            // 4. Live recalculation / re-fetch of KPI cards (Total, Pending, Sent, Delivered POs)
+            fetchData();
+            fetchPrNotifications();
+          } catch (err) {
+            console.error('Error handling PR_CREATED event:', err);
+          }
+        });
+
+        eventSource.addEventListener('PR_STATUS_CHANGED', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data.prId) {
+              setPurchaseRequests(prev => prev.map(p => p._id === data.prId ? { ...p, status: data.status } : p));
+              setPendingPRs(prev => data.status === 'Pending' ? prev : prev.filter(p => p._id !== data.prId));
+            }
+            // Automatically re-fetch and recalculate KPI metrics
+            fetchData();
+          } catch (err) {
+            console.error('Error handling PR_STATUS_CHANGED event:', err);
+          }
+        });
+
+        eventSource.addEventListener('PO_CREATED', () => {
+          // Re-fetch orders to update KPI metrics in real time
+          fetchData();
+          fetchPrNotifications();
+        });
+
+        eventSource.addEventListener('PO_STATUS_CHANGED', () => {
+          // Re-fetch orders to recalculate KPI cards in real time
+          fetchData();
+          fetchPrNotifications();
+        });
+
+        eventSource.onerror = () => {
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          if (!reconnectTimer) {
+            reconnectTimer = setTimeout(() => {
+              reconnectTimer = null;
+              connectSSE();
+            }, 5000);
+          }
+        };
+      } catch (err) {
+        console.warn('Failed to establish real-time SSE connection:', err);
+      }
+    };
+
+    connectSSE();
+
+    return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (eventSource) eventSource.close();
+    };
+  }, [toast]);
+
   const handlePayInvoice = async (invoiceId) => {
     if (!hasSession()) return;
     setError(''); setMessage('');
@@ -344,6 +456,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
       return d.toISOString().substring(0, 10);
     };
+    if (!['Cash', 'Cheque'].includes(manualPayForm.method)) {
+      errors.method = 'Please select a payment method (Cash or Cheque).';
+    }
     if (!manualPayForm.paidAt) {
       errors.paidAt = 'Payment date is required.';
     } else if (manualPayForm.paidAt > localToday()) {
@@ -1076,38 +1191,36 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               ))}
             </div>
-          ) : SHOW_PURCHASE_MANAGER_KPI ? (
-            <>
-              {activePage === 'payment' ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                  {paymentStats.map((s, i) => (
-                    <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
-                      <div style={{ fontSize: typeof s.value === 'string' && s.value.length > 10 ? '16px' : '24px', fontWeight: '700', color: s.color }}>{s.value}</div>
-                      <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
-                    </div>
-                  ))}
+          ) : activePage === 'payment' ? (
+            SHOW_PURCHASE_MANAGER_PAYMENT_KPI ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                {paymentStats.map((s, i) => (
+                  <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
+                    <div style={{ fontSize: typeof s.value === 'string' && s.value.length > 10 ? '16px' : '24px', fontWeight: '700', color: s.color }}>{s.value}</div>
+                    <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+              {stats.map((s, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: 'white',
+                    borderRadius: '8px',
+                    padding: '20px',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+                    borderTop: `4px solid ${s.color}`
+                  }}
+                >
+                  <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
                 </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                  {stats.map((s, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        background: 'white',
-                        borderRadius: '8px',
-                        padding: '20px',
-                        boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                        borderTop: `4px solid ${s.color}`
-                      }}
-                    >
-                      <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
-                      <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : null}
+              ))}
+            </div>
+          )}
 
           {activePage === 'dashboard' && (
             <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
@@ -1157,7 +1270,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {purchaseRequests.slice(0, 5).map((pr, i) => (
+                  {sortedPurchaseRequests.slice(0, 5).map((pr, i) => (
                     <tr key={pr._id || i} style={{ borderBottom: '1px solid #f0f0f0' }}>
                       <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1565c0', fontWeight: '600' }}>{pr.prNumber || `PR-2026-${String(i+1).padStart(3,'0')}`}</td>
                       <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '500', color: '#1e293b' }}>{pr.projectName || (typeof pr.project === 'object' ? (pr.project?.projectName || pr.project?.name) : pr.project) || '—'}</td>
@@ -1702,7 +1815,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           // Normal Display Row
                           <>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '600' }}>{s.supplierId || '-'}</td>
-                            <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#1d4ed8', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setViewingSupplierId(s._id)}>{s.name || '-'}</td>
+                            <td style={{ padding: '14px 16px', fontSize: '14px', fontWeight: '600', color: '#1d4ed8', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setViewingSupplierId(s._id || s.id || s.supplierId)}>{s.name || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '500' }}>{s.contactPerson || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b', fontWeight: '500' }}>{s.phone || '-'}</td>
                             <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1e293b' }}>{s.email || '-'}</td>
@@ -1716,7 +1829,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               }}>{s.status}</span>
                             </td>
                             <td style={{ padding: '14px 16px' }}>
-                              <button onClick={() => setViewingSupplierId(s._id)}
+                              <button onClick={() => setViewingSupplierId(s._id || s.id || s.supplierId)}
                                 style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', marginRight: '6px' }}>
                                 View
                               </button>
@@ -1755,7 +1868,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
+                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Status', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
@@ -1802,9 +1915,6 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                           <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px' }}>{inv.supplier?.name || '-'}</td>
                           <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px', fontWeight: '600' }}>{Number(inv.amount).toLocaleString()}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{formatDate(inv.invoiceDate)}</td>
-                          <td style={{ padding: '14px 16px', fontSize: '12px', color: isOverdue ? '#991b1b' : '#666', fontWeight: isOverdue ? '600' : 'normal' }}>
-                            {inv.dueDate ? formatDate(inv.dueDate) : '-'}
-                          </td>
                           <td style={{ padding: '14px 16px' }}>
                             <span style={{
                               background: statusBg,
@@ -1863,7 +1973,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                     })}
                     {invoices.length === 0 && (
                       <tr>
-                        <td colSpan={11} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
+                        <td colSpan={10} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
                           No invoices recorded yet. Invoices are submitted by Main Store when goods are received against a PO.
                         </td>
                       </tr>
@@ -1902,29 +2012,92 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
             {manualPayError && <div style={{ background: '#ffebee', border: '1px solid #ef5350', color: '#c62828', padding: '8px 12px', borderRadius: '6px', marginBottom: '12px', fontSize: '13px' }}>{manualPayError}</div>}
 
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>Payment Method *</label>
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
-              {['Cash', 'Cheque'].map(mth => (
-                <button
-                  type="button"
-                  key={mth}
-                  onClick={() => setManualPayForm({ ...manualPayForm, method: mth })}
-                  style={{ flex: 1, padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: '700', fontSize: '13px', border: manualPayForm.method === mth ? '2px solid #ff9800' : '1px solid #cbd5e1', background: manualPayForm.method === mth ? '#fff7ed' : 'white', color: '#0d1b4b' }}
-                >
-                  {mth === 'Cash' ? '💵 Cash' : '🏦 Cheque'}
-                </button>
-              ))}
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '8px' }}>
+              Payment Method * <span style={{ fontWeight: 'normal', color: '#64748b', fontSize: '11px' }}>(Choose Cash or Cheque)</span>
+            </label>
+            <div
+              role="radiogroup"
+              aria-label="Payment Method Selection"
+              style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}
+            >
+              {[
+                { value: 'Cash', label: 'Cash Payment', icon: '💵', sub: 'Cash disbursement' },
+                { value: 'Cheque', label: 'Cheque Payment', icon: '🏦', sub: '6-digit bank cheque' }
+              ].map(opt => {
+                const isSelected = manualPayForm.method === opt.value;
+                return (
+                  <label
+                    key={opt.value}
+                    htmlFor={`payMethod_${opt.value}`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: isSelected ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                      background: isSelected ? '#eff6ff' : '#ffffff',
+                      boxShadow: isSelected ? '0 2px 6px rgba(37,99,235,0.12)' : 'none',
+                      transition: 'all 0.15s ease-in-out'
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      id={`payMethod_${opt.value}`}
+                      name="paymentMethod"
+                      value={opt.value}
+                      checked={isSelected}
+                      onChange={() => {
+                        setManualPayForm(prev => ({ ...prev, method: opt.value }));
+                        setManualPayFieldErrors(prev => {
+                          const next = { ...prev };
+                          delete next.method;
+                          delete next.reference;
+                          delete next.bankName;
+                          delete next.chequeDate;
+                          return next;
+                        });
+                      }}
+                      style={{ cursor: 'pointer', accentColor: '#2563eb', width: '16px', height: '16px', margin: 0 }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: '700', fontSize: '13px', color: isSelected ? '#1e40af' : '#0d1b4b', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span>{opt.icon}</span> {opt.value}
+                      </div>
+                      <div style={{ fontSize: '11px', color: isSelected ? '#3b82f6' : '#64748b', marginTop: '2px' }}>
+                        {opt.sub}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
             </div>
+            {payFieldError('method')}
 
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>
-              {manualPayForm.method === 'Cheque' ? 'Cheque Number *' : 'Voucher / Receipt No.'}
+            <label htmlFor="manualPayReference" style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#475569', marginBottom: '6px' }}>
+              {manualPayForm.method === 'Cheque' ? (
+                <>Cheque Number <span style={{ color: '#dc2626' }}>* (Required)</span></>
+              ) : (
+                <>Voucher / Receipt Reference <span style={{ color: '#94a3b8', fontWeight: 400 }}>(Optional)</span></>
+              )}
             </label>
             <input
+              id="manualPayReference"
               type="text"
+              required={manualPayForm.method === 'Cheque'}
               value={manualPayForm.reference}
               onChange={e => setManualPayForm({ ...manualPayForm, reference: e.target.value })}
-              placeholder={manualPayForm.method === 'Cheque' ? '6 digits, e.g. 004512' : 'Optional'}
-              style={{ width: '100%', padding: '9px 12px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '13px', marginBottom: '14px', boxSizing: 'border-box' }}
+              placeholder={manualPayForm.method === 'Cheque' ? '6-digit cheque number (e.g. 004512)' : 'Optional voucher or cash receipt #'}
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                border: manualPayFieldErrors.reference ? '1px solid #ef5350' : '1px solid #cbd5e1',
+                borderRadius: '6px',
+                fontSize: '13px',
+                marginBottom: manualPayFieldErrors.reference ? '4px' : '14px',
+                boxSizing: 'border-box'
+              }}
             />
             {payFieldError('reference')}
 

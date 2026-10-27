@@ -72,6 +72,9 @@ const paymentSchema = new mongoose.Schema({
   },
   emailSentAt: {
     type: Date
+  },
+  payerEmailSentAt: {
+    type: Date
   }
 }, { timestamps: true });
 

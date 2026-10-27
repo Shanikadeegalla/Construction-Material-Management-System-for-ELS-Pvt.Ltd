@@ -4,8 +4,10 @@ import PurchaseOrder from '../models/PurchaseOrder.js';
 import Supplier from '../models/Supplier.js';
 import Payment from '../models/Payment.js';
 import Invoice from '../models/Invoice.js';
+import User from '../models/userModel.js';
 import { sendMail, escapeHtml } from '../utils/mailer.js';
 import { notifyRoles } from './notificationController.js';
+import { broadcastRealtimeEvent } from '../utils/realtimeEvents.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 const CURRENCY = (process.env.STRIPE_CURRENCY || 'lkr').toLowerCase();
@@ -137,6 +139,140 @@ const sendPaymentConfirmation = async ({ payment, po, supplierDoc, invoice }) =>
   return true;
 };
 
+// Sends an automated payment confirmation email (with PDF receipt attached) to the payer / logged-in user.
+// Idempotent: skips if payment.payerEmailSentAt is already set.
+const sendPayerPaymentConfirmation = async ({ payment, po, supplierDoc, invoice, payerEmail, payerName }) => {
+  if (payment.payerEmailSentAt) return false;
+  if (!payerEmail) {
+    console.warn(`Skipping payer payment confirmation: no payer email available for payment ${payment._id}`);
+    return false;
+  }
+
+  const poNumber = po?.poNumber || 'N/A';
+  const invoiceNumber = invoice?.invoiceNumber || `INV-${poNumber.replace('PO-', '')}`;
+  const supplierName = supplierDoc?.name || (typeof po?.supplier === 'object' ? po.supplier?.name : po?.supplier) || 'Supplier';
+  const currency = (payment.currency || CURRENCY).toUpperCase();
+  const method = payment.method || 'Stripe';
+  const paidAt = payment.paidAt || new Date();
+
+  // Transaction / Voucher Reference
+  let referenceDisplay = '-';
+  if (method === 'Stripe') {
+    referenceDisplay = payment.stripeSessionId ? `Stripe (${payment.stripeSessionId})` : 'Stripe Online Gateway';
+  } else if (method === 'Cheque') {
+    referenceDisplay = [payment.chequeNumber || payment.reference, payment.bankName].filter(Boolean).join(' / ') || 'Cheque Issued';
+  } else {
+    referenceDisplay = payment.reference || 'Cash Voucher (Petty Cash)';
+  }
+
+  const formattedDate = new Date(paidAt).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+
+  const pdfBuffer = await buildReceiptPdfBuffer({
+    invoiceNumber,
+    poNumber,
+    grnNumber: invoice?.grn?.grnNumber || 'N/A',
+    supplierName,
+    supplierEmail: supplierDoc?.email || '',
+    amountPaid: payment.amount,
+    currency,
+    paidAt,
+    stripeRef: payment.stripeSessionId,
+    method,
+    reference: payment.reference,
+    bankName: payment.bankName,
+    paidByName: payerName || 'Authorized Officer'
+  });
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Payment Confirmation - ${escapeHtml(invoiceNumber)}</title>
+    </head>
+    <body style="font-family: 'Segoe UI', Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 24px; color: #1e293b;">
+      <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #e2e8f0;">
+        <div style="background: #0d1b4b; padding: 28px 24px; text-align: center; color: #ffffff;">
+          <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff;">ELS Construction (Pvt) Ltd</h1>
+          <p style="margin: 6px 0 0; font-size: 13px; color: #94a3b8;">Construction Material Management System</p>
+          <div style="display: inline-block; background: #dcfce7; color: #15803d; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; margin-top: 14px;">
+            ✓ PAYMENT SUCCESSFUL
+          </div>
+        </div>
+        <div style="padding: 28px 24px;">
+          <div style="font-size: 15px; font-weight: 600; color: #0d1b4b; margin-bottom: 8px;">Hello ${escapeHtml(payerName || 'User')},</div>
+          <p style="font-size: 13px; color: #475569; line-height: 1.5; margin: 0 0 16px;">
+            This email confirms that the supplier invoice payment detailed below has been successfully processed and recorded in the system.
+          </p>
+
+          <table style="width: 100%; border-collapse: collapse; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin: 20px 0; overflow: hidden;">
+            <tbody>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 14px; font-size: 13px; color: #64748b; font-weight: 600;">Invoice Number</td>
+                <td style="padding: 10px 14px; font-size: 13px; color: #0f172a; font-weight: 600; text-align: right;">${escapeHtml(invoiceNumber)}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 14px; font-size: 13px; color: #64748b; font-weight: 600;">Purchase Order (PO)</td>
+                <td style="padding: 10px 14px; font-size: 13px; color: #0f172a; font-weight: 600; text-align: right;">${escapeHtml(poNumber)}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 14px; font-size: 13px; color: #64748b; font-weight: 600;">Supplier Name</td>
+                <td style="padding: 10px 14px; font-size: 13px; color: #0f172a; font-weight: 600; text-align: right;">${escapeHtml(supplierName)}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 14px; font-size: 13px; color: #64748b; font-weight: 600;">Amount Paid (LKR)</td>
+                <td style="padding: 10px 14px; font-size: 15px; color: #0d1b4b; font-weight: 700; text-align: right;">${escapeHtml(currency)} ${Number(payment.amount).toLocaleString()}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 14px; font-size: 13px; color: #64748b; font-weight: 600;">Payment Method</td>
+                <td style="padding: 10px 14px; font-size: 13px; color: #0f172a; font-weight: 600; text-align: right;">${escapeHtml(method)}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 14px; font-size: 13px; color: #64748b; font-weight: 600;">Payment Date</td>
+                <td style="padding: 10px 14px; font-size: 13px; color: #0f172a; font-weight: 600; text-align: right;">${escapeHtml(formattedDate)}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 14px; font-size: 13px; color: #64748b; font-weight: 600;">Transaction / Voucher Reference</td>
+                <td style="padding: 10px 14px; font-size: 13px; color: #0f172a; font-weight: 600; text-align: right;">${escapeHtml(referenceDisplay)}</td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 14px; font-size: 13px; color: #64748b; font-weight: 600;">Status</td>
+                <td style="padding: 10px 14px; font-size: 13px; color: #16a34a; font-weight: 700; text-align: right;">Success / Paid</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p style="font-size: 12px; color: #64748b; line-height: 1.5; margin: 16px 0 0;">
+            An official PDF payment receipt has been generated and attached to this email for your accounting records.
+          </p>
+        </div>
+        <div style="background: #f8fafc; padding: 16px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0;">
+          &copy; ${new Date().getFullYear()} ELS Construction (Pvt) Ltd. All rights reserved.<br/>
+          This is an automated system confirmation.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  await sendMail({
+    to: payerEmail,
+    subject: `Payment Confirmation: Invoice ${invoiceNumber} - PO ${poNumber} [PAID]`,
+    html,
+    attachments: [{
+      filename: `receipt-${invoiceNumber}.pdf`,
+      content: pdfBuffer,
+      contentType: 'application/pdf'
+    }]
+  });
+
+  payment.payerEmailSentAt = new Date();
+  await payment.save();
+  return true;
+};
+
 // Finds the Payment record belonging to a Stripe Checkout session.
 const findPaymentForSession = async (session, fallbackPoId) => {
   let payment = await Payment.findOne({ stripeSessionId: session.id });
@@ -153,7 +289,7 @@ const findPaymentForSession = async (session, fallbackPoId) => {
 // Applies a completed payment (Stripe, Cash or Cheque) to the Payment record, its Invoice and
 // its PO, then notifies the supplier and the internal approvers. Idempotent: safe to call from
 // both the Stripe success page and the webhook. `session` is only present for Stripe.
-const settlePayment = async (payment, session = null) => {
+const settlePayment = async (payment, session = null, payerUser = null) => {
   const wasAlreadyPaid = payment.status === 'paid';
   if (!wasAlreadyPaid) {
     payment.status = 'paid';
@@ -196,18 +332,75 @@ const settlePayment = async (payment, session = null) => {
     await notifyRoles(['MainStoreOfficer'], msg, 'PAYMENT_RECORDED', '/main-store-dashboard');
   }
 
-  // Isolated non-blocking email dispatch: never blocks database response or triggers retries
-  if (!payment.emailSentAt) {
-    setImmediate(async () => {
-      try {
+  // Real-time synchronization broadcast
+  broadcastRealtimeEvent('PO_STATUS_CHANGED', {
+    poId: po?._id,
+    paymentId: payment._id,
+    status: po?.status
+  });
+
+  // Non-blocking email dispatch: keeps both supplier and payer emails inside setImmediate with try/catch
+  setImmediate(async () => {
+    try {
+      // 1. Send supplier payment notification (if not already sent)
+      if (!payment.emailSentAt) {
         const supplierDoc = await Supplier.findById(payment.supplier);
         await sendPaymentConfirmation({ payment, po, supplierDoc, invoice });
-      } catch (mailErr) {
-        console.error('[Payment Email Error] Non-blocking dispatch failed:', mailErr.message);
       }
-    });
-  }
 
+      // 2. Resolve payer email and name, and send payer confirmation email
+      let payerEmail = payerUser?.email;
+      let payerName = payerUser?.name;
+
+      if (!payerEmail && payment.paidBy) {
+        try {
+          const userDoc = await User.findById(payment.paidBy);
+          if (userDoc?.email) {
+            payerEmail = userDoc.email;
+            payerName = userDoc.name;
+          }
+        } catch (e) {
+          console.warn('Error fetching payer user by paidBy:', e.message);
+        }
+      }
+
+      if (!payerEmail && session?.metadata?.payerEmail) {
+        payerEmail = session.metadata.payerEmail;
+        payerName = session.metadata.payerName || payerName;
+      }
+
+      if (!payerEmail && session?.customer_details?.email) {
+        payerEmail = session.customer_details.email;
+        payerName = session.customer_details.name || payerName;
+      }
+
+      if (!payerEmail) {
+        try {
+          const pm = await User.findOne({ role: 'PurchaseManager' });
+          if (pm?.email) {
+            payerEmail = pm.email;
+            payerName = pm.name;
+          }
+        } catch (e) {
+          console.warn('Error fetching fallback PurchaseManager for email:', e.message);
+        }
+      }
+
+      if (!payment.payerEmailSentAt && payerEmail) {
+        const supplierDoc = await Supplier.findById(payment.supplier);
+        await sendPayerPaymentConfirmation({
+          payment,
+          po,
+          supplierDoc,
+          invoice,
+          payerEmail,
+          payerName
+        });
+      }
+    } catch (mailErr) {
+      console.error('[Payment Email Error] Non-blocking dispatch failed:', mailErr.message);
+    }
+  });
   return !!payment.emailSentAt;
 };
 
@@ -293,7 +486,10 @@ export const createCheckoutSession = async (req, res) => {
       metadata: {
         invoiceId: invoice._id.toString(),
         purchaseOrderId: po._id.toString(),
-        supplierId: supplierDoc ? supplierDoc._id.toString() : ''
+        supplierId: supplierDoc ? supplierDoc._id.toString() : '',
+        payerId: req.user ? req.user._id.toString() : '',
+        payerEmail: req.user ? req.user.email : '',
+        payerName: req.user ? req.user.name : ''
       },
       success_url: `${FRONTEND_URL}/payments/success?session_id={CHECKOUT_SESSION_ID}&po=${po._id}`,
       cancel_url: `${FRONTEND_URL}/payments/cancel?po=${po._id}`
@@ -347,7 +543,7 @@ export const confirmPaymentSession = async (req, res) => {
       return res.status(404).json({ success: false, message: 'No payment record found for this session.' });
     }
 
-    const emailSent = await settlePayment(payment, session);
+    const emailSent = await settlePayment(payment, session, req.user);
 
     res.status(200).json({ success: true, data: { paymentStatus: payment.status, emailSent } });
   } catch (error) {
@@ -529,7 +725,7 @@ export const recordManualPayment = async (req, res) => {
       { upsert: true, new: true }
     );
 
-    const emailSent = await settlePayment(payment);
+    const emailSent = await settlePayment(payment, null, req.user);
 
     res.status(201).json({
       success: true,

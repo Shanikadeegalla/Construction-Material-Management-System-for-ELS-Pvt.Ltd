@@ -9,6 +9,7 @@ import mongoose from 'mongoose';
 import { encryptDB, decryptDB } from '../utils/cryptoUtils.js';
 import { recordMovement, getDecryptedQuantity } from '../utils/stockService.js';
 import { notifyRoles } from './notificationController.js';
+import { broadcastRealtimeEvent } from '../utils/realtimeEvents.js';
 
 // @desc    Get all materials (optionally filter by location)
 // @route   GET /api/inventory
@@ -416,6 +417,11 @@ export const createGRN = async (req, res) => {
     // The PO's delivery progress is only recorded once the GRN itself is saved.
     if (po) {
       await po.save();
+      broadcastRealtimeEvent('PO_STATUS_CHANGED', {
+        poId: po._id,
+        status: po.status,
+        po
+      });
     }
 
     // 5. Increment quantities of received items in MainStore, logging each
