@@ -15,7 +15,7 @@ import useBusyAction from '../hooks/useBusyAction';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import Pagination, { usePagination } from '../components/Pagination';
 import MaterialsViewButton from '../components/MaterialsViewButton';
-import { SHOW_PURCHASE_MANAGER_KPI } from '../config/featureFlags';
+import { SHOW_PURCHASE_MANAGER_PAYMENT_KPI } from '../config/featureFlags';
 import { useToast } from '../context/ToastContext';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
@@ -1191,38 +1191,36 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                 </div>
               ))}
             </div>
-          ) : SHOW_PURCHASE_MANAGER_KPI ? (
-            <>
-              {activePage === 'payment' ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                  {paymentStats.map((s, i) => (
-                    <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
-                      <div style={{ fontSize: typeof s.value === 'string' && s.value.length > 10 ? '16px' : '24px', fontWeight: '700', color: s.color }}>{s.value}</div>
-                      <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
-                    </div>
-                  ))}
+          ) : activePage === 'payment' ? (
+            SHOW_PURCHASE_MANAGER_PAYMENT_KPI ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                {paymentStats.map((s, i) => (
+                  <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', borderTop: `4px solid ${s.color}` }}>
+                    <div style={{ fontSize: typeof s.value === 'string' && s.value.length > 10 ? '16px' : '24px', fontWeight: '700', color: s.color }}>{s.value}</div>
+                    <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+              {stats.map((s, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: 'white',
+                    borderRadius: '8px',
+                    padding: '20px',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+                    borderTop: `4px solid ${s.color}`
+                  }}
+                >
+                  <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
                 </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                  {stats.map((s, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        background: 'white',
-                        borderRadius: '8px',
-                        padding: '20px',
-                        boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-                        borderTop: `4px solid ${s.color}`
-                      }}
-                    >
-                      <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
-                      <div style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : null}
+              ))}
+            </div>
+          )}
 
           {activePage === 'dashboard' && (
             <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
