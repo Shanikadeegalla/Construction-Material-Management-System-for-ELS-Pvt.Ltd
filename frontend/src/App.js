@@ -64,7 +64,7 @@ function MainApp() {
           setError('Session token was invalid or expired. Please sign in again.');
         } else {
           setUser(parsed);
-          if (!path.startsWith('/payments/')) {
+          if (!path.startsWith('/payments/success') && !path.startsWith('/payments/cancel')) {
             setView('dashboard');
           }
         }
@@ -196,7 +196,17 @@ function MainApp() {
       return <PMDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
     }
     if (r === 'purchasemanager' || r === 'purchase') {
-      return <PurchaseOrderPage user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;
+      const p = window.location.pathname.toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      let initialPage = params.get('tab') || params.get('page');
+      if (!initialPage) {
+        if (p.includes('/payment')) initialPage = 'payment';
+        else if (p.includes('/report')) initialPage = 'reports';
+        else if (p.includes('/order')) initialPage = 'orders';
+        else if (p.includes('/supplier')) initialPage = 'suppliers';
+        else if (p.includes('/pr') || p.includes('/request')) initialPage = 'prs';
+      }
+      return <PurchaseOrderPage user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} initialPage={initialPage || 'dashboard'} />;
     }
     if (r === 'mainstoreofficer' || r === 'store' || r === 'mainstore') {
       return <MainStoreDashboard user={user} onLogout={handleLogout} onUserUpdate={handleUserUpdate} />;

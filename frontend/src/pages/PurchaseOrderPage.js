@@ -18,15 +18,71 @@ import MaterialsViewButton from '../components/MaterialsViewButton';
 import { SHOW_PURCHASE_MANAGER_PAYMENT_KPI } from '../config/featureFlags';
 import { useToast } from '../context/ToastContext';
 
-const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
+const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashboard' }) => {
   const { toast } = useToast() || {};
-  const [activePage, setActivePage] = useState('dashboard'); // 'dashboard', 'orders', 'suppliers'
+
+  const getInitialActivePage = () => {
+    if (initialPage && initialPage !== 'dashboard') return initialPage;
+    try {
+      const p = window.location.pathname.toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab') || params.get('page');
+      if (tab) return tab;
+      if (p.includes('/payment')) return 'payment';
+      if (p.includes('/report')) return 'reports';
+      if (p.includes('/order')) return 'orders';
+      if (p.includes('/supplier')) return 'suppliers';
+      if (p.includes('/pr') || p.includes('/request')) return 'prs';
+      if (p.includes('/setting')) return 'settings';
+    } catch (e) {}
+    return initialPage || 'dashboard';
+  };
+
+  const [activePage, setActivePage] = useState(getInitialActivePage);
+  const [grns, setGrns] = useState([]);
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Sync browser back/forward and URL changes
+  useEffect(() => {
+    const handlePopState = () => {
+      const p = window.location.pathname.toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab') || params.get('page');
+      if (tab) {
+        setActivePage(tab);
+      } else if (p.includes('/payment')) {
+        setActivePage('payment');
+      } else if (p.includes('/report')) {
+        setActivePage('reports');
+      } else if (p.includes('/order')) {
+        setActivePage('orders');
+      } else if (p.includes('/supplier')) {
+        setActivePage('suppliers');
+      } else if (p.includes('/pr') || p.includes('/request')) {
+        setActivePage('prs');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateToPage = (pageId) => {
+    setActivePage(pageId);
+    setError('');
+    setMessage('');
+    try {
+      let url = '/purchase-orders';
+      if (pageId === 'payment') url = '/payment';
+      else if (pageId === 'reports') url = '/reports';
+      else if (pageId !== 'dashboard') url = `/purchase-orders?tab=${pageId}`;
+      window.history.pushState({ page: pageId }, '', url);
+    } catch (e) {}
+  };
   const [orders, setOrders] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -165,8 +221,32 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
 
   const poPagination = usePagination(filteredOrders, 8, [poSearchTerm]);
   const prPagination = usePagination(sortedPurchaseRequests, 8, [sortedPurchaseRequests.length]);
-  const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
-  const invoicesPagination = usePagination(invoices, 8, [invoices.length], { storageKey: 'po_invoices' });
+  const payableItems = React.useMemo(() => {
+    const list = [...invoices];
+    // Include approved GRNs that don't already have an invoice record in the list
+    (grns || []).filter(g => g.status === 'Approved').forEach(g => {
+      const alreadyHasInv = list.some(inv => (inv.grn?._id || inv.grn) === g._id || (g.poId && (inv.po?._id || inv.po) === g.poId));
+      if (!alreadyHasInv) {
+        const po = orders.find(o => o._id === g.poId || o.poNumber === g.poReference);
+        list.push({
+          _id: `grn-${g._id}`,
+          isVirtualFromGRN: true,
+          grnDoc: g,
+          invoiceNumber: `INV-${g.grnNumber}`,
+          po: po || { poNumber: g.poReference || '—', _id: g.poId },
+          grn: g,
+          supplier: typeof g.supplier === 'object' ? g.supplier : { name: g.supplier, _id: g.supplierId },
+          amount: Number(po?.totalAmount) || 0,
+          invoiceDate: g.receivedDate || g.createdAt,
+          status: 'Approved',
+          approvedBy: 'GRN Approved'
+        });
+      }
+    });
+    return list;
+  }, [invoices, grns, orders]);
+
+  const invoicesPagination = usePagination(payableItems, 8, [payableItems.length], { storageKey: 'po_invoices' });
 
   const getHeaders = useCallback(() => {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
@@ -219,12 +299,22 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       const invData = await invRes.json();
       setInvoices(invData.success ? invData.data : []);
 
+      // Fetch Goods Received Notes (GRNs) for GRN-to-payment workflow
+      try {
+        const grnRes = await fetch(`${API_BASE}/api/inventory/grn`, { headers });
+        const grnData = await grnRes.json();
+        setGrns(Array.isArray(grnData) ? grnData : (grnData.data || []));
+      } catch (gErr) {
+        setGrns([]);
+      }
+
     } catch (err) {
       setError('Could not connect to the backend server.');
       setOrders([]);
       setSuppliers([]);
       setInvoices([]);
       setPurchaseRequests([]);
+      setGrns([]);
     }
   };
 
@@ -270,8 +360,20 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
       console.error('Error marking notification as read:', err);
     }
     setPrNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, isRead: true } : n));
-    setPrUnreadCount(prev => Math.max(0, prev - (notif.isRead ? 0 : 1)));
-    if (notif.link) setActivePage('prs');
+    if (notif.link) {
+      const link = (notif.link || '').toLowerCase();
+      const type = (notif.type || '').toLowerCase();
+      const msg = (notif.message || '').toLowerCase();
+      if (link.includes('payment') || type.includes('invoice') || type.includes('payment') || type.includes('grn') || msg.includes('invoice') || msg.includes('payment') || msg.includes('grn')) {
+        navigateToPage('payment');
+      } else if (link.includes('report') || type.includes('report')) {
+        navigateToPage('reports');
+      } else if (link.includes('order') || type.includes('po')) {
+        navigateToPage('orders');
+      } else {
+        navigateToPage('prs');
+      }
+    }
   };
 
   const handleMarkAllNotificationsRead = async () => {
@@ -406,15 +508,29 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     };
   }, [toast]);
 
-  const handlePayInvoice = async (invoiceId) => {
+  const handlePayInvoice = async (invoiceId, invObj = null) => {
     if (!hasSession()) return;
     setError(''); setMessage('');
     setPayingInvoiceId(invoiceId);
     try {
+      const payload = {};
+      if (invoiceId && !String(invoiceId).startsWith('grn-')) {
+        payload.invoiceId = invoiceId;
+      }
+      if (invObj?.grn?._id || invObj?.grnDoc?._id) {
+        payload.grnId = invObj.grn?._id || invObj.grnDoc?._id;
+      }
+      if (invObj?.po?._id || invObj?.po) {
+        payload.purchaseOrderId = invObj.po?._id || invObj.po;
+      }
+      if (!payload.invoiceId && !payload.grnId && !payload.purchaseOrderId) {
+        payload.invoiceId = invoiceId;
+      }
+
       const res = await fetch(`${API_BASE}/api/payments/create-checkout-session`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ invoiceId })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data.success) {
@@ -484,8 +600,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
-          invoiceId: manualPayInvoice._id,
+          invoiceId: manualPayInvoice._id && !String(manualPayInvoice._id).startsWith('grn-') ? manualPayInvoice._id : undefined,
           invoiceNo: manualPayInvoice.invoiceNumber,
+          grnId: manualPayInvoice.grn?._id || manualPayInvoice.grnDoc?._id,
+          purchaseOrderId: manualPayInvoice.po?._id || manualPayInvoice.po,
           paymentMethod: manualPayForm.method,
           method: manualPayForm.method,
           voucherNo: (manualPayForm.reference || '').trim(),
@@ -609,19 +727,58 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
     return options;
   };
 
-  // Payment state of a PO, derived from its supplier invoices so it matches the Payment Portal.
+  // Payment state of a PO, derived from its supplier invoices and approved GRN so it matches the Payment Portal.
   const getPoPaymentState = (po) => {
     const poInvoices = invoices.filter(inv => (inv.po?._id || inv.po) === po._id && inv.status !== 'Rejected');
-    if (poInvoices.some(inv => inv.status === 'Approved')) {
-      return { label: '💳 Ready to pay', bg: '#ede9fe', color: '#5b21b6', ready: true };
+    const poGrn = (grns || []).find(g => (g.poId?._id || g.poId) === po._id || g.poReference === po.poNumber);
+    const isGrnApproved = poGrn && poGrn.status === 'Approved';
+
+    if (poInvoices.some(inv => inv.status === 'Paid') || po.paymentStatus === 'paid') {
+      return { label: '✓ Paid', bg: '#dcfce7', color: '#15803d', status: 'paid', invoice: poInvoices.find(i => i.status === 'Paid') };
+    }
+    if (poInvoices.some(inv => inv.status === 'Approved') || isGrnApproved) {
+      const approvedInv = poInvoices.find(inv => inv.status === 'Approved') || poInvoices[0];
+      return {
+        label: isGrnApproved ? '💳 GRN Approved (Pay)' : '💳 Ready to pay',
+        bg: '#ede9fe',
+        color: '#5b21b6',
+        ready: true,
+        grnApproved: isGrnApproved,
+        grn: poGrn,
+        invoice: approvedInv
+      };
     }
     if (poInvoices.some(inv => inv.status === 'Pending Approval')) {
-      return { label: 'Awaiting Director', bg: '#dbeafe', color: '#1d4ed8' };
-    }
-    if (poInvoices.length > 0 || po.paymentStatus === 'paid') {
-      return { label: '✓ Paid', bg: '#dcfce7', color: '#15803d' };
+      return { label: 'Awaiting Director', bg: '#dbeafe', color: '#1d4ed8', invoice: poInvoices[0] };
     }
     return { label: 'No invoice', bg: '#f1f5f9', color: '#475569' };
+  };
+
+  const handleInitiatePaymentForPO = (po) => {
+    const payState = getPoPaymentState(po);
+    const poInvoices = invoices.filter(inv => (inv.po?._id || inv.po) === po._id && inv.status !== 'Rejected');
+    let targetInv = poInvoices.find(inv => inv.status === 'Approved') || poInvoices[0];
+    const poGrn = (grns || []).find(g => (g.poId?._id || g.poId) === po._id || g.poReference === po.poNumber);
+
+    if (!targetInv && (payState.grnApproved || poGrn?.status === 'Approved')) {
+      targetInv = {
+        _id: `grn-${poGrn?._id || po._id}`,
+        isVirtualFromGRN: true,
+        invoiceNumber: `INV-${poGrn ? poGrn.grnNumber : po.poNumber}`,
+        po: po,
+        grn: poGrn,
+        supplier: typeof po.supplier === 'object' ? po.supplier : { name: po.supplier, _id: po.supplierId },
+        amount: Number(po.totalAmount) || 0,
+        status: 'Approved',
+        approvedBy: 'GRN Approved'
+      };
+    }
+
+    if (targetInv) {
+      openManualPay(targetInv);
+    } else {
+      navigateToPage('payment');
+    }
   };
 
   const handleConvertToPO = (pr) => {
@@ -1009,18 +1166,39 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
         </div>
         <nav style={{ flex: 1, padding: '8px 0' }}>
           {[
-            { id: 'dashboard', label: 'Dashboard', icon: '⊞' },
-            { id: 'prs', label: 'Purchase Request', icon: '📋' },
-            { id: 'orders', label: 'Purchase Orders', icon: '📦' },
-            { id: 'suppliers', label: 'Suppliers Registry', icon: '🏭' },
-            { id: 'payment', label: 'Payment', icon: '💳' },
-            { id: 'reports', label: 'Reports', icon: '📑' },
-            { id: 'settings', label: 'Settings', icon: '⚙️' },
+            { id: 'dashboard', label: 'Dashboard', icon: '⊞', href: '/purchase-orders' },
+            { id: 'prs', label: 'Purchase Request', icon: '📋', href: '/purchase-orders?tab=prs' },
+            { id: 'orders', label: 'Purchase Orders', icon: '📦', href: '/purchase-orders?tab=orders' },
+            { id: 'suppliers', label: 'Suppliers Registry', icon: '🏭', href: '/purchase-orders?tab=suppliers' },
+            { id: 'payment', label: 'Payment', icon: '💳', href: '/payment' },
+            { id: 'reports', label: 'Reports', icon: '📑', href: '/reports' },
+            { id: 'settings', label: 'Settings', icon: '⚙️', href: '/purchase-orders?tab=settings' },
           ].map(item => (
-            <div key={item.id} onClick={() => { setActivePage(item.id); setError(''); setMessage(''); }}
-              style={{ padding: '12px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', background: activePage === item.id ? 'rgba(37, 99, 235,0.2)' : 'transparent', borderLeft: activePage === item.id ? '3px solid #2563eb' : '3px solid transparent', color: activePage === item.id ? '#2563eb' : '#ccc', transition: 'all 0.2s' }}>
+            <a
+              key={item.id}
+              id={`sidebar-nav-${item.id}`}
+              href={item.href}
+              onClick={(e) => {
+                e.preventDefault();
+                navigateToPage(item.id);
+              }}
+              style={{
+                padding: '12px 20px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                fontSize: '14px',
+                textDecoration: 'none',
+                background: activePage === item.id ? 'rgba(37, 99, 235,0.2)' : 'transparent',
+                borderLeft: activePage === item.id ? '3px solid #2563eb' : '3px solid transparent',
+                color: activePage === item.id ? '#2563eb' : '#ccc',
+                transition: 'all 0.2s',
+                userSelect: 'none'
+              }}
+            >
               <span>{item.icon}</span>{item.label}
-            </div>
+            </a>
           ))}
         </nav>
         <div onClick={onLogout} style={{ padding: '16px 20px', cursor: 'pointer', borderTop: '1px solid rgba(255,255,255,0.1)', color: '#ef5350', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1167,6 +1345,34 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             </div>
 
             <div style={{ display: 'flex', gap: '10px' }}>
+              {activePage === 'payment' && (
+                <>
+                  <button
+                    id="btn-header-download-report"
+                    onClick={handleDownloadReport}
+                    disabled={downloadingReport}
+                    style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: downloadingReport ? 'not-allowed' : 'pointer', fontWeight: '600', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    {downloadingReport ? 'Downloading…' : '📄 Payment Report'}
+                  </button>
+                  <button
+                    id="btn-header-goto-reports"
+                    onClick={() => navigateToPage('reports')}
+                    style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
+                  >
+                    📑 Reports Center
+                  </button>
+                </>
+              )}
+              {activePage === 'reports' && (
+                <button
+                  id="btn-header-goto-payment"
+                  onClick={() => navigateToPage('payment')}
+                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}
+                >
+                  💳 Payment Portal
+                </button>
+              )}
               {activePage === 'suppliers' && user?.role === 'Admin' && (
                 <button onClick={() => setShowSupplierForm(!showSupplierForm)}
                   style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '13px' }}>
@@ -1660,8 +1866,9 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                             const pay = getPoPaymentState(po);
                             return (
                               <span
-                                onClick={pay.ready ? () => setActivePage('payment') : undefined}
-                                title={pay.ready ? 'Go to Payment Portal to pay this invoice' : undefined}
+                                id={`po-pay-badge-${po.poNumber}`}
+                                onClick={pay.ready ? () => handleInitiatePaymentForPO(po) : undefined}
+                                title={pay.ready ? 'Click to process payment for this order' : undefined}
                                 style={{
                                   background: pay.bg, color: pay.color,
                                   padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold',
@@ -1674,6 +1881,35 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         </td>
                         <td style={{ padding: '12px 16px' }}>
                           <div style={{ display: 'flex', gap: '6px', flexDirection: 'column', width: '130px' }}>
+                            {(() => {
+                              const pay = getPoPaymentState(po);
+                              if (pay.ready) {
+                                return (
+                                  <button
+                                    id={`btn-pay-po-${po.poNumber}`}
+                                    onClick={() => handleInitiatePaymentForPO(po)}
+                                    style={{
+                                      background: '#16a34a',
+                                      color: 'white',
+                                      border: 'none',
+                                      padding: '6px 10px',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '11px',
+                                      fontWeight: 'bold',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: '4px',
+                                      boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                                    }}
+                                  >
+                                    💳 Pay / Process
+                                  </button>
+                                );
+                              }
+                              return null;
+                            })()}
                             {/* A PO only stays Approved when the automatic supplier email on approval failed */}
                             {po.status === 'Approved' && (
                               <button onClick={() => handleSendToSupplier(po._id, po.poNumber, po.supplier)}
@@ -1862,8 +2098,30 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
           {activePage === 'payment' && (
             <div>
               <div style={{ background: 'white', borderRadius: '8px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
-                <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b' }}>
-                  <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>💳 Supplier Invoice & Payment Status</h3>
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#0d1b4b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                  <div>
+                    <h3 style={{ margin: 0, color: 'white', fontSize: '15px' }}>💳 Supplier Invoices & GRN Payment Status</h3>
+                    <div style={{ fontSize: '12px', color: '#cbd5e1', marginTop: '2px' }}>
+                      Settlement portal for Director-approved supplier invoices and verified Goods Received Notes (GRN).
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      id="btn-download-payment-report"
+                      onClick={handleDownloadReport}
+                      disabled={downloadingReport}
+                      style={{ background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', padding: '8px 14px', fontSize: '12px', fontWeight: '600', cursor: downloadingReport ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      {downloadingReport ? 'Generating Report…' : '📄 Download Payment Report'}
+                    </button>
+                    <button
+                      id="btn-goto-reports-center"
+                      onClick={() => navigateToPage('reports')}
+                      style={{ background: 'rgba(255,255,255,0.15)', color: 'white', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '6px', padding: '8px 14px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+                    >
+                      📑 View Reports Center →
+                    </button>
+                  </div>
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
@@ -1941,28 +2199,31 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                               </button>
                             ) : status === 'Approved' ? (
                               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                              <button
-                                onClick={() => openManualPay(inv)}
-                                style={{ background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', padding: '7px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                              >
-                                💵 Cash / Cheque
-                              </button>
-                              <button
-                                onClick={() => handlePayInvoice(inv._id)}
-                                disabled={payingInvoiceId === inv._id}
-                                style={{
-                                  background: payingInvoiceId === inv._id ? '#9fa8da' : '#635bff',
-                                  color: 'white',
-                                  border: 'none',
-                                  borderRadius: '6px',
-                                  padding: '7px 14px',
-                                  fontSize: '12px',
-                                  fontWeight: '600',
-                                  cursor: payingInvoiceId === inv._id ? 'not-allowed' : 'pointer'
-                                }}
-                              >
-                                {payingInvoiceId === inv._id ? 'Redirecting…' : '💳 Stripe'}
-                              </button>
+                                <button
+                                  id={`btn-pay-cash-${inv._id || i}`}
+                                  onClick={() => openManualPay(inv)}
+                                  style={{ background: '#0d1b4b', color: 'white', border: 'none', borderRadius: '6px', padding: '7px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                >
+                                  💵 Pay (Cash/Cheque)
+                                </button>
+                                <button
+                                  id={`btn-pay-stripe-${inv._id || i}`}
+                                  onClick={() => handlePayInvoice(inv._id, inv)}
+                                  disabled={payingInvoiceId === inv._id}
+                                  style={{
+                                    background: payingInvoiceId === inv._id ? '#9fa8da' : '#16a34a',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    padding: '7px 14px',
+                                    fontSize: '12px',
+                                    fontWeight: '600',
+                                    cursor: payingInvoiceId === inv._id ? 'not-allowed' : 'pointer',
+                                    whiteSpace: 'nowrap'
+                                  }}
+                                >
+                                  {payingInvoiceId === inv._id ? 'Redirecting…' : '💳 Pay (Online Stripe)'}
+                                </button>
                               </div>
                             ) : (
                               <span style={{ color: '#bbb', fontSize: '12px' }}>-</span>
@@ -1971,10 +2232,10 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
                         </tr>
                       );
                     })}
-                    {invoices.length === 0 && (
+                    {invoicesPagination.paginatedData.length === 0 && (
                       <tr>
                         <td colSpan={10} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
-                          No invoices recorded yet. Invoices are submitted by Main Store when goods are received against a PO.
+                          No invoices or approved GRNs recorded yet. Invoices/GRNs will appear here once goods are received against a PO.
                         </td>
                       </tr>
                     )}
@@ -1985,7 +2246,20 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate }) => {
             </div>
           )}
 
-          {activePage === 'reports' && <ReportsCenter tabs={['procurement', 'payment', 'inventory']} />}
+          {activePage === 'reports' && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+                <button
+                  id="btn-reports-to-payment"
+                  onClick={() => navigateToPage('payment')}
+                  style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  💳 Go to Payment Portal
+                </button>
+              </div>
+              <ReportsCenter tabs={['procurement', 'payment', 'inventory']} />
+            </div>
+          )}
 
           {activePage === 'settings' && <SettingsPage user={user} onLogout={onLogout} onUserUpdate={onUserUpdate} />}
 

@@ -10,11 +10,6 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
-  AreaChart,
-  Area,
-  PieChart,
-  Pie,
   Cell
 } from 'recharts';
 import { API_BASE } from '../config';
@@ -46,25 +41,11 @@ const PALETTE = {
   pageBg: '#f8fafc'
 };
 
-const DONUT_COLORS = [
-  '#0d1b4b',
-  '#2563eb',
-  '#10b981',
-  '#f59e0b',
-  '#8b5cf6',
-  '#ec4899',
-  '#06b6d4',
-  '#64748b',
-  '#14b8a6',
-  '#f97316'
-];
-
 export default function ReportsAnalyticsDashboard({ externalProjects, externalMaterials }) {
   const toast = useToast();
 
   // Primary Data State
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [projects, setProjects] = useState([]);
   const [materials, setMaterials] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
@@ -72,14 +53,11 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
   const [varianceReport, setVarianceReport] = useState([]);
   const [usageTimeline, setUsageTimeline] = useState([]);
   const [usageLogs, setUsageLogs] = useState([]);
-  const [totalWastageCost, setTotalWastageCost] = useState(0);
 
-  // Filters State
+  // Filters State: ONLY Project and Date Range
   const [selectedProject, setSelectedProject] = useState('All');
-  const [selectedCategory, setSelectedCategory] = useState('All');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-  const [showDetailedVarianceTable, setShowDetailedVarianceTable] = useState(false);
 
   // Helper safe JSON fetch
   const safeFetch = async (path, key = 'data') => {
@@ -88,7 +66,7 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
       const data = await res.json().catch(() => ({}));
       if (Array.isArray(data)) return data;
       if (Array.isArray(data[key])) return data[key];
-      if (data.report && Array.isArray(data.report)) return data; // variance envelope
+      if (data.report && Array.isArray(data.report)) return data;
       if (data.data && Array.isArray(data.data)) return data.data;
       return [];
     } catch (e) {
@@ -98,10 +76,8 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
   };
 
   // Main data loader
-  const loadAllAnalyticsData = async (isManualRefresh = false) => {
-    if (isManualRefresh) setRefreshing(true);
-    else setLoading(true);
-
+  const loadAllAnalyticsData = async () => {
+    setLoading(true);
     try {
       const [
         projectsData,
@@ -119,39 +95,24 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
         safeFetch('/api/material-usage')
       ]);
 
-      // Normalize projects
-      const projList = Array.isArray(projectsData) ? projectsData : [];
-      setProjects(projList);
-
-      // Normalize materials
-      const matList = Array.isArray(materialsData) ? materialsData : [];
-      setMaterials(matList);
-
-      // Normalize POs & PRs
+      setProjects(Array.isArray(projectsData) ? projectsData : []);
+      setMaterials(Array.isArray(materialsData) ? materialsData : []);
       setPurchaseOrders(Array.isArray(posData) ? posData : []);
       setPurchaseRequests(Array.isArray(prsData) ? prsData : []);
 
-      // Normalize Variance
       if (varianceData && varianceData.report) {
         setVarianceReport(varianceData.report || []);
         setUsageTimeline(varianceData.timeline || []);
-        setTotalWastageCost(varianceData.totalWastageCost || 0);
       } else if (Array.isArray(varianceData)) {
         setVarianceReport(varianceData);
       }
 
-      // Normalize raw usages
       setUsageLogs(Array.isArray(usageData) ? usageData : []);
-
-      if (isManualRefresh) {
-        toast?.success?.('Analytics data refreshed successfully');
-      }
     } catch (err) {
       console.error('Failed to load analytics dashboard data:', err);
       toast?.error?.('Error fetching some report data; showing available metrics');
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   };
 
@@ -169,17 +130,26 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
     }
   }, [externalProjects, externalMaterials]);
 
-  // Unique Categories List
-  const categoriesList = useMemo(() => {
-    const set = new Set();
-    materials.forEach(m => {
-      if (m.category && m.category.trim()) set.add(m.category.trim());
-    });
-    if (set.size === 0) {
-      return ['Cement', 'Steel & Reinforcement', 'Aggregate & Sand', 'Masonry', 'Finishing', 'Plumbing', 'Electrical'];
-    }
-    return Array.from(set).sort();
+  // Scoped Main Store materials (synchronized with MainStoreDashboard)
+  const mainMaterials = useMemo(() => {
+    const list = materials.filter(m => m.location === 'MainStore' || (!m.location && m.location !== 'SiteStore'));
+    return list.length > 0 ? list : materials;
   }, [materials]);
+
+  // Synchronized Stock Status tier definition
+  const materialStatus = (m) => {
+    const q = Number(m.quantity) || 0;
+    const min = Number(m.minimumStock) || 0;
+    const preOrderLevel = Number(m.reorderLevel ?? m.minimumStock) || 0;
+    if (q <= min) return { label: 'Critical', tier: 'CRITICAL' };
+    if (q <= preOrderLevel) return { label: 'Pre-Order', tier: 'PRE_ORDER' };
+    return { label: 'Normal', tier: 'NORMAL' };
+  };
+
+  // Synchronized Total Stock Value
+  const totalStockValue = useMemo(() => {
+    return mainMaterials.reduce((sum, m) => sum + ((Number(m.quantity) || 0) * (Number(m.unitPrice) || 0)), 0);
+  }, [mainMaterials]);
 
   // Unique Project Names List
   const projectNamesList = useMemo(() => {
@@ -198,7 +168,7 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
   // 1. KPI SUMMARY CARDS DATA (Top Row)
   // -------------------------------------------------------------
   const kpiData = useMemo(() => {
-    // 1. Total Procurement Value (LKR)
+    // 1. Total PO Value (LKR)
     let filteredPOs = purchaseOrders;
     if (selectedProject !== 'All') {
       filteredPOs = filteredPOs.filter(po => {
@@ -231,21 +201,10 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
       return st === 'active' || st === 'planning' || st === 'in progress' || st === 'ongoing' || !st;
     }).length;
 
-    // 3. Low Stock / Critical Items Count
-    let filteredMats = materials;
-    if (selectedCategory !== 'All') {
-      filteredMats = filteredMats.filter(m => m.category === selectedCategory);
-    }
-    const criticalItems = filteredMats.filter(m => {
-      const q = Number(m.quantity) || 0;
-      const min = Number(m.minimumStock) || 0;
-      return q <= min;
-    });
-    const lowStockItems = filteredMats.filter(m => {
-      const q = Number(m.quantity) || 0;
-      const reorder = Number(m.reorderLevel ?? m.minimumStock) || 0;
-      return q <= reorder;
-    });
+    // 3. Low Stock Items (Threshold logic 100% synced with Main Store Dashboard)
+    const criticalItems = mainMaterials.filter(m => materialStatus(m).tier === 'CRITICAL');
+    const preOrderItems = mainMaterials.filter(m => materialStatus(m).tier === 'PRE_ORDER');
+    const lowStockItems = mainMaterials.filter(m => materialStatus(m).tier !== 'NORMAL');
 
     // 4. Pending Approvals (PR / PO)
     const pendingPRs = purchaseRequests.filter(pr => {
@@ -265,104 +224,24 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
       totalProjectsCount: filteredProjects.length,
       lowStockCount: lowStockItems.length,
       criticalCount: criticalItems.length,
-      preorderCount: Math.max(lowStockItems.length - criticalItems.length, 0),
+      preorderCount: preOrderItems.length,
       pendingApprovals: pendingPRs + pendingPOs,
       pendingPRs,
       pendingPOs
     };
-  }, [purchaseOrders, projects, materials, purchaseRequests, selectedProject, selectedCategory, fromDate, toDate]);
+  }, [purchaseOrders, projects, mainMaterials, purchaseRequests, selectedProject, fromDate, toDate]);
 
   // -------------------------------------------------------------
-  // 2. BOM VS ACTUAL VARIANCE ANALYSIS (Core Requirement)
-  // -------------------------------------------------------------
-  const varianceAnalytics = useMemo(() => {
-    let rows = varianceReport;
-
-    // Filter by project
-    if (selectedProject !== 'All') {
-      rows = rows.filter(r => r.projectName === selectedProject);
-    }
-
-    // Filter by category if material can be cross-referenced
-    if (selectedCategory !== 'All') {
-      rows = rows.filter(r => {
-        const mat = materials.find(m => m.name?.toLowerCase() === r.materialName?.toLowerCase());
-        return mat ? mat.category === selectedCategory : true;
-      });
-    }
-
-    // Calculate totals
-    const totalPlanned = rows.reduce((s, r) => s + (Number(r.plannedQty) || 0), 0);
-    const totalActual = rows.reduce((s, r) => s + (Number(r.actualQty) || 0), 0);
-    const diff = totalActual - totalPlanned;
-    const overallPct = totalPlanned > 0 ? Number(((diff / totalPlanned) * 100).toFixed(1)) : 0;
-    const isOverconsumed = diff > 0;
-    const overusedCount = rows.filter(r => (Number(r.actualQty) || 0) > (Number(r.plannedQty) || 0)).length;
-    const calculatedWastage = rows.reduce((s, r) => s + (Number(r.wastageCost) || 0), 0);
-
-    // Group for grouped bar chart (BOM Planned vs Actual Consumed for key materials)
-    const groupedMap = {};
-    rows.forEach(r => {
-      const key = r.materialName || 'Unknown Material';
-      if (!groupedMap[key]) {
-        groupedMap[key] = {
-          materialName: key,
-          plannedQty: 0,
-          actualQty: 0,
-          unit: r.unit || 'units',
-          projectName: r.projectName
-        };
-      }
-      groupedMap[key].plannedQty += Number(r.plannedQty) || 0;
-      groupedMap[key].actualQty += Number(r.actualQty) || 0;
-    });
-
-    let chartList = Object.values(groupedMap);
-
-    // Sort by largest planned + actual volume, taking top 7 for readability
-    chartList.sort((a, b) => (b.plannedQty + b.actualQty) - (a.plannedQty + a.actualQty));
-    if (chartList.length > 7) {
-      chartList = chartList.slice(0, 7);
-    }
-
-    // Fallback benchmark if no variance data yet recorded
-    if (chartList.length === 0) {
-      chartList = [
-        { materialName: 'Cement (Portland OPC)', plannedQty: 500, actualQty: 480, unit: 'bags' },
-        { materialName: 'Steel 12mm (TMT)', plannedQty: 25, actualQty: 28, unit: 'tons' },
-        { materialName: 'Concrete Sand', plannedQty: 300, actualQty: 290, unit: 'cu.m' },
-        { materialName: 'Ready-Mix Concrete G30', plannedQty: 150, actualQty: 162, unit: 'cu.m' },
-        { materialName: 'Hollow Cement Blocks', plannedQty: 1200, actualQty: 1150, unit: 'pcs' },
-        { materialName: 'Crushed Stone Aggregate', plannedQty: 200, actualQty: 215, unit: 'cu.m' }
-      ];
-    }
-
-    return {
-      rows,
-      chartData: chartList,
-      totalPlanned,
-      totalActual,
-      difference: diff,
-      variancePercentage: overallPct,
-      isOverconsumed,
-      overusedCount,
-      wastageCost: calculatedWastage || totalWastageCost
-    };
-  }, [varianceReport, selectedProject, selectedCategory, materials, totalWastageCost]);
-
-  // -------------------------------------------------------------
-  // 3. MONTHLY MATERIAL CONSUMPTION TREND (Last 6 Months)
+  // 2. MONTHLY MATERIAL CONSUMPTION TREND (Last 6 Months Bar Chart)
   // -------------------------------------------------------------
   const monthlyConsumptionTrend = useMemo(() => {
-    // Collect all usage records from timeline and usageLogs
     const allUsages = [];
 
     usageTimeline.forEach(u => {
       allUsages.push({
         date: u.usageDate || u.createdAt,
         qty: Number(u.actualQty) || 0,
-        projectName: u.projectName,
-        materialName: u.materialName
+        projectName: u.projectName
       });
     });
 
@@ -370,24 +249,16 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
       allUsages.push({
         date: u.usageDate || u.createdAt,
         qty: Number(u.actualQty || u.quantity) || 0,
-        projectName: u.projectName,
-        materialName: u.materialName
+        projectName: u.projectName
       });
     });
 
-    // Filter by project & category
     let filteredUsages = allUsages.filter(u => u.date && !isNaN(new Date(u.date).getTime()));
     if (selectedProject !== 'All') {
       filteredUsages = filteredUsages.filter(u => u.projectName === selectedProject);
     }
-    if (selectedCategory !== 'All') {
-      filteredUsages = filteredUsages.filter(u => {
-        const mat = materials.find(m => m.name?.toLowerCase() === u.materialName?.toLowerCase());
-        return mat ? mat.category === selectedCategory : true;
-      });
-    }
 
-    // Build standard 6 months calendar list up to current month
+    // Build standard 6 months calendar list up to current month (one bar per month)
     const months = [];
     const now = new Date();
     for (let i = 5; i >= 0; i--) {
@@ -397,7 +268,6 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
       months.push({ key, label, totalQty: 0, count: 0 });
     }
 
-    // Aggregate real usage into corresponding month bucket
     filteredUsages.forEach(u => {
       const d = new Date(u.date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -408,7 +278,7 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
       }
     });
 
-    // If live usage is sparse across the months, supply realistic progressive trend
+    // Provide realistic progressive volume if live usage log entries are sparse
     const hasData = months.some(m => m.totalQty > 0);
     if (!hasData) {
       const baseValues = [320, 390, 460, 410, 520, 580];
@@ -419,66 +289,99 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
     }
 
     return months;
-  }, [usageTimeline, usageLogs, selectedProject, selectedCategory, materials]);
+  }, [usageTimeline, usageLogs, selectedProject]);
 
   // -------------------------------------------------------------
-  // 4. STOCK DISTRIBUTION & CATEGORY BREAKDOWN
+  // 3. STOCK DISTRIBUTION BY CATEGORY (Top 5 + Consolidated Others)
   // -------------------------------------------------------------
   const stockCategoryDistribution = useMemo(() => {
-    let filtered = materials;
-    if (selectedCategory !== 'All') {
-      filtered = filtered.filter(m => m.category === selectedCategory);
-    }
-
     const catMap = {};
-    let totalInventoryValue = 0;
-    let totalStockQty = 0;
 
-    filtered.forEach(m => {
-      const cat = m.category && m.category.trim() ? m.category.trim() : 'General Store';
-      const qty = Number(m.quantity) || 0;
-      const unitPrice = Number(m.unitPrice) || 0;
-      const value = qty * unitPrice;
-
-      totalInventoryValue += value;
-      totalStockQty += qty;
-
-      if (!catMap[cat]) {
-        catMap[cat] = {
-          name: cat,
-          value: 0,
-          quantity: 0,
-          itemCount: 0
-        };
-      }
-      catMap[cat].value += value;
-      catMap[cat].quantity += qty;
-      catMap[cat].itemCount += 1;
+    mainMaterials.forEach(m => {
+      const cat = m.category && m.category.trim() ? m.category.trim() : 'Other';
+      const val = (Number(m.quantity) || 0) * (Number(m.unitPrice) || 0);
+      catMap[cat] = (catMap[cat] || 0) + val;
     });
 
-    let result = Object.values(catMap);
-    result.sort((a, b) => b.value - a.value);
+    const list = Object.entries(catMap)
+      .map(([name, value]) => ({ name, value }))
+      .filter(c => c.value > 0)
+      .sort((a, b) => b.value - a.value);
 
-    // If no stock prices or materials, use standard categorized benchmark
-    if (result.length === 0) {
-      result = [
-        { name: 'Steel & Reinforcement', value: 4200000, quantity: 45, itemCount: 12 },
-        { name: 'Cement & Concrete', value: 2850000, quantity: 1800, itemCount: 8 },
-        { name: 'Aggregate & Sand', value: 1650000, quantity: 950, itemCount: 6 },
-        { name: 'Masonry & Bricks', value: 920000, quantity: 15000, itemCount: 5 },
-        { name: 'Finishing & Paints', value: 680000, quantity: 340, itemCount: 14 },
-        { name: 'Plumbing & Fittings', value: 450000, quantity: 720, itemCount: 22 }
-      ];
-      totalInventoryValue = result.reduce((s, r) => s + r.value, 0);
-      totalStockQty = result.reduce((s, r) => s + r.quantity, 0);
+    const TOP_COUNT = 5;
+    const topCategories = list.slice(0, TOP_COUNT);
+    const tailCategories = list.slice(TOP_COUNT);
+    const othersValue = tailCategories.reduce((sum, c) => sum + c.value, 0);
+
+    const chartData = [...topCategories];
+    if (othersValue > 0 || tailCategories.length > 0) {
+      chartData.push({ name: 'Others', value: othersValue, isOthers: true });
+    }
+
+    // Benchmark fallback if inventory has no valuations
+    if (chartData.length === 0) {
+      return {
+        chartData: [
+          { name: 'Reinforcement Steel', value: 10900000, isOthers: false },
+          { name: 'Cement & Concrete', value: 8500000, isOthers: false },
+          { name: 'Aggregates & Sand', value: 5400000, isOthers: false },
+          { name: 'Masonry Blocks', value: 3200000, isOthers: false },
+          { name: 'Finishing & Paints', value: 2100000, isOthers: false },
+          { name: 'Others', value: 1800000, isOthers: true }
+        ],
+        totalInventoryValue: 31900000
+      };
     }
 
     return {
-      chartData: result,
-      totalInventoryValue,
-      totalStockQty
+      chartData,
+      totalInventoryValue: totalStockValue
     };
-  }, [materials, selectedCategory]);
+  }, [mainMaterials, totalStockValue]);
+
+  // -------------------------------------------------------------
+  // 4. BOM VS ACTUAL USAGE TABLE DATA (4 Columns Only)
+  // -------------------------------------------------------------
+  const varianceTableRows = useMemo(() => {
+    let rows = varianceReport;
+    if (selectedProject !== 'All') {
+      rows = rows.filter(r => r.projectName === selectedProject);
+    }
+
+    if (rows && rows.length > 0) {
+      // Aggregate by material name so each material displays on a single row
+      const map = {};
+      rows.forEach(r => {
+        const key = (r.materialName || '').trim();
+        if (!key) return;
+        if (!map[key]) {
+          map[key] = {
+            materialName: key,
+            plannedQty: 0,
+            actualQty: 0,
+            unit: r.unit || 'units'
+          };
+        }
+        map[key].plannedQty += Number(r.plannedQty) || 0;
+        map[key].actualQty += Number(r.actualQty) || 0;
+        if (r.unit) map[key].unit = r.unit;
+      });
+
+      const list = Object.values(map);
+      list.sort((a, b) => (b.plannedQty + b.actualQty) - (a.plannedQty + a.actualQty));
+      return list;
+    }
+
+    // Default benchmark rows with realistic construction unit pairings
+    return [
+      { materialName: 'Cement (Portland OPC)', plannedQty: 500, actualQty: 480, unit: 'bags' },
+      { materialName: 'Steel 12mm (TMT)', plannedQty: 25, actualQty: 28, unit: 'tons' },
+      { materialName: 'Concrete Sand', plannedQty: 300, actualQty: 290, unit: 'cu.m' },
+      { materialName: 'Ready-Mix Concrete G30', plannedQty: 150, actualQty: 162, unit: 'cu.m' },
+      { materialName: 'Hollow Cement Blocks', plannedQty: 1200, actualQty: 1150, unit: 'pcs' },
+      { materialName: 'Crushed Stone Aggregate', plannedQty: 200, actualQty: 215, unit: 'cu.m' }
+    ];
+  }, [varianceReport, selectedProject]);
 
   // -------------------------------------------------------------
   // 5. EXPORT HANDLERS (PDF & EXCEL)
@@ -488,7 +391,7 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
       const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
       // Header Banner
-      doc.setFillColor(13, 27, 75); // Dark Navy
+      doc.setFillColor(13, 27, 75);
       doc.rect(0, 0, 297, 34, 'F');
 
       doc.setTextColor(255, 255, 255);
@@ -498,26 +401,26 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
 
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      doc.text('Construction Material Management System (CMMS) • Module 6 Executive Analytics Report', 14, 25);
+      doc.text('Main Store Executive Reports & Analytics', 14, 25);
 
       // Metadata Block
       doc.setTextColor(15, 23, 42);
       doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
-      doc.text('Executive Reports & Material Variance Analytics Dashboard', 14, 44);
+      doc.text('Main Store Reports & Variance Analytics Summary', 14, 44);
 
       doc.setFontSize(9);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(100, 116, 139);
-      const filterSummary = `Project: ${selectedProject}  |  Category: ${selectedCategory}  |  Date Scope: ${fromDate || 'Earliest'} to ${toDate || 'Latest'}`;
+      const filterSummary = `Project: ${selectedProject}  |  Date Scope: ${fromDate || 'Earliest'} to ${toDate || 'Latest'}`;
       doc.text(`Generated Date: ${formatDateTime(new Date())}    |    ${filterSummary}`, 14, 51);
 
       // Table 1: KPI Summary Table
       autoTable(doc, {
         startY: 56,
-        head: [['Total Procurement Spend (LKR)', 'Active Projects Count', 'Low Stock / Critical Materials', 'Pending Approvals (PR/PO)']],
+        head: [['Total PO Value (LKR)', 'Active Projects', 'Low Stock Items', 'Pending Approvals']],
         body: [[
-          `LKR ${kpiData.procurementValue.toLocaleString()}`,
+          `LKR ${Math.round(kpiData.procurementValue).toLocaleString()}`,
           `${kpiData.activeProjectsCount} Projects`,
           `${kpiData.lowStockCount} Items (${kpiData.criticalCount} Critical)`,
           `${kpiData.pendingApprovals} Pending (${kpiData.pendingPRs} PR / ${kpiData.pendingPOs} PO)`
@@ -527,90 +430,57 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
         theme: 'grid'
       });
 
-      // Table 2: BOM vs Actual Material Usage Variance Table
-      const varianceRows = varianceAnalytics.rows.length > 0
-        ? varianceAnalytics.rows.map(r => [
-            r.materialName || '-',
-            r.projectName || selectedProject,
-            `${Number(r.plannedQty || 0).toLocaleString()} ${r.unit || ''}`,
-            `${Number(r.actualQty || 0).toLocaleString()} ${r.unit || ''}`,
-            `${Number(r.varianceQty || 0) > 0 ? '+' : ''}${Number(r.varianceQty || 0).toLocaleString()}`,
-            `${Number(r.variancePct || 0) > 0 ? '+' : ''}${Number(r.variancePct || 0)}%`,
-            r.status || (r.varianceQty > 0 ? 'Overused' : 'Within Plan'),
-            r.wastageCost ? `LKR ${Number(r.wastageCost).toLocaleString()}` : '-'
-          ])
-        : varianceAnalytics.chartData.map(c => [
-            c.materialName,
-            selectedProject,
-            `${c.plannedQty.toLocaleString()} ${c.unit}`,
-            `${c.actualQty.toLocaleString()} ${c.unit}`,
-            `${(c.actualQty - c.plannedQty) > 0 ? '+' : ''}${(c.actualQty - c.plannedQty).toLocaleString()}`,
-            `${c.plannedQty > 0 ? (((c.actualQty - c.plannedQty) / c.plannedQty) * 100).toFixed(1) : '0.0'}%`,
-            c.actualQty > c.plannedQty ? 'Overused' : 'Within Plan',
-            '-'
-          ]);
+      // Table 2: BOM vs Actual Material Usage Table [Material | Planned (BOM) | Used on site | Status]
+      const bomRows = varianceTableRows.map(r => [
+        r.materialName,
+        `${Number(r.plannedQty || 0).toLocaleString()} ${r.unit || ''}`,
+        `${Number(r.actualQty || 0).toLocaleString()} ${r.unit || ''}`,
+        Number(r.actualQty || 0) > Number(r.plannedQty || 0) ? 'Over' : 'OK'
+      ]);
 
+      const afterKpiY = doc.lastAutoTable.finalY + 9;
       doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(13, 27, 75);
-      const afterKpiY = doc.lastAutoTable.finalY + 9;
-      doc.text('1. BOM Planned vs Actual Consumed Variance Analysis', 14, afterKpiY);
+      doc.text('1. BOM vs Actual Material Usage', 14, afterKpiY);
 
       autoTable(doc, {
         startY: afterKpiY + 4,
-        head: [['Material Name', 'Project', 'BOM Planned', 'Actual Consumed', 'Variance (Δ)', 'Variance %', 'Status', 'Est. Wastage Cost']],
-        body: varianceRows.slice(0, 15), // top 15 rows for neat print
-        styles: { fontSize: 8, cellPadding: 2.5 },
+        head: [['Material', 'Planned (BOM)', 'Used on site', 'Status']],
+        body: bomRows,
+        styles: { fontSize: 9, cellPadding: 3 },
         headStyles: { fillColor: [13, 27, 75], textColor: [255, 255, 255] },
         alternateRowStyles: { fillColor: [248, 250, 252] },
         theme: 'striped'
       });
 
-      // Table 3: Stock Distribution by Category
+      // Table 3: Stock Distribution by Category (Top 5 + Others)
       const catRows = stockCategoryDistribution.chartData.map(c => [
         c.name,
-        `${c.itemCount} SKUs`,
-        c.quantity.toLocaleString(),
         `LKR ${Math.round(c.value).toLocaleString()}`,
         stockCategoryDistribution.totalInventoryValue > 0
           ? `${((c.value / stockCategoryDistribution.totalInventoryValue) * 100).toFixed(1)}%`
           : '0%'
       ]);
 
-      const afterVarY = doc.lastAutoTable.finalY + 8;
-      if (afterVarY < 165) {
+      const afterBomY = doc.lastAutoTable.finalY + 8;
+      if (afterBomY < 165) {
         doc.setFontSize(11);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(13, 27, 75);
-        doc.text('2. Material Stock Distribution & Category Breakdown', 14, afterVarY);
+        doc.text('2. Stock Distribution by Category (Top 5 + Others)', 14, afterBomY);
 
         autoTable(doc, {
-          startY: afterVarY + 4,
-          head: [['Category', 'Material SKUs', 'Stock Quantity', 'Inventory Valuation (LKR)', '% Share']],
+          startY: afterBomY + 4,
+          head: [['Category', 'Stock Valuation (LKR)', '% Share']],
           body: catRows,
-          styles: { fontSize: 8, cellPadding: 2.5 },
-          headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255] },
-          theme: 'grid'
-        });
-      } else {
-        doc.addPage();
-        doc.setFontSize(11);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(13, 27, 75);
-        doc.text('2. Material Stock Distribution & Category Breakdown', 14, 20);
-
-        autoTable(doc, {
-          startY: 25,
-          head: [['Category', 'Material SKUs', 'Stock Quantity', 'Inventory Valuation (LKR)', '% Share']],
-          body: catRows,
-          styles: { fontSize: 8, cellPadding: 2.5 },
+          styles: { fontSize: 9, cellPadding: 3 },
           headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255] },
           theme: 'grid'
         });
       }
 
-      // Save PDF
-      const fileName = `ELS_Reports_Analytics_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const fileName = `ELS_MainStore_Reports_${new Date().toISOString().slice(0, 10)}.pdf`;
       doc.save(fileName);
       toast?.success?.(`PDF Report downloaded: ${fileName}`);
     } catch (e) {
@@ -625,64 +495,55 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
 
       // Sheet 1: Executive KPI Overview
       const kpiSheetData = [
-        ['ELS Construction (Pvt) Ltd — Reports & Analytics Summary'],
+        ['ELS Construction (Pvt) Ltd — Main Store Reports Summary'],
         [`Generated Date: ${formatDateTime(new Date())}`],
-        [`Scope: Project [${selectedProject}] | Category [${selectedCategory}]`],
+        [`Scope: Project [${selectedProject}]`],
         [],
-        ['Metric Description', 'Value', 'Unit / Details'],
-        ['Total Procurement Value', kpiData.procurementValue, 'LKR (Sri Lankan Rupees)'],
+        ['Metric Description', 'Value', 'Details'],
+        ['Total PO Value', kpiData.procurementValue, 'LKR (Sri Lankan Rupees)'],
         ['Total Active Purchase Orders', kpiData.poCount, 'Orders'],
         ['Active Construction Projects', kpiData.activeProjectsCount, 'Sites Ongoing'],
-        ['Low Stock Materials', kpiData.lowStockCount, 'At or Below Reorder Level'],
-        ['Critical Items (Below Minimum)', kpiData.criticalCount, 'Immediate Restock Needed'],
+        ['Low Stock Items', kpiData.lowStockCount, `${kpiData.criticalCount} Critical, ${kpiData.preorderCount} Pre-Order`],
         ['Pending Approvals (PR & PO)', kpiData.pendingApprovals, `${kpiData.pendingPRs} PRs / ${kpiData.pendingPOs} POs`],
-        ['Overall BOM Variance', `${varianceAnalytics.variancePercentage}%`, varianceAnalytics.isOverconsumed ? 'Overconsumed' : 'Within Budget'],
-        ['Total Estimated Material Wastage Cost', varianceAnalytics.wastageCost, 'LKR']
+        ['Total Stock Value', Math.round(totalStockValue), 'LKR']
       ];
       const wsKPI = XLSX.utils.aoa_to_sheet(kpiSheetData);
-      wsKPI['!cols'] = [{ wch: 38 }, { wch: 22 }, { wch: 30 }];
+      wsKPI['!cols'] = [{ wch: 32 }, { wch: 22 }, { wch: 30 }];
       XLSX.utils.book_append_sheet(wb, wsKPI, 'Executive KPIs');
 
-      // Sheet 2: BOM vs Actual Material Usage Variance
-      const varianceHeader = ['Material Name', 'Project', 'Unit', 'BOM Planned Qty', 'Actual Consumed Qty', 'Variance (Δ)', 'Variance %', 'Status', 'Wastage Cost (LKR)'];
-      const varianceRows = (varianceAnalytics.rows.length > 0 ? varianceAnalytics.rows : varianceAnalytics.chartData).map(r => [
-        r.materialName || '-',
-        r.projectName || selectedProject,
-        r.unit || 'units',
-        Number(r.plannedQty || 0),
-        Number(r.actualQty || 0),
-        Number((r.actualQty || 0) - (r.plannedQty || 0)),
-        Number(r.variancePct || (r.plannedQty > 0 ? (((r.actualQty - r.plannedQty) / r.plannedQty) * 100).toFixed(1) : 0)),
-        r.status || (r.actualQty > r.plannedQty ? 'Overused' : 'Within Plan'),
-        Number(r.wastageCost || 0)
+      // Sheet 2: BOM vs Actual Material Usage
+      const bomHeader = ['Material', 'Planned (BOM)', 'Used on site', 'Status'];
+      const bomRows = varianceTableRows.map(r => [
+        r.materialName,
+        `${Number(r.plannedQty || 0).toLocaleString()} ${r.unit || ''}`,
+        `${Number(r.actualQty || 0).toLocaleString()} ${r.unit || ''}`,
+        Number(r.actualQty || 0) > Number(r.plannedQty || 0) ? 'Over' : 'OK'
       ]);
-      const wsVariance = XLSX.utils.aoa_to_sheet([['BOM vs Actual Material Usage Variance Analysis'], [], varianceHeader, ...varianceRows]);
-      wsVariance['!cols'] = [{ wch: 28 }, { wch: 25 }, { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 15 }, { wch: 14 }, { wch: 16 }, { wch: 20 }];
-      XLSX.utils.book_append_sheet(wb, wsVariance, 'BOM vs Actual Variance');
+      const wsBOM = XLSX.utils.aoa_to_sheet([['BOM vs Actual Material Usage'], [], bomHeader, ...bomRows]);
+      wsBOM['!cols'] = [{ wch: 32 }, { wch: 20 }, { wch: 20 }, { wch: 15 }];
+      XLSX.utils.book_append_sheet(wb, wsBOM, 'BOM vs Actual');
 
       // Sheet 3: Monthly Material Consumption Trend
-      const monthlyHeader = ['Year-Month', 'Month Label', 'Total Material Volume Consumed', 'Transaction Events'];
-      const monthlyRows = monthlyConsumptionTrend.map(m => [m.key, m.label, m.totalQty, m.count]);
+      const monthlyHeader = ['Month Label', 'Consumption Quantity'];
+      const monthlyRows = monthlyConsumptionTrend.map(m => [m.label, m.totalQty]);
       const wsMonthly = XLSX.utils.aoa_to_sheet([['Monthly Material Consumption Trend (Last 6 Months)'], [], monthlyHeader, ...monthlyRows]);
-      wsMonthly['!cols'] = [{ wch: 15 }, { wch: 18 }, { wch: 32 }, { wch: 22 }];
+      wsMonthly['!cols'] = [{ wch: 20 }, { wch: 25 }];
       XLSX.utils.book_append_sheet(wb, wsMonthly, 'Monthly Consumption');
 
       // Sheet 4: Stock Distribution by Category
-      const catHeader = ['Material Category', 'Active SKUs Count', 'Total Stock Quantity', 'Stock Valuation (LKR)', 'Share Percentage'];
+      const catHeader = ['Material Category', 'Stock Valuation (LKR)', 'Share Percentage'];
       const catRows = stockCategoryDistribution.chartData.map(c => [
         c.name,
-        c.itemCount,
-        c.quantity,
         Math.round(c.value),
         stockCategoryDistribution.totalInventoryValue > 0
-          ? `${((c.value / stockCategoryDistribution.totalInventoryValue) * 100).toFixed(2)}%`
+          ? `${((c.value / stockCategoryDistribution.totalInventoryValue) * 100).toFixed(1)}%`
           : '0%'
       ]);
-      const wsCat = XLSX.utils.aoa_to_sheet([['Material Stock Distribution by Category'], [], catHeader, ...catRows]);
-      wsCat['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 22 }, { wch: 25 }, { wch: 18 }];
+      const wsCat = XLSX.utils.aoa_to_sheet([['Stock Distribution by Category (Top 5 + Others)'], [], catHeader, ...catRows]);
+      wsCat['!cols'] = [{ wch: 28 }, { wch: 25 }, { wch: 18 }];
       XLSX.utils.book_append_sheet(wb, wsCat, 'Stock by Category');
 
-      const fileName = `ELS_Reports_Analytics_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const fileName = `ELS_MainStore_Reports_${new Date().toISOString().slice(0, 10)}.xlsx`;
       XLSX.writeFile(wb, fileName);
       toast?.success?.(`Excel Report downloaded: ${fileName}`);
     } catch (e) {
@@ -691,75 +552,20 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
     }
   };
 
-  // Custom Recharts Tooltip for Grouped Bar Chart
-  const CustomVarianceTooltip = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      const planned = data.plannedQty || 0;
-      const actual = data.actualQty || 0;
-      const diff = actual - planned;
-      const pct = planned > 0 ? ((diff / planned) * 100).toFixed(1) : 0;
-      const isOver = diff > 0;
-
-      return (
-        <div style={{
-          backgroundColor: '#ffffff',
-          padding: '12px 16px',
-          border: '1px solid #cbd5e1',
-          borderRadius: '8px',
-          boxShadow: '0 8px 20px rgba(0,0,0,0.12)',
-          fontSize: '12px'
-        }}>
-          <div style={{ fontWeight: 'bold', color: '#0d1b4b', marginBottom: '8px', fontSize: '13px' }}>
-            📦 {label}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-            <span style={{ width: '10px', height: '10px', backgroundColor: PALETTE.navy, display: 'inline-block', borderRadius: '2px' }}></span>
-            <span style={{ color: '#64748b' }}>BOM Planned:</span>
-            <strong style={{ color: '#0f172a' }}>{planned.toLocaleString()} {data.unit || ''}</strong>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-            <span style={{ width: '10px', height: '10px', backgroundColor: isOver ? PALETTE.coral : PALETTE.emerald, display: 'inline-block', borderRadius: '2px' }}></span>
-            <span style={{ color: '#64748b' }}>Actual Consumed:</span>
-            <strong style={{ color: isOver ? PALETTE.coral : PALETTE.emerald }}>{actual.toLocaleString()} {data.unit || ''}</strong>
-          </div>
-          <div style={{
-            borderTop: '1px solid #f1f5f9',
-            paddingTop: '6px',
-            marginTop: '4px',
-            fontWeight: '600',
-            color: isOver ? '#b91c1c' : '#047857'
-          }}>
-            {isOver ? `▲ Overconsumed by +${Math.abs(diff).toLocaleString()} (${pct}%)` : `● Within Plan by -${Math.abs(diff).toLocaleString()} (${Math.abs(pct)}%)`}
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
-
   return (
     <div style={styles.dashboardWrapper}>
       {/* ------------------------------------------------------------- */}
-      {/* HEADER & FILTER BAR                                           */}
+      {/* HEADER & ACTION BUTTONS                                        */}
       {/* ------------------------------------------------------------- */}
       <div style={styles.headerContainer}>
         <div>
-          <div style={styles.badgeLabel}>MODULE 6 &bull; DECISION SUPPORT</div>
-          <h1 style={styles.dashboardTitle}>Reports &amp; Analytics Dashboard</h1>
+          <div style={styles.badgeLabel}>MAIN STORE &bull; REPORTS &amp; ANALYTICS</div>
+          <h1 style={styles.dashboardTitle}>Reports &amp; Analytics</h1>
           <p style={styles.dashboardSubtitle}>
-            Comprehensive procurement intelligence, BOM vs Actual consumption variance, monthly usage trends, and category valuation.
+            Procurement tracking, 6-month material consumption trend, category stock distribution, and BOM vs Actual usage.
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button
-            onClick={() => loadAllAnalyticsData(true)}
-            disabled={refreshing}
-            style={styles.refreshBtn}
-            title="Reload latest data from database"
-          >
-            {refreshing ? '🔄 Refreshing...' : '🔄 Refresh Data'}
-          </button>
           <button
             onClick={handleExportPDF}
             style={styles.exportPdfBtn}
@@ -777,12 +583,14 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
         </div>
       </div>
 
-      {/* Filter Controls Bar */}
+      {/* ------------------------------------------------------------- */}
+      {/* FILTER CONTROLS: Project and Date Range ONLY                   */}
+      {/* ------------------------------------------------------------- */}
       <div style={styles.filterCard}>
         <div style={styles.filterGrid}>
-          {/* Project Selector */}
+          {/* 1. Project Selector */}
           <div style={styles.filterField}>
-            <label style={styles.filterLabel}>🏗️ Select Project:</label>
+            <label style={styles.filterLabel}>🏗️ Project:</label>
             <select
               value={selectedProject}
               onChange={e => setSelectedProject(e.target.value)}
@@ -795,22 +603,7 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
             </select>
           </div>
 
-          {/* Material Category */}
-          <div style={styles.filterField}>
-            <label style={styles.filterLabel}>🏷️ Material Category:</label>
-            <select
-              value={selectedCategory}
-              onChange={e => setSelectedCategory(e.target.value)}
-              style={styles.filterSelect}
-            >
-              <option value="All">All Categories ({categoriesList.length})</option>
-              {categoriesList.map(c => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Date Range: From */}
+          {/* 2. Date Range: From Date */}
           <div style={styles.filterField}>
             <label style={styles.filterLabel}>📅 From Date:</label>
             <input
@@ -821,7 +614,7 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
             />
           </div>
 
-          {/* Date Range: To */}
+          {/* 3. Date Range: To Date */}
           <div style={styles.filterField}>
             <label style={styles.filterLabel}>📅 To Date:</label>
             <input
@@ -831,30 +624,13 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
               style={styles.filterInput}
             />
           </div>
-
-          {/* Quick Presets / Clear */}
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
-            <button
-              onClick={() => {
-                setSelectedProject('All');
-                setSelectedCategory('All');
-                setFromDate('');
-                setToDate('');
-              }}
-              style={styles.resetFilterBtn}
-              title="Reset all filters to default"
-            >
-              ✕ Clear Filters
-            </button>
-          </div>
         </div>
 
-        {/* Active scope pill */}
-        {(selectedProject !== 'All' || selectedCategory !== 'All' || fromDate || toDate) && (
+        {/* Active scope display */}
+        {(selectedProject !== 'All' || fromDate || toDate) && (
           <div style={styles.activeFilterScope}>
             <span style={{ fontWeight: '600', color: PALETTE.navy }}>Active Filter Scope:</span>
             {selectedProject !== 'All' && <span style={styles.filterTag}>Project: {selectedProject}</span>}
-            {selectedCategory !== 'All' && <span style={styles.filterTag}>Category: {selectedCategory}</span>}
             {fromDate && <span style={styles.filterTag}>From: {fromDate}</span>}
             {toDate && <span style={styles.filterTag}>To: {toDate}</span>}
           </div>
@@ -862,250 +638,191 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
       </div>
 
       {/* ------------------------------------------------------------- */}
-      {/* 1. TOP ROW: KPI SUMMARY CARDS                                 */}
+      {/* 1. KPI SUMMARY CARDS: Clean 4 Cards with Max Single Subtext    */}
       {/* ------------------------------------------------------------- */}
       <div style={styles.kpiGrid}>
-        {/* Card 1: Total Procurement Value */}
+        {/* Card 1: Total PO Value */}
         <div style={{ ...styles.kpiCard, borderTop: `4px solid ${PALETTE.navy}` }}>
           <div style={styles.kpiHeaderRow}>
-            <span style={styles.kpiTitle}>TOTAL PROCUREMENT VALUE</span>
+            <span style={styles.kpiTitle}>TOTAL PO VALUE</span>
             <div style={{ ...styles.kpiIconBox, backgroundColor: '#e0e7ff', color: PALETTE.navy }}>💳</div>
           </div>
           <div style={styles.kpiValue}>
             LKR {Math.round(kpiData.procurementValue).toLocaleString()}
           </div>
           <div style={styles.kpiSubtext}>
-            <span style={{ color: PALETTE.emerald, fontWeight: 'bold' }}>✓ Total Spend</span> across {kpiData.poCount} Purchase Orders
+            Across {kpiData.poCount} purchase orders
           </div>
         </div>
 
-        {/* Card 2: Active Projects Count */}
+        {/* Card 2: Active Projects */}
         <div style={{ ...styles.kpiCard, borderTop: `4px solid ${PALETTE.emerald}` }}>
           <div style={styles.kpiHeaderRow}>
-            <span style={styles.kpiTitle}>ACTIVE PROJECTS COUNT</span>
+            <span style={styles.kpiTitle}>ACTIVE PROJECTS</span>
             <div style={{ ...styles.kpiIconBox, backgroundColor: PALETTE.emeraldLight, color: PALETTE.emeraldDark }}>🏗️</div>
           </div>
           <div style={{ ...styles.kpiValue, color: PALETTE.emeraldDark }}>
-            {kpiData.activeProjectsCount} <span style={{ fontSize: '15px', color: '#64748b', fontWeight: 'normal' }}>Active</span>
+            {kpiData.activeProjectsCount}
           </div>
           <div style={styles.kpiSubtext}>
-            <span>{kpiData.totalProjectsCount} Total construction sites on system</span>
+            {kpiData.totalProjectsCount} total projects registered
           </div>
         </div>
 
-        {/* Card 3: Low Stock / Critical Items */}
+        {/* Card 3: Low Stock Items */}
         <div style={{ ...styles.kpiCard, borderTop: `4px solid ${PALETTE.coral}` }}>
           <div style={styles.kpiHeaderRow}>
-            <span style={styles.kpiTitle}>LOW STOCK / CRITICAL ITEMS</span>
+            <span style={styles.kpiTitle}>LOW STOCK ITEMS</span>
             <div style={{ ...styles.kpiIconBox, backgroundColor: PALETTE.coralLight, color: PALETTE.coral }}>⚠️</div>
           </div>
           <div style={{ ...styles.kpiValue, color: PALETTE.coral }}>
-            {kpiData.lowStockCount} <span style={{ fontSize: '15px', color: '#64748b', fontWeight: 'normal' }}>SKUs</span>
+            {kpiData.lowStockCount}
           </div>
           <div style={styles.kpiSubtext}>
-            <span style={{ color: '#b91c1c', fontWeight: 'bold' }}>{kpiData.criticalCount} Critical</span> &bull; {kpiData.preorderCount} Pre-Order Alert
+            {kpiData.criticalCount} critical, {kpiData.preorderCount} pre-order items
           </div>
         </div>
 
         {/* Card 4: Pending Approvals */}
         <div style={{ ...styles.kpiCard, borderTop: `4px solid ${PALETTE.purple}` }}>
           <div style={styles.kpiHeaderRow}>
-            <span style={styles.kpiTitle}>PENDING APPROVALS (PR / PO)</span>
+            <span style={styles.kpiTitle}>PENDING APPROVALS</span>
             <div style={{ ...styles.kpiIconBox, backgroundColor: PALETTE.purpleLight, color: PALETTE.purple }}>⏳</div>
           </div>
           <div style={{ ...styles.kpiValue, color: PALETTE.purple }}>
-            {kpiData.pendingApprovals} <span style={{ fontSize: '15px', color: '#64748b', fontWeight: 'normal' }}>Requests</span>
+            {kpiData.pendingApprovals}
           </div>
           <div style={styles.kpiSubtext}>
-            <span>{kpiData.pendingPRs} PRs awaiting PO &bull; {kpiData.pendingPOs} POs in review</span>
+            {kpiData.pendingPRs} PRs and {kpiData.pendingPOs} POs in review
           </div>
         </div>
       </div>
 
       {/* ------------------------------------------------------------- */}
-      {/* 2 & 3. MIDDLE ROW: TRENDS & CATEGORY BREAKDOWN               */}
-      {/* (Monthly Site Consumption Trend & Category Stock Valuation)   */}
+      {/* 2 & 3. MIDDLE ROW: BAR CHARTS                                 */}
+      {/* (Monthly Consumption Trend & Stock Distribution by Category)  */}
       {/* ------------------------------------------------------------- */}
       <div style={styles.twoColumnGrid}>
-        {/* Module 3: Monthly Material Consumption Trend */}
+        {/* Module 3: Monthly Material Consumption Trend (Clean 6-month Bar Chart) */}
         <div style={styles.sectionCard}>
           <div style={styles.sectionHeaderRow}>
             <div>
-              <div style={styles.sectionTag}>SITE CONSUMPTION TREND</div>
+              <div style={styles.sectionTag}>CONSUMPTION TREND</div>
               <h3 style={styles.sectionTitle}>Monthly Material Consumption Trend</h3>
               <p style={styles.sectionSubtitle}>
-                Aggregated monthly material usage across all sites over the last 6 months.
+                Monthly material consumption volume across projects for the last 6 months.
               </p>
             </div>
           </div>
 
           <div style={{ height: '280px', width: '100%', marginTop: '10px' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
+              <BarChart
                 data={monthlyConsumptionTrend}
                 margin={{ top: 15, right: 20, left: 0, bottom: 15 }}
               >
-                <defs>
-                  <linearGradient id="consumptionGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={PALETTE.blue} stopOpacity={0.8} />
-                    <stop offset="95%" stopColor={PALETTE.blue} stopOpacity={0.05} />
-                  </linearGradient>
-                </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="label" stroke="#64748b" tick={{ fontSize: 12 }} />
-                <YAxis stroke="#64748b" tick={{ fontSize: 12 }} />
+                <XAxis dataKey="label" stroke="#64748b" tick={{ fontSize: 12, fill: '#334155' }} />
+                <YAxis stroke="#64748b" tick={{ fontSize: 12, fill: '#64748b' }} />
                 <Tooltip
-                  formatter={(val) => [`${Number(val).toLocaleString()} units`, 'Consumed Volume']}
+                  formatter={(val) => [`${Number(val).toLocaleString()}`, 'Consumption Volume']}
                   labelStyle={{ fontWeight: 'bold', color: PALETTE.navy }}
                 />
-                <Area
-                  type="monotone"
+                <Bar
                   dataKey="totalQty"
-                  name="Monthly Consumption Volume"
-                  stroke={PALETTE.blue}
-                  strokeWidth={3}
-                  fillOpacity={1}
-                  fill="url(#consumptionGradient)"
+                  name="Monthly Consumption"
+                  fill="#2563eb"
+                  radius={[4, 4, 0, 0]}
+                  barSize={32}
                 />
-              </AreaChart>
+              </BarChart>
             </ResponsiveContainer>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: '#f8fafc', borderRadius: '8px', marginTop: '10px', fontSize: '12px', color: '#64748b' }}>
             <span>📈 Peak Month: <strong style={{ color: PALETTE.navy }}>{monthlyConsumptionTrend.reduce((max, m) => m.totalQty > max.totalQty ? m : max, monthlyConsumptionTrend[0] || {}).label || '-'}</strong></span>
-            <span>📊 6-Month Volume: <strong style={{ color: PALETTE.navy }}>{monthlyConsumptionTrend.reduce((s, m) => s + m.totalQty, 0).toLocaleString()} units</strong></span>
+            <span>📅 Period: <strong style={{ color: PALETTE.navy }}>Last 6 Months</strong></span>
           </div>
         </div>
 
-        {/* Module 4: Stock Distribution & Category Breakdown */}
+        {/* Module 4: Stock Distribution by Category (Top 5 + Others Bar Chart) */}
         <div style={styles.sectionCard}>
           <div style={styles.sectionHeaderRow}>
             <div>
-              <div style={styles.sectionTag}>MATERIAL ASSETS & INVENTORY</div>
+              <div style={styles.sectionTag}>INVENTORY VALUATION</div>
               <h3 style={styles.sectionTitle}>Stock Distribution by Category</h3>
               <p style={styles.sectionSubtitle}>
-                Valuation and volume breakdown across primary material categories.
+                Top 5 categories by total stock value + consolidated Others.
               </p>
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap', marginTop: '10px' }}>
-            {/* Donut Chart */}
-            <div style={{ width: '220px', height: '230px', position: 'relative' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={stockCategoryDistribution.chartData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={62}
-                    outerRadius={92}
-                    paddingAngle={3}
-                    dataKey="value"
-                  >
-                    {stockCategoryDistribution.chartData.map((entry, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={DONUT_COLORS[index % DONUT_COLORS.length]}
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(val) => [`LKR ${Number(val).toLocaleString()}`, 'Valuation']}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-              {/* Centered Donut Label */}
-              <div style={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                textAlign: 'center',
-                pointerEvents: 'none'
-              }}>
-                <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600' }}>TOTAL STOCK</div>
-                <div style={{ fontSize: '13px', fontWeight: 'bold', color: PALETTE.navy }}>
-                  LKR {(stockCategoryDistribution.totalInventoryValue / 1000000).toFixed(1)}M
-                </div>
-              </div>
-            </div>
-
-            {/* Category breakdown pills / list */}
-            <div style={{ flex: 1, minWidth: '220px', maxHeight: '230px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {stockCategoryDistribution.chartData.map((cat, idx) => {
-                const color = DONUT_COLORS[idx % DONUT_COLORS.length];
-                const pct = stockCategoryDistribution.totalInventoryValue > 0
-                  ? ((cat.value / stockCategoryDistribution.totalInventoryValue) * 100).toFixed(1)
-                  : 0;
-
-                return (
-                  <div
-                    key={idx}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '6px 10px',
-                      background: '#f8fafc',
-                      borderRadius: '6px',
-                      fontSize: '12px'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: color, display: 'inline-block' }}></span>
-                      <strong style={{ color: PALETTE.slateDark }}>{cat.name}</strong>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <span style={{ color: PALETTE.slate, fontWeight: '600' }}>{pct}%</span>
-                      <span style={{ fontSize: '10px', color: '#94a3b8', marginLeft: '6px' }}>({cat.itemCount} SKUs)</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          <div style={{ height: '280px', width: '100%', marginTop: '10px' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={stockCategoryDistribution.chartData}
+                layout="vertical"
+                margin={{ top: 10, right: 25, left: 35, bottom: 10 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                <XAxis
+                  type="number"
+                  stroke="#64748b"
+                  tick={{ fontSize: 11, fill: '#64748b' }}
+                  tickFormatter={(val) => `LKR ${(val / 1000000).toFixed(1)}M`}
+                />
+                <YAxis
+                  dataKey="name"
+                  type="category"
+                  stroke="#64748b"
+                  tick={{ fontSize: 12, fill: '#334155' }}
+                  width={140}
+                />
+                <Tooltip
+                  formatter={(val) => [`LKR ${Number(val).toLocaleString()}`, 'Stock Value']}
+                  labelStyle={{ fontWeight: 'bold', color: PALETTE.navy }}
+                />
+                <Bar dataKey="value" name="Stock Value" radius={[0, 4, 4, 0]} barSize={20}>
+                  {stockCategoryDistribution.chartData.map((entry, index) => (
+                    <Cell
+                      key={`cat-bar-${index}`}
+                      fill={entry.isOthers ? '#94a3b8' : '#2563eb'}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
 
-          <div style={{ padding: '10px 14px', background: '#eff6ff', borderRadius: '8px', marginTop: '16px', fontSize: '12px', color: '#1e40af', display: 'flex', justifyContent: 'space-between' }}>
-            <span>📦 Total Catalog Units: <strong>{stockCategoryDistribution.totalStockQty.toLocaleString()} units</strong></span>
-            <span>💰 Total Stock Value: <strong>LKR {Math.round(stockCategoryDistribution.totalInventoryValue).toLocaleString()}</strong></span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', background: '#eff6ff', borderRadius: '8px', marginTop: '10px', fontSize: '12px', color: '#1e40af' }}>
+            <span>📊 Top 5 Categories &bull; Consolidated Others</span>
+            <span>💰 Total Stock Value: <strong>LKR {Math.round(totalStockValue).toLocaleString()}</strong></span>
           </div>
         </div>
       </div>
 
       {/* ------------------------------------------------------------- */}
-      {/* 4. BOTTOM SECTION: BOM VS ACTUAL VARIANCE ANALYSIS            */}
-      {/* (Module 5 & Objective 7 Core Requirement)                     */}
+      {/* 4. BOTTOM SECTION: BOM VS ACTUAL USAGE TABLE                   */}
+      {/* Clean 4-Column Table: [Material | Planned (BOM) | Used on site | Status] */}
       {/* ------------------------------------------------------------- */}
       <div style={styles.sectionCard}>
         <div style={styles.sectionHeaderRow}>
           <div>
-            <div style={styles.sectionTag}>MODULE 5 &bull; OBJECTIVE 7 &bull; VARIANCE ANALYSIS</div>
-            <h2 style={styles.sectionTitle}>BOM vs Actual Material Usage Variance Analysis</h2>
+            <div style={styles.sectionTag}>BOM VS ACTUAL USAGE</div>
+            <h2 style={styles.sectionTitle}>BOM vs Actual Usage</h2>
             <p style={styles.sectionSubtitle}>
-              Grouped comparison of planned Bill of Materials (BOM) quantities against actual site consumption logs.
+              Planned Bill of Materials (BOM) quantities compared against actual site consumption.
             </p>
           </div>
 
-          {/* Section Controls: Select Project dropdown, Variance Status Pill, Breakdown button */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            {/* Direct Project Selector in Section Header */}
+          {/* Section Controls: Project Filter & Status Legend */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#0d1b4b' }}>Select Project:</label>
               <select
                 value={selectedProject}
                 onChange={e => setSelectedProject(e.target.value)}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid #cbd5e1',
-                  fontSize: '12px',
-                  backgroundColor: '#ffffff',
-                  color: '#0f172a',
-                  fontWeight: '600',
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
+                style={styles.inlineProjectSelect}
               >
                 <option value="All">All Projects ({projects.length})</option>
                 {projectNamesList.map(name => (
@@ -1114,186 +831,66 @@ export default function ReportsAnalyticsDashboard({ externalProjects, externalMa
               </select>
             </div>
 
-            {/* Variance Status Pill */}
-            <div style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '6px 14px',
-              borderRadius: '20px',
-              fontSize: '13px',
-              fontWeight: 'bold',
-              backgroundColor: varianceAnalytics.isOverconsumed ? PALETTE.coralLight : PALETTE.emeraldLight,
-              color: varianceAnalytics.isOverconsumed ? '#991b1b' : '#065f46',
-              border: `1px solid ${varianceAnalytics.isOverconsumed ? '#fecaca' : '#a7f3d0'}`
-            }}>
-              <span>{varianceAnalytics.isOverconsumed ? '▲' : '●'}</span>
-              <span>
-                {varianceAnalytics.isOverconsumed
-                  ? `+${varianceAnalytics.variancePercentage}% Overconsumed`
-                  : varianceAnalytics.variancePercentage < 0
-                    ? `${varianceAnalytics.variancePercentage}% Within Budget`
-                    : `Within Budget`}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#0f172a', fontWeight: '600' }}>
+                <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#16a34a', display: 'inline-block' }}></span>
+                OK
+              </span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#0f172a', fontWeight: '600' }}>
+                <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'inline-block' }}></span>
+                Over
               </span>
             </div>
-
-            <button
-              onClick={() => setShowDetailedVarianceTable(prev => !prev)}
-              style={styles.toggleTableBtn}
-            >
-              {showDetailedVarianceTable ? 'Hide Variance Breakdown ▲' : 'View Variance Breakdown ▼'}
-            </button>
           </div>
         </div>
 
-        {/* Micro KPI highlights for variance */}
-        <div style={styles.varianceMetricsRow}>
-          <div style={styles.variancePill}>
-            <span style={styles.variancePillLabel}>BOM Planned Total:</span>
-            <strong style={styles.variancePillVal}>{varianceAnalytics.totalPlanned.toLocaleString()} units</strong>
-          </div>
-          <div style={styles.variancePill}>
-            <span style={styles.variancePillLabel}>Actual Consumed Total:</span>
-            <strong style={styles.variancePillVal}>{varianceAnalytics.totalActual.toLocaleString()} units</strong>
-          </div>
-          <div style={styles.variancePill}>
-            <span style={styles.variancePillLabel}>Net Volume Variance:</span>
-            <strong style={{ ...styles.variancePillVal, color: varianceAnalytics.isOverconsumed ? PALETTE.coral : PALETTE.emeraldDark }}>
-              {varianceAnalytics.difference > 0 ? '+' : ''}{varianceAnalytics.difference.toLocaleString()} units
-            </strong>
-          </div>
-          <div style={styles.variancePill}>
-            <span style={styles.variancePillLabel}>Estimated Wastage Cost:</span>
-            <strong style={{ ...styles.variancePillVal, color: '#b91c1c' }}>
-              LKR {Math.round(varianceAnalytics.wastageCost).toLocaleString()}
-            </strong>
-          </div>
-          <div style={styles.variancePill}>
-            <span style={styles.variancePillLabel}>Materials Over Budget:</span>
-            <strong style={{ ...styles.variancePillVal, color: varianceAnalytics.overusedCount > 0 ? '#b91c1c' : PALETTE.emeraldDark }}>
-              {varianceAnalytics.overusedCount} Items
-            </strong>
-          </div>
-        </div>
+        {/* Clean Table: [Material | Planned (BOM) | Used on site | Status] */}
+        <div style={styles.varianceTableContainer}>
+          <table style={styles.table}>
+            <thead>
+              <tr style={styles.tableHeaderRow}>
+                <th style={{ ...styles.th, color: '#0f172a', fontWeight: '700' }}>Material</th>
+                <th style={{ ...styles.th, textAlign: 'right', color: '#0f172a', fontWeight: '700' }}>Planned (BOM)</th>
+                <th style={{ ...styles.th, textAlign: 'right', color: '#0f172a', fontWeight: '700' }}>Used on site</th>
+                <th style={{ ...styles.th, textAlign: 'center', width: '130px', color: '#0f172a', fontWeight: '700' }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {varianceTableRows.map((item, idx) => {
+                const planned = Number(item.plannedQty || 0);
+                const actual = Number(item.actualQty || 0);
+                const isOver = actual > planned;
+                const unit = item.unit || '';
 
-        {/* Grouped Bar Chart */}
-        <div style={{ height: '340px', width: '100%', marginTop: '16px' }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={varianceAnalytics.chartData}
-              margin={{ top: 20, right: 30, left: 10, bottom: 25 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-              <XAxis
-                dataKey="materialName"
-                stroke="#64748b"
-                tick={{ fontSize: 12, fill: '#334155' }}
-                interval={0}
-              />
-              <YAxis
-                stroke="#64748b"
-                tick={{ fontSize: 12, fill: '#64748b' }}
-              />
-              <Tooltip content={<CustomVarianceTooltip />} />
-              <Legend
-                verticalAlign="top"
-                align="right"
-                wrapperStyle={{ paddingBottom: '14px', fontSize: '13px' }}
-              />
-              <Bar
-                dataKey="plannedQty"
-                name="Planned Quantity (Approved BOM)"
-                fill={PALETTE.navy}
-                radius={[4, 4, 0, 0]}
-                barSize={24}
-              />
-              <Bar
-                dataKey="actualQty"
-                name="Actual Consumed Quantity (Site Usage Logs)"
-                radius={[4, 4, 0, 0]}
-                barSize={24}
-              >
-                {varianceAnalytics.chartData.map((entry, index) => {
-                  const isOver = (entry.actualQty || 0) > (entry.plannedQty || 0);
-                  return (
-                    <Cell
-                      key={`bar-${index}`}
-                      fill={isOver ? PALETTE.coral : PALETTE.emerald}
-                    />
-                  );
-                })}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Detailed Breakdown Table (collapsible) */}
-        {showDetailedVarianceTable && (
-          <div style={styles.varianceTableContainer}>
-            <div style={{ padding: '12px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 'bold', fontSize: '13px', color: PALETTE.navy }}>
-              📋 Detailed Material Variance Records ({varianceAnalytics.rows.length} lines)
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={styles.table}>
-                <thead>
-                  <tr style={styles.tableHeaderRow}>
-                    <th style={styles.th}>Material Name</th>
-                    <th style={styles.th}>Project</th>
-                    <th style={styles.th}>Unit</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>BOM Planned</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>Actual Used</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>Variance (Δ)</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>Variance %</th>
-                    <th style={styles.th}>Status</th>
-                    <th style={{ ...styles.th, textAlign: 'right' }}>Wastage Cost</th>
+                return (
+                  <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={styles.tdBold}>{item.materialName}</td>
+                    <td style={{ ...styles.td, textAlign: 'right', color: '#0f172a' }}>
+                      {planned.toLocaleString()} {unit}
+                    </td>
+                    <td style={{ ...styles.tdBold, textAlign: 'right', color: isOver ? '#dc2626' : '#16a34a' }}>
+                      {actual.toLocaleString()} {unit}
+                    </td>
+                    <td style={{ ...styles.td, textAlign: 'center' }}>
+                      <span style={{
+                        display: 'inline-block',
+                        padding: '4px 14px',
+                        borderRadius: '12px',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        backgroundColor: isOver ? '#fee2e2' : '#dcfce7',
+                        color: isOver ? '#dc2626' : '#16a34a',
+                        border: `1px solid ${isOver ? '#fca5a5' : '#86efac'}`
+                      }}>
+                        {isOver ? 'Over' : 'OK'}
+                      </span>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {(varianceAnalytics.rows.length > 0 ? varianceAnalytics.rows : varianceAnalytics.chartData).map((item, idx) => {
-                    const planned = Number(item.plannedQty || 0);
-                    const actual = Number(item.actualQty || 0);
-                    const diff = actual - planned;
-                    const pct = Number(item.variancePct || (planned > 0 ? (((actual - planned) / planned) * 100).toFixed(1) : 0));
-                    const isOver = diff > 0;
-
-                    return (
-                      <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <td style={styles.tdBold}>{item.materialName}</td>
-                        <td style={styles.td}>{item.projectName || selectedProject}</td>
-                        <td style={styles.td}>{item.unit || 'units'}</td>
-                        <td style={{ ...styles.td, textAlign: 'right' }}>{planned.toLocaleString()}</td>
-                        <td style={{ ...styles.tdBold, textAlign: 'right', color: isOver ? PALETTE.coral : PALETTE.emeraldDark }}>
-                          {actual.toLocaleString()}
-                        </td>
-                        <td style={{ ...styles.tdBold, textAlign: 'right', color: isOver ? '#b91c1c' : '#047857' }}>
-                          {diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString()}
-                        </td>
-                        <td style={{ ...styles.tdBold, textAlign: 'right', color: isOver ? '#b91c1c' : '#047857' }}>
-                          {pct > 0 ? `+${pct}%` : `${pct}%`}
-                        </td>
-                        <td style={styles.td}>
-                          <span style={{
-                            padding: '3px 8px',
-                            borderRadius: '4px',
-                            fontSize: '11px',
-                            fontWeight: 'bold',
-                            backgroundColor: isOver ? '#fee2e2' : '#ecfdf5',
-                            color: isOver ? '#991b1b' : '#065f46'
-                          }}>
-                            {item.status || (isOver ? 'Overused' : 'Within Plan')}
-                          </span>
-                        </td>
-                        <td style={{ ...styles.td, textAlign: 'right', color: item.wastageCost > 0 ? '#b91c1c' : '#64748b' }}>
-                          {item.wastageCost ? `LKR ${Number(item.wastageCost).toLocaleString()}` : '-'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -1333,16 +930,6 @@ const styles = {
     fontSize: '13px',
     color: '#64748b'
   },
-  refreshBtn: {
-    backgroundColor: '#ffffff',
-    color: '#0d1b4b',
-    border: '1px solid #cbd5e1',
-    padding: '9px 14px',
-    borderRadius: '8px',
-    fontSize: '13px',
-    fontWeight: '600',
-    cursor: 'pointer'
-  },
   exportPdfBtn: {
     backgroundColor: '#0d1b4b',
     color: '#ffffff',
@@ -1374,8 +961,8 @@ const styles = {
   },
   filterGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-    gap: '14px',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '16px',
     alignItems: 'flex-end'
   },
   filterField: {
@@ -1405,16 +992,6 @@ const styles = {
     backgroundColor: '#ffffff',
     color: '#0f172a',
     outline: 'none'
-  },
-  resetFilterBtn: {
-    backgroundColor: '#f1f5f9',
-    color: '#475569',
-    border: '1px solid #cbd5e1',
-    padding: '8px 14px',
-    borderRadius: '6px',
-    fontSize: '12px',
-    fontWeight: '600',
-    cursor: 'pointer'
   },
   activeFilterScope: {
     display: 'flex',
@@ -1478,7 +1055,15 @@ const styles = {
   },
   kpiSubtext: {
     fontSize: '12px',
-    color: '#64748b'
+    color: '#64748b',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis'
+  },
+  twoColumnGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+    gap: '24px'
   },
   sectionCard: {
     backgroundColor: '#ffffff',
@@ -1513,69 +1098,44 @@ const styles = {
     fontSize: '13px',
     color: '#64748b'
   },
-  toggleTableBtn: {
-    backgroundColor: '#ffffff',
-    color: '#2563eb',
-    border: '1px solid #bfdbfe',
+  inlineProjectSelect: {
     padding: '6px 12px',
     borderRadius: '6px',
+    border: '1px solid #cbd5e1',
     fontSize: '12px',
+    backgroundColor: '#ffffff',
+    color: '#0f172a',
     fontWeight: '600',
+    outline: 'none',
     cursor: 'pointer'
   },
-  varianceMetricsRow: {
-    display: 'flex',
-    gap: '12px',
-    flexWrap: 'wrap',
-    padding: '10px 14px',
-    backgroundColor: '#f8fafc',
-    borderRadius: '8px',
-    marginBottom: '12px'
-  },
-  variancePill: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    fontSize: '12px'
-  },
-  variancePillLabel: {
-    color: '#64748b'
-  },
-  variancePillVal: {
-    color: '#0f172a'
-  },
   varianceTableContainer: {
-    marginTop: '20px',
+    marginTop: '16px',
     border: '1px solid #e2e8f0',
     borderRadius: '8px',
     overflow: 'hidden'
   },
-  twoColumnGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
-    gap: '24px'
-  },
   table: {
     width: '100%',
     borderCollapse: 'collapse',
-    fontSize: '12px'
+    fontSize: '13px'
   },
   tableHeaderRow: {
-    backgroundColor: '#f1f5f9'
+    backgroundColor: '#f8fafc',
+    borderBottom: '2px solid #e2e8f0'
   },
   th: {
-    padding: '10px 14px',
+    padding: '12px 16px',
     textAlign: 'left',
-    color: '#334155',
-    fontWeight: '700',
-    borderBottom: '1px solid #e2e8f0'
+    color: '#0f172a',
+    fontWeight: '700'
   },
   td: {
-    padding: '10px 14px',
+    padding: '12px 16px',
     color: '#475569'
   },
   tdBold: {
-    padding: '10px 14px',
+    padding: '12px 16px',
     fontWeight: '600',
     color: '#0f172a'
   }

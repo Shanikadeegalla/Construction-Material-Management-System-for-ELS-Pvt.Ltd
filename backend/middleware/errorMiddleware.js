@@ -21,8 +21,38 @@ const renderHtmlErrorPage = (res, statusCode, message) => {
     <div class="icon">📄</div>
     <h2>File Not Found</h2>
     <p>${message || 'This file was not uploaded or has been removed. Please contact the Store Officer to re-upload it.'}</p>
-    <button onclick="window.history.back()">Go Back</button>
+    <button id="goBackBtn" onclick="handleGoBack()">Go Back</button>
   </div>
+  <script>
+    function handleGoBack() {
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.focus();
+          window.close();
+          return;
+        }
+      } catch (e) {}
+
+      try {
+        if (window.history && window.history.length > 1) {
+          window.history.back();
+          setTimeout(function() {
+            if (!document.hidden) {
+              window.location.href = '/projects';
+            }
+          }, 500);
+          return;
+        }
+      } catch (e) {}
+
+      try {
+        window.close();
+      } catch (e) {}
+      setTimeout(function() {
+        window.location.href = '/projects';
+      }, 100);
+    }
+  </script>
 </body>
 </html>
   `);

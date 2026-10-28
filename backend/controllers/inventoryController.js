@@ -819,3 +819,84 @@ export const getNotificationCount = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Update GRN status (e.g. approve a GRN to trigger payment)
+// @route   PUT /api/inventory/grn/:id/status
+// @access  Private
+export const updateGRNStatus = async (req, res) => {
+  try {
+    const { status, notes } = req.body;
+    const allowed = ['Pending', 'Completed', 'Verified', 'Partial', 'Approved'];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status. Must be one of: ${allowed.join(', ')}` });
+    }
+
+    const grn = await GRN.findById(req.params.id);
+    if (!grn) {
+      return res.status(404).json({ success: false, message: 'GRN not found.' });
+    }
+
+    grn.status = status;
+    if (notes) grn.notes = notes;
+    await grn.save();
+
+    // When GRN status changes to 'Approved', trigger payment workflow connection!
+    if (status === 'Approved') {
+      try {
+        await notifyRoles(
+          ['PurchaseManager', 'Admin'],
+          `GRN ${grn.grnNumber} for ${grn.poReference || 'Purchase Order'} has been Approved. Payment can now be processed.`,
+          'GRN_Approved',
+          '/payment'
+        );
+      } catch (nErr) {
+        console.error('Error notifying PurchaseManager on GRN approval:', nErr);
+      }
+
+      // Ensure associated Invoice is created or marked Approved so payment workflow can process immediately
+      try {
+        const Invoice = (await import('../models/Invoice.js')).default;
+        let inv = await Invoice.findOne({ grn: grn._id }) || (grn.poId ? await Invoice.findOne({ po: grn.poId }) : null);
+        if (inv) {
+          if (inv.status === 'Pending Approval') {
+            inv.status = 'Approved';
+            inv.approvedBy = req.user ? req.user.name : 'GRN Approval';
+            inv.approvedAt = new Date();
+            await inv.save();
+          }
+        } else if (grn.poId) {
+          const poDoc = await PurchaseOrder.findById(grn.poId);
+          if (poDoc) {
+            let next = (await Invoice.countDocuments()) + 1;
+            let invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
+            while (await Invoice.findOne({ invoiceNumber })) {
+              next++;
+              invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
+            }
+
+            const newInv = new Invoice({
+              invoiceNumber,
+              supplier: grn.supplierId || poDoc.supplier,
+              po: poDoc._id,
+              grn: grn._id,
+              amount: Number(poDoc.totalAmount) || 0,
+              invoiceDate: new Date(),
+              status: 'Approved',
+              approvedBy: req.user ? req.user.name : 'GRN Approval',
+              approvedAt: new Date(),
+              submittedBy: grn.receivedBy || (req.user ? req.user.name : 'Main Store')
+            });
+            await newInv.save();
+          }
+        }
+      } catch (invErr) {
+        console.error('Error linking invoice on GRN approval:', invErr);
+      }
+    }
+
+    res.status(200).json({ success: true, message: `GRN status updated to ${status}.`, grn });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+

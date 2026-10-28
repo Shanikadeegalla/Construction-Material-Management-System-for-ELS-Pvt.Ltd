@@ -27,6 +27,21 @@ const formatBomVersion = (version) => {
 // Why a GRN line is short or damaged (must match the enum in the GRN model)
 const GRN_DISCREPANCY_REASONS = ['Short delivery', 'Damaged in transit', 'Wrong item', 'Poor quality', 'Other'];
 
+// Compact currency formatter for dashboard charts (e.g. 10938900 -> "LKR 10.9M")
+const formatCompactLKR = (val) => {
+  const num = Number(val) || 0;
+  if (num >= 1e9) {
+    return `LKR ${(num / 1e9).toFixed(1)}B`;
+  }
+  if (num >= 1e6) {
+    return `LKR ${(num / 1e6).toFixed(1)}M`;
+  }
+  if (num >= 1e3) {
+    return `LKR ${(num / 1e3).toFixed(1)}K`;
+  }
+  return `LKR ${Math.round(num).toLocaleString()}`;
+};
+
 function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [view, setView] = useState('dashboard'); // 'dashboard', 'inventory', 'grn', 'min', 'approved-boms', 'stock-adjustments', 'stock-ledger', 'reports', 'notifications', 'settings'
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -686,6 +701,27 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }
   };
 
+  const handleApproveGRN = async (grnId) => {
+    setError(''); setSuccess('');
+    try {
+      const res = await fetch(`${API_BASE}/api/inventory/grn/${grnId}/approve`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify({ status: 'Approved' })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSuccess('✅ GRN Approved! Purchase Manager received the action to process payment.');
+        setGrns(prev => prev.map(g => g._id === grnId ? { ...g, status: 'Approved' } : g));
+        fetchData();
+      } else {
+        setError(data.message || 'Failed to approve GRN.');
+      }
+    } catch {
+      setError('Connection failed. Could not approve GRN.');
+    }
+  };
+
   // Stock Adjustment: the only sanctioned way to correct current stock
   // outside of GRN/MIN/Usage transactions (e.g. after a physical count).
   const handleStockAdjustmentSubmit = async (e) => {
@@ -1222,17 +1258,18 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     }, {})
   ).map(([name, value]) => ({ name, value })).filter(c => c.value > 0);
 
-  // Dashboard bar list: the largest categories by value, with the long tail
-  // rolled into a single row so the card stays readable.
-  const TOP_CATEGORY_COUNT = 7;
+  // Category breakdown by total value: exactly 6 bars (Top 5 categories descending + 1 consolidated "Others" bar at the bottom)
+  const TOP_CATEGORY_COUNT = 5;
   const sortedCategories = [...categoryChartData].sort((a, b) => b.value - a.value);
+  const topCategories = sortedCategories.slice(0, TOP_CATEGORY_COUNT);
   const tailCategories = sortedCategories.slice(TOP_CATEGORY_COUNT);
-  const categoryBars = tailCategories.length > 1
+  const othersValue = tailCategories.reduce((sum, c) => sum + c.value, 0);
+  const categoryBars = sortedCategories.length > 0
     ? [
-        ...sortedCategories.slice(0, TOP_CATEGORY_COUNT),
-        { name: `${tailCategories.length} other categories`, value: tailCategories.reduce((sum, c) => sum + c.value, 0), isRest: true }
+        ...topCategories,
+        { name: 'Others', value: othersValue, isRest: true }
       ]
-    : sortedCategories;
+    : [];
 
   // Pre-Order and Critical materials, most depleted (relative to their
   // Pre-Order Level) first
@@ -2107,26 +2144,63 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                 </div>
               </div>
               <div style={{ ...styles.tableContainer, padding: '20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px' }}>
-                  <h3 style={{ margin: 0, color: '#0d1b4b' }}>Inventory Value by Category</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+                  <h3 id="inventory-value-by-category-title" style={{ margin: 0, color: '#0d1b4b' }}>
+                    Inventory Value by Category — Total: LKR {stockValue.toLocaleString()}
+                  </h3>
                   <span style={{ fontSize: '13px', color: '#64748b' }}>Total: <strong style={{ color: '#0d1b4b' }}>LKR {stockValue.toLocaleString()}</strong></span>
                 </div>
                 {categoryBars.length === 0 ? (
                   <div style={{ color: '#64748b', fontSize: '13px' }}>No stock value recorded yet.</div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {categoryBars.map(c => {
-                      const pct = stockValue > 0 ? (c.value / stockValue) * 100 : 0;
-                      return (
-                        <div key={c.name} title={`LKR ${c.value.toLocaleString()}`} style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px' }}>
-                          <span style={{ width: '200px', fontWeight: '600', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
-                          <div style={{ flex: 1, height: '10px', background: '#f1f5f9', borderRadius: '5px', overflow: 'hidden' }}>
-                            <div style={{ width: `${(c.value / categoryBars[0].value) * 100}%`, height: '100%', background: c.isRest ? '#94a3b8' : '#2563eb', borderRadius: '5px' }}></div>
+                    {(() => {
+                      const maxBarVal = Math.max(...categoryBars.map(b => b.value), 1);
+                      return categoryBars.map((c, idx) => {
+                        const pct = stockValue > 0 ? (c.value / stockValue) * 100 : 0;
+                        const labelText = `${c.name} ${formatCompactLKR(c.value)} (${pct.toFixed(1)}%)`;
+                        const barWidth = maxBarVal > 0 ? (c.value / maxBarVal) * 100 : 0;
+                        const barColor = c.isRest ? '#94a3b8' : '#2563eb';
+                        const textColor = c.isRest ? '#64748b' : '#334155';
+
+                        return (
+                          <div
+                            key={c.name}
+                            id={`category-bar-row-${idx}`}
+                            title={`${c.name}: LKR ${c.value.toLocaleString()} (${pct.toFixed(1)}%)`}
+                            style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px' }}
+                          >
+                            <span
+                              id={`category-bar-label-${idx}`}
+                              style={{
+                                width: '280px',
+                                minWidth: '260px',
+                                flexShrink: 0,
+                                fontWeight: '600',
+                                color: textColor,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              {labelText}
+                            </span>
+                            <div style={{ flex: 1, height: '10px', background: '#f1f5f9', borderRadius: '5px', overflow: 'hidden' }}>
+                              <div
+                                id={`category-bar-fill-${idx}`}
+                                style={{
+                                  width: `${barWidth}%`,
+                                  height: '100%',
+                                  background: barColor,
+                                  borderRadius: '5px',
+                                  transition: 'width 0.3s ease'
+                                }}
+                              />
+                            </div>
                           </div>
-                          <span style={{ width: '50px', textAlign: 'right', color: '#64748b' }}>{pct.toFixed(1)}%</span>
-                        </div>
-                      );
-                    })}
+                        );
+                      });
+                    })()}
                   </div>
                 )}
               </div>
@@ -2655,7 +2729,34 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                           })()}
                         </td>
                         <td style={styles.td}>
-                          <span style={{ background: g.status === 'Partial' ? '#fef3c7' : '#e8f5e9', color: g.status === 'Partial' ? '#b45309' : '#2e7d32', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{g.status || 'Completed'}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span style={{
+                              background: g.status === 'Approved' ? '#dcfce7' : g.status === 'Partial' ? '#fef3c7' : '#e8f5e9',
+                              color: g.status === 'Approved' ? '#15803d' : g.status === 'Partial' ? '#b45309' : '#2e7d32',
+                              padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold'
+                            }}>
+                              {g.status || 'Completed'}
+                            </span>
+                            {g.status !== 'Approved' && (
+                              <button
+                                type="button"
+                                id={`btn-approve-grn-${g._id}`}
+                                onClick={() => handleApproveGRN(g._id)}
+                                style={{
+                                  background: '#0d1b4b',
+                                  color: 'white',
+                                  border: 'none',
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: '600',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                ✓ Approve GRN
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

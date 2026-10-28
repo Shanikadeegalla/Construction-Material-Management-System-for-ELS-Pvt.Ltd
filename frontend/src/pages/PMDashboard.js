@@ -72,7 +72,47 @@ const PMDashboard = ({ user, onLogout, onUserUpdate, initialPage = 'dashboard' }
   const [editingProjectId, setEditingProjectId] = useState(null);
   const [viewingProject, setViewingProject] = useState(null);
   const [showViewProjectModal, setShowViewProjectModal] = useState(false);
+  const [viewingDoc, setViewingDoc] = useState(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
+
+  const handleOpenProjectDetails = (p) => {
+    setViewingProject(p);
+    setViewingDoc(null);
+    setShowViewProjectModal(true);
+    try {
+      window.history.pushState({ modal: 'projectDetails', projectId: p._id || p.id }, '');
+    } catch (e) {}
+  };
+
+  const handleOpenDoc = (doc) => {
+    setViewingDoc(doc);
+    try {
+      window.history.pushState({ modal: 'projectDoc', docName: doc.fileName || doc.filePath }, '');
+    } catch (e) {}
+  };
+
+  const handleDocBack = () => {
+    setViewingDoc(null);
+  };
+
+  const handleCloseProjectModal = () => {
+    setShowViewProjectModal(false);
+    setViewingProject(null);
+    setViewingDoc(null);
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      if (viewingDoc) {
+        setViewingDoc(null);
+      } else if (showViewProjectModal) {
+        setShowViewProjectModal(false);
+        setViewingProject(null);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [viewingDoc, showViewProjectModal]);
   // Bring the form into view when it opens further down the page.
   useEffect(() => {
     if (!showProjectForm) return undefined;
@@ -1076,10 +1116,7 @@ const PMDashboard = ({ user, onLogout, onUserUpdate, initialPage = 'dashboard' }
                     <td style={{ padding: '12px' }}>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         <button
-                          onClick={() => {
-                            setViewingProject(p);
-                            setShowViewProjectModal(true);
-                          }}
+                          onClick={() => handleOpenProjectDetails(p)}
                           style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
                         >
                           👁 View
@@ -2018,10 +2055,10 @@ const PMDashboard = ({ user, onLogout, onUserUpdate, initialPage = 'dashboard' }
                     <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                       <button
                         type="button"
-                        onClick={() => window.open(url, '_blank')}
-                        style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
+                        onClick={() => handleOpenDoc(doc)}
+                        style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
                       >
-                        👁 View
+                        👁 View/Print
                       </button>
                       <button
                         type="button"
@@ -2046,12 +2083,133 @@ const PMDashboard = ({ user, onLogout, onUserUpdate, initialPage = 'dashboard' }
             <p style={{ margin: 0, fontSize: '13px', color: '#666', fontStyle: 'italic' }}>{emptyLabel}</p>
           )
         );
+
+        if (viewingDoc) {
+          const docUrl = `${API_BASE}${viewingDoc.filePath}`;
+          const isPdf = viewingDoc.filePath.toLowerCase().endsWith('.pdf');
+          const isImage = /\.(jpe?g|png)$/i.test(viewingDoc.filePath);
+          const docTitle = viewingDoc.fileName || viewingDoc.filePath.split('/').pop();
+
+          return (
+            <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+              <div style={{ background: 'white', padding: '24px', borderRadius: '8px', width: '750px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #0d1b4b', paddingBottom: '12px', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <button
+                      type="button"
+                      id="docViewerBackTopBtn"
+                      onClick={handleDocBack}
+                      style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      ← Go Back
+                    </button>
+                    <h3 style={{ color: '#0d1b4b', margin: 0, fontSize: '15px', fontWeight: '700' }}>
+                      {docTitle}
+                    </h3>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleDocumentPrint(docUrl)}
+                      style={{ background: '#2563eb', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                    >
+                      🖨️ Print
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDocumentDownload(docUrl, viewingDoc.fileName)}
+                      style={{ background: '#0f766e', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                    >
+                      ⬇️ Download
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => window.open(docUrl, '_blank')}
+                      style={{ background: '#475569', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                      title="Open in new tab"
+                    >
+                      ↗️
+                    </button>
+                    <span onClick={handleCloseProjectModal} style={{ cursor: 'pointer', fontWeight: 'bold', fontSize: '22px', color: '#666', marginLeft: '6px' }}>&times;</span>
+                  </div>
+                </div>
+
+                <div style={{ flex: 1, minHeight: '350px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                  {isPdf ? (
+                    <iframe
+                      src={docUrl}
+                      title={docTitle}
+                      style={{ width: '100%', height: '520px', border: 'none', borderRadius: '4px' }}
+                    />
+                  ) : isImage ? (
+                    <div style={{ width: '100%', textAlign: 'center' }}>
+                      <img
+                        src={docUrl}
+                        alt={docTitle}
+                        style={{ maxWidth: '100%', maxHeight: '520px', objectFit: 'contain', borderRadius: '4px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                          const fb = document.getElementById('pm-doc-fallback');
+                          if (fb) fb.style.display = 'block';
+                        }}
+                      />
+                      <div id="pm-doc-fallback" style={{ display: 'none', padding: '30px 20px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '40px', marginBottom: '12px' }}>📄</div>
+                        <h4 style={{ color: '#0d1b4b', margin: '0 0 8px' }}>File Preview Not Available</h4>
+                        <p style={{ color: '#64748b', fontSize: '13px', margin: '0 0 16px' }}>
+                          This document was not uploaded or has been moved.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleDocBack}
+                          style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}
+                        >
+                          ← Go Back to Project Details
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '42px', marginBottom: '12px' }}>📎</div>
+                      <h4 style={{ color: '#0d1b4b', margin: '0 0 8px' }}>{docTitle}</h4>
+                      <p style={{ color: '#64748b', fontSize: '13px', margin: '0 0 16px' }}>
+                        Preview is not supported for this file type. You can download or print it.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleDocBack}
+                        style={{ background: '#0d1b4b', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}
+                      >
+                        ← Go Back to Project Details
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
+                  <button
+                    type="button"
+                    id="docViewerBackBottomBtn"
+                    onClick={handleDocBack}
+                    style={{ background: '#64748b', color: 'white', border: 'none', padding: '8px 18px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    ← Go Back
+                  </button>
+                  <span style={{ fontSize: '12px', color: '#64748b' }}>
+                    Project: <strong>{viewingProject.projectName || viewingProject.name}</strong> ({typeof viewingProject.projectId === 'object' ? (viewingProject.projectId?.projectId || viewingProject.projectId?.name || 'N/A') : (viewingProject.projectId || 'N/A')})
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
         return (
           <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
             <div style={{ background: 'white', padding: '30px', borderRadius: '8px', width: '600px', maxHeight: '80%', overflowY: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '2px solid #0d1b4b', paddingBottom: '10px', marginBottom: '20px' }}>
                 <h3 style={{ color: '#0d1b4b', margin: 0 }}>Project Details: {viewingProject.projectName || viewingProject.name}</h3>
-                <span onClick={() => { setShowViewProjectModal(false); setViewingProject(null); }} style={{ cursor: 'pointer', fontWeight: 'bold', fontSize: '20px', color: '#666' }}>&times;</span>
+                <span onClick={handleCloseProjectModal} style={{ cursor: 'pointer', fontWeight: 'bold', fontSize: '20px', color: '#666' }}>&times;</span>
               </div>
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '20px', background: '#f8fafc', padding: '12px', borderRadius: '6px', fontSize: '13px', color: '#1e293b' }}>
@@ -2080,6 +2238,17 @@ const PMDashboard = ({ user, onLogout, onUserUpdate, initialPage = 'dashboard' }
               <div style={{ marginBottom: '20px' }}>
                 <h4 style={{ color: '#0d1b4b', margin: '0 0 8px', fontSize: '14px', fontWeight: '700' }}>Specifications / Other Documents</h4>
                 {renderDocList(viewingProject.specifications, 'No specifications or other documents uploaded')}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
+                <button
+                  type="button"
+                  id="projectDetailsCloseBtn"
+                  onClick={handleCloseProjectModal}
+                  style={{ background: '#64748b', color: 'white', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+                >
+                  Go Back
+                </button>
               </div>
             </div>
           </div>

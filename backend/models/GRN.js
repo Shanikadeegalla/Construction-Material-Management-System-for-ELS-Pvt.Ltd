@@ -65,7 +65,7 @@ const grnSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Pending', 'Completed', 'Verified', 'Partial'],
+    enum: ['Pending', 'Completed', 'Verified', 'Partial', 'Approved'],
     default: 'Completed'
   },
   notes: {
