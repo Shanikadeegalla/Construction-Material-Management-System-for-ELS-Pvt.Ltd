@@ -24,7 +24,7 @@ const notificationSchema = new mongoose.Schema({
       'PR_SUBMITTED', 'PR_DECLINED',
       'PO_SUBMITTED', 'PO_submitted', 'PO_approved', 'PO_rejected', 'PO_SENT',
       'Invoice_submitted', 'Invoice_approved', 'Invoice_rejected', 'Payment_approval',
-      'PAYMENT_RECORDED',
+      'PAYMENT_RECORDED', 'GRN_Approved',
       'MIN_EXCEEDS_BOM', 'MIN_REQUEST_SUBMITTED',
       'SSR_SUBMITTED', 'SSR_TRANSFERRED', 'SSR_REJECTED',
       'MTN_ISSUED', 'MTN_RECEIVED',

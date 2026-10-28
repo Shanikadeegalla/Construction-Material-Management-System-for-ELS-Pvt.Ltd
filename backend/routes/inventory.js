@@ -7,6 +7,7 @@ import {
   getLowStock,
   createGRN,
   getGRNs,
+  updateGRNStatus,
   getTransfers,
   getNotifications,
   getMaterialUsage,
@@ -42,6 +43,13 @@ router.route('/usage')
 router.get('/grn', protect, getGRNs);
 router.get('/grn-list', protect, getGRNs);
 router.post('/grn', protect, checkPermission('Create GRN'), createGRN);
+router.put('/grn/:id/status', protect, updateGRNStatus);
+router.put('/grn/:id/approve', protect, (req, res, next) => {
+  req.body = req.body || {};
+  req.body.status = 'Approved';
+  return updateGRNStatus(req, res, next);
+});
+router.put('/grn/:id', protect, updateGRNStatus);
 
 // Transfer ledger (populated by the Material Issuance Note issue flow, /api/min)
 router.get('/transfers', protect, getTransfers);

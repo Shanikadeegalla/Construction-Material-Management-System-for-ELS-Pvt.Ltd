@@ -4,6 +4,7 @@ import PurchaseOrder from '../models/PurchaseOrder.js';
 import Supplier from '../models/Supplier.js';
 import Payment from '../models/Payment.js';
 import Invoice from '../models/Invoice.js';
+import GRN from '../models/GRN.js';
 import User from '../models/userModel.js';
 import { sendMail, escapeHtml } from '../utils/mailer.js';
 import { notifyRoles } from './notificationController.js';
@@ -409,18 +410,82 @@ const settlePayment = async (payment, session = null, payerUser = null) => {
 // @access  Private (PurchaseManager / Admin)
 export const createCheckoutSession = async (req, res) => {
   try {
-    let { invoiceId, purchaseOrderId, amount } = req.body;
+    let { invoiceId, purchaseOrderId, amount, grnId } = req.body;
 
-    if (!invoiceId && !purchaseOrderId) {
-      return res.status(400).json({ success: false, message: 'invoiceId or purchaseOrderId is required.' });
+    if (!invoiceId && !purchaseOrderId && !grnId) {
+      return res.status(400).json({ success: false, message: 'invoiceId, purchaseOrderId, or grnId is required.' });
     }
 
     let invoice;
     if (invoiceId) {
       invoice = await Invoice.findById(invoiceId).populate('po');
+    } else if (grnId) {
+      invoice = await Invoice.findOne({ grn: grnId, status: 'Approved' }).populate('po')
+        || await Invoice.findOne({ grn: grnId }).sort({ createdAt: -1 }).populate('po');
+      if (!invoice) {
+        const grnDoc = await GRN.findById(grnId);
+        if (grnDoc && grnDoc.poId) {
+          purchaseOrderId = grnDoc.poId;
+          invoice = await Invoice.findOne({ po: grnDoc.poId, status: 'Approved' }).populate('po')
+            || await Invoice.findOne({ po: grnDoc.poId }).sort({ createdAt: -1 }).populate('po');
+        }
+        if (!invoice && grnDoc && (grnDoc.status === 'Approved' || grnDoc.status === 'Completed')) {
+          const poDoc = grnDoc.poId ? await PurchaseOrder.findById(grnDoc.poId) : null;
+          if (poDoc) {
+            let next = (await Invoice.countDocuments()) + 1;
+            let invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
+            while (await Invoice.findOne({ invoiceNumber })) {
+              next++;
+              invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
+            }
+            invoice = new Invoice({
+              invoiceNumber,
+              supplier: grnDoc.supplierId || poDoc.supplier,
+              po: poDoc._id,
+              grn: grnDoc._id,
+              amount: Number(poDoc.totalAmount) || 0,
+              invoiceDate: new Date(),
+              status: 'Approved',
+              approvedBy: req.user ? req.user.name : 'GRN Approval',
+              approvedAt: new Date(),
+              submittedBy: grnDoc.receivedBy || (req.user ? req.user.name : 'Main Store')
+            });
+            await invoice.save();
+            await invoice.populate('po');
+          }
+        }
+      }
     } else if (purchaseOrderId) {
       invoice = await Invoice.findOne({ po: purchaseOrderId, status: 'Approved' }).populate('po')
         || await Invoice.findOne({ po: purchaseOrderId }).sort({ createdAt: -1 }).populate('po');
+      if (!invoice) {
+        const grnDoc = await GRN.findOne({ poId: purchaseOrderId, status: 'Approved' });
+        if (grnDoc) {
+          const poDoc = await PurchaseOrder.findById(purchaseOrderId);
+          if (poDoc) {
+            let next = (await Invoice.countDocuments()) + 1;
+            let invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
+            while (await Invoice.findOne({ invoiceNumber })) {
+              next++;
+              invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
+            }
+            invoice = new Invoice({
+              invoiceNumber,
+              supplier: grnDoc.supplierId || poDoc.supplier,
+              po: poDoc._id,
+              grn: grnDoc._id,
+              amount: Number(poDoc.totalAmount) || 0,
+              invoiceDate: new Date(),
+              status: 'Approved',
+              approvedBy: req.user ? req.user.name : 'GRN Approval',
+              approvedAt: new Date(),
+              submittedBy: grnDoc.receivedBy || (req.user ? req.user.name : 'Main Store')
+            });
+            await invoice.save();
+            await invoice.populate('po');
+          }
+        }
+      }
     }
 
     if (!invoice) {
@@ -449,12 +514,22 @@ export const createCheckoutSession = async (req, res) => {
       return res.status(400).json({ success: false, message: 'This invoice has already been paid.' });
     }
 
-    // Payment is gated on the Director's approval of the invoice
+    // Payment is gated on the Director's approval of the invoice or an Approved GRN
     if (invoice.status !== 'Approved') {
-      return res.status(400).json({
-        success: false,
-        message: 'Only Director-approved invoices can be paid.'
-      });
+      const linkedGrn = invoice.grn
+        ? await GRN.findById(invoice.grn)
+        : await GRN.findOne({ poId: po._id });
+      if (linkedGrn && linkedGrn.status === 'Approved') {
+        invoice.status = 'Approved';
+        invoice.approvedBy = invoice.approvedBy || 'GRN Approval';
+        invoice.approvedAt = invoice.approvedAt || new Date();
+        await invoice.save();
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Only Director-approved invoices or approved GRNs can be paid.'
+        });
+      }
     }
 
     const poTotalAmount = Number(po.totalAmount);
@@ -562,7 +637,7 @@ export const recordManualPayment = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Only Purchase Manager or Admin can record payments.' });
     }
 
-    const { purchaseOrderId, notes: inputNotes, chequeDate: inputChequeDate } = req.body;
+    const { purchaseOrderId, notes: inputNotes, chequeDate: inputChequeDate, grnId } = req.body;
     let { invoiceId, invoiceNo } = req.body;
     const paidAt = req.body.paidAt || req.body.paymentDate;
 
@@ -572,18 +647,88 @@ export const recordManualPayment = async (req, res) => {
       if (foundInv) invoiceId = foundInv._id;
     }
 
+    // Support lookup by grnId
+    if (!invoiceId && grnId) {
+      const grnInv = await Invoice.findOne({ grn: grnId, status: 'Approved' })
+        || await Invoice.findOne({ grn: grnId }).sort({ createdAt: -1 });
+      if (grnInv) {
+        invoiceId = grnInv._id;
+      } else {
+        const grnDoc = await GRN.findById(grnId);
+        if (grnDoc && grnDoc.poId) {
+          const poInv = await Invoice.findOne({ po: grnDoc.poId, status: 'Approved' })
+            || await Invoice.findOne({ po: grnDoc.poId }).sort({ createdAt: -1 });
+          if (poInv) invoiceId = poInv._id;
+        }
+        if (!invoiceId && grnDoc && (grnDoc.status === 'Approved' || grnDoc.status === 'Completed')) {
+          const poDoc = grnDoc.poId ? await PurchaseOrder.findById(grnDoc.poId) : null;
+          if (poDoc) {
+            let next = (await Invoice.countDocuments()) + 1;
+            let invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
+            while (await Invoice.findOne({ invoiceNumber })) {
+              next++;
+              invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
+            }
+            const createdInv = new Invoice({
+              invoiceNumber,
+              supplier: grnDoc.supplierId || poDoc.supplier,
+              po: poDoc._id,
+              grn: grnDoc._id,
+              amount: Number(poDoc.totalAmount) || 0,
+              invoiceDate: new Date(),
+              status: 'Approved',
+              approvedBy: req.user ? req.user.name : 'GRN Approval',
+              approvedAt: new Date(),
+              submittedBy: grnDoc.receivedBy || (req.user ? req.user.name : 'Main Store')
+            });
+            await createdInv.save();
+            invoiceId = createdInv._id;
+          }
+        }
+      }
+    }
+
     // A caller that only knows the Purchase Order pays that PO's approved invoice.
     if (!invoiceId && purchaseOrderId) {
       const poInvoice = await Invoice.findOne({ po: purchaseOrderId, status: 'Approved' })
         || await Invoice.findOne({ po: purchaseOrderId }).sort({ createdAt: -1 });
       if (!poInvoice) {
-        return res.status(400).json({ success: false, message: 'This Purchase Order has no supplier invoice yet. An invoice must be recorded and approved by the Director before payment.' });
+        const grnDoc = await GRN.findOne({ poId: purchaseOrderId, status: 'Approved' });
+        if (grnDoc) {
+          const poDoc = await PurchaseOrder.findById(purchaseOrderId);
+          if (poDoc) {
+            let next = (await Invoice.countDocuments()) + 1;
+            let invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
+            while (await Invoice.findOne({ invoiceNumber })) {
+              next++;
+              invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
+            }
+            const createdInv = new Invoice({
+              invoiceNumber,
+              supplier: grnDoc.supplierId || poDoc.supplier,
+              po: poDoc._id,
+              grn: grnDoc._id,
+              amount: Number(poDoc.totalAmount) || 0,
+              invoiceDate: new Date(),
+              status: 'Approved',
+              approvedBy: req.user ? req.user.name : 'GRN Approval',
+              approvedAt: new Date(),
+              submittedBy: grnDoc.receivedBy || (req.user ? req.user.name : 'Main Store')
+            });
+            await createdInv.save();
+            invoiceId = createdInv._id;
+          }
+        }
+      } else {
+        invoiceId = poInvoice._id;
       }
-      invoiceId = poInvoice._id;
+      if (!invoiceId) {
+        return res.status(400).json({ success: false, message: 'This Purchase Order has no supplier invoice or approved GRN yet. An invoice must be recorded and approved before payment.' });
+      }
     }
 
     if (!invoiceId) {
-      return res.status(400).json({ success: false, message: 'invoiceId, invoiceNo, or purchaseOrderId is required.' });
+      return res.status(400).json({ success: false, message: 'invoiceId, invoiceNo, grnId, or purchaseOrderId is required.' });
     }
 
     const invoice = await Invoice.findById(invoiceId);
@@ -594,7 +739,17 @@ export const recordManualPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'This invoice has already been paid.' });
     }
     if (invoice.status !== 'Approved') {
-      return res.status(400).json({ success: false, message: 'Only Director-approved invoices can be paid.' });
+      const linkedGrn = invoice.grn
+        ? await GRN.findById(invoice.grn)
+        : await GRN.findOne({ poId: invoice.po });
+      if (linkedGrn && linkedGrn.status === 'Approved') {
+        invoice.status = 'Approved';
+        invoice.approvedBy = invoice.approvedBy || 'GRN Approval';
+        invoice.approvedAt = invoice.approvedAt || new Date();
+        await invoice.save();
+      } else {
+        return res.status(400).json({ success: false, message: 'Only Director-approved invoices or approved GRNs can be paid.' });
+      }
     }
 
     // Amount safeguard: never take amount from client; if provided, must match database amount
