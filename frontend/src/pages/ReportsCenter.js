@@ -7,6 +7,8 @@ import { API_BASE } from '../config';
 import { useToast } from '../context/ToastContext';
 import Pagination, { usePagination } from '../components/Pagination';
 import { getAuthHeaders, fetchWithAuth } from '../utils/authUtils';
+import { resolveMaterialName } from '../utils/cryptoUtils';
+import { calculateDueDate } from '../utils/invoiceUtils';
 
 const num = (v) => Number(v) || 0;
 const money = (v) => num(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -83,11 +85,16 @@ function ReportsCenter({ tabs }) {
     setError('');
     try {
       if (tab === 'inventory') {
-        const [materials, ledger] = await Promise.all([
+        const [materials, ledger, itemMasters] = await Promise.all([
           getList('/api/inventory'),
-          getList('/api/inventory/stock-ledger')
+          getList('/api/inventory/stock-ledger'),
+          getList('/api/item-master').catch(() => [])
         ]);
-        setData(prev => ({ ...prev, materials, ledger }));
+        const itemMasterMap = (itemMasters || []).reduce((acc, item) => {
+          if (item.materialCode) acc[item.materialCode] = item.materialName || item.name;
+          return acc;
+        }, {});
+        setData(prev => ({ ...prev, materials, ledger, itemMasterMap }));
       } else if (tab === 'procurement') {
         const [pos, prs] = await Promise.all([
           getList('/api/purchase-orders'),
@@ -141,11 +148,20 @@ function ReportsCenter({ tabs }) {
     const view = subView[activeTab];
 
     if (activeTab === 'inventory' && view === 'levels') {
+      const itemMasterMap = data.itemMasterMap || {};
       const rows = (data.materials || [])
+        .map(m => {
+          const resolvedName = resolveMaterialName(m, itemMasterMap);
+          return {
+            ...m,
+            name: resolvedName,
+            _status: stockStatus(m),
+            _value: num(m.quantity) * num(m.unitPrice)
+          };
+        })
         .filter(m => (location === 'All' || m.location === location))
-        .filter(m => (status === 'All' || stockStatus(m) === status))
-        .filter(m => matches(m.name, m.materialCode, m.category))
-        .map(m => ({ ...m, _status: stockStatus(m), _value: num(m.quantity) * num(m.unitPrice) }));
+        .filter(m => (status === 'All' || m._status === status))
+        .filter(m => matches(m.name, m.materialCode, m.category));
       return {
         title: 'Inventory / Stock Report',
         filters: { location: ['MainStore', 'SiteStore'], status: ['Normal', 'Reorder', 'Critical'] },
@@ -173,7 +189,12 @@ function ReportsCenter({ tabs }) {
     }
 
     if (activeTab === 'inventory') {
+      const itemMasterMap = data.itemMasterMap || {};
       const rows = (data.ledger || [])
+        .map(e => ({
+          ...e,
+          materialName: resolveMaterialName(e, itemMasterMap) || e.materialName
+        }))
         .filter(e => inRange(e.date))
         .filter(e => (status === 'All' || e.type === status))
         .filter(e => matches(e.materialName, e.reference, e.performedBy));
@@ -291,33 +312,118 @@ function ReportsCenter({ tabs }) {
 
     if (activeTab === 'bom') {
       const all = data.variance || [];
+
+      const isNotStarted = (r) => {
+        if (r.status === 'Not Started') return true;
+        return num(r.actualQty) === 0 && (!r.issueCount || r.issueCount === 0);
+      };
+
+      const getRowStatus = (r) => {
+        if (isNotStarted(r)) return 'Not Started';
+        if (r.inBom === false || r.status === 'Unplanned') return 'Unplanned';
+        const diff = num(r.actualQty) - num(r.plannedQty);
+        if (diff > 0 || r.status === 'Overused') return 'Overused';
+        if (diff === 0 || r.status === 'On Plan') return 'On Plan';
+        return 'Within Plan';
+      };
+
       const rows = all
         .filter(v => (project === 'All' || v.projectName === project))
-        .filter(v => (status === 'All' || (v.status || (v.varianceQty > 0 ? 'Overused' : 'Within Plan')) === status))
+        .filter(v => (status === 'All' || getRowStatus(v) === status))
         .filter(v => matches(v.materialName, v.projectName));
+
+      const notStartedCount = rows.filter(r => getRowStatus(r) === 'Not Started').length;
+      const withinPlanCount = rows.filter(r => getRowStatus(r) === 'Within Plan').length;
+      const onPlanCount = rows.filter(r => getRowStatus(r) === 'On Plan').length;
+      const overusedCount = rows.filter(r => getRowStatus(r) === 'Overused').length;
+      const unplannedCount = rows.filter(r => getRowStatus(r) === 'Unplanned').length;
+      const totalOveruseCost = rows.reduce((s, r) => s + num(r.wastageCost), 0);
+
+      const summary = [
+        { label: 'BOM Lines', value: rows.length },
+        { label: 'Not Started', value: notStartedCount },
+        { label: 'Within Plan', value: withinPlanCount }
+      ];
+
+      if (onPlanCount > 0) {
+        summary.push({ label: 'On Plan', value: onPlanCount });
+      }
+
+      summary.push({ label: 'Overused Lines', value: overusedCount, danger: true });
+
+      if (unplannedCount > 0) {
+        summary.push({ label: 'Unplanned', value: unplannedCount, warn: true });
+      }
+
+      summary.push({ label: 'Overuse Cost (LKR)', value: money(totalOveruseCost), danger: true });
+
       return {
         title: 'BOM vs Actual Report',
         projects: Array.from(new Set(all.map(v => v.projectName))).filter(Boolean).sort(),
-        filters: { status: ['Overused', 'Unplanned', 'Within Plan', 'On Plan', 'Not Started'] },
+        filters: { status: ['Not Started', 'Within Plan', 'On Plan', 'Overused', 'Unplanned'] },
         columns: [
           { label: 'Project', get: r => r.projectName },
           { label: 'Material', get: r => r.materialName },
           { label: 'Unit', get: r => r.unit },
           { label: 'Planned (BOM)', get: r => num(r.plannedQty), numeric: true },
           { label: 'Actual', get: r => num(r.actualQty), numeric: true },
-          { label: 'Variance', get: r => `${r.varianceQty > 0 ? '+' : ''}${num(r.varianceQty)}`, numeric: true },
-          { label: 'Variance %', get: r => `${r.variancePct > 0 ? '+' : ''}${num(r.variancePct)}%`, numeric: true },
-          { label: 'Overuse Qty', get: r => num(r.wastageQty), numeric: true },
-          { label: 'Overuse Cost (LKR)', get: r => money(r.wastageCost), numeric: true },
-          { label: 'Status', get: r => r.status || (r.varianceQty > 0 ? 'Overused' : 'Within Plan'), badge: true }
+          {
+            label: 'Variance',
+            get: r => {
+              if (isNotStarted(r)) return '—';
+              const diff = num(r.actualQty) - num(r.plannedQty);
+              return `${diff > 0 ? '+' : ''}${num(diff)}`;
+            },
+            numeric: true
+          },
+          {
+            label: 'Variance %',
+            get: r => {
+              if (isNotStarted(r)) return '—';
+              const actual = num(r.actualQty);
+              const planned = num(r.plannedQty);
+              let pct = 0;
+              if (planned > 0) {
+                pct = ((actual - planned) / planned) * 100;
+              } else if (actual > 0) {
+                pct = 100;
+              }
+              const rounded = Number(pct.toFixed(2));
+              return `${rounded > 0 ? '+' : ''}${rounded}%`;
+            },
+            numeric: true
+          },
+          {
+            label: 'Overuse Qty',
+            get: r => {
+              if (isNotStarted(r)) return '—';
+              const diff = num(r.actualQty) - num(r.plannedQty);
+              return num(Math.max(diff, 0));
+            },
+            numeric: true
+          },
+          {
+            label: 'Overuse Cost (LKR)',
+            get: r => {
+              if (isNotStarted(r)) return '—';
+              const diff = num(r.actualQty) - num(r.plannedQty);
+              const isOverusedLine = diff > 0 || getRowStatus(r) === 'Overused';
+              if (isOverusedLine) {
+                const cost = num(r.wastageCost);
+                const unitPrice = num(r.unitCost);
+                if (cost === 0 || unitPrice === 0) {
+                  return 'Price missing';
+                }
+                return money(cost);
+              }
+              return money(0);
+            },
+            numeric: true
+          },
+          { label: 'Status', get: r => getRowStatus(r), badge: true }
         ],
         rows,
-        summary: [
-          { label: 'BOM Lines', value: rows.length },
-          { label: 'Overused Lines', value: rows.filter(r => r.varianceQty > 0).length, danger: true },
-          { label: 'Overuse Cost (LKR)', value: money(rows.reduce((s, r) => s + num(r.wastageCost), 0)), danger: true },
-          { label: 'Within Plan', value: rows.filter(r => r.varianceQty <= 0).length }
-        ]
+        summary
       };
     }
 
@@ -343,7 +449,10 @@ function ReportsCenter({ tabs }) {
         { label: 'Supplier', get: r => r.supplier?.name || '-' },
         { label: 'Amount (LKR)', get: r => money(r.amount), numeric: true },
         { label: 'Invoice Date', get: r => formatDate(r.invoiceDate) },
-        { label: 'Due Date', get: r => (r.dueDate ? formatDate(r.dueDate) : '-') },
+        { label: 'Due Date', get: r => {
+          const d = r.dueDate || calculateDueDate(r.invoiceDate, r.po?.paymentTerms);
+          return d ? formatDate(d) : '-';
+        } },
         { label: 'Approved By', get: r => r.approvedBy || '-' },
         { label: 'Status', get: r => r.status, badge: true },
         { label: 'Paid On', get: r => (r.paidAt ? formatDate(r.paidAt) : '-') },

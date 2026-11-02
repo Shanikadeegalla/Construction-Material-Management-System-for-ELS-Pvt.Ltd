@@ -11,12 +11,54 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer
+  ResponsiveContainer,
+  ReferenceLine
 } from 'recharts';
 import { formatDateTime, formatDayMonth } from '../utils/dateUtils';
 import { API_BASE } from '../config';
 import Pagination, { usePagination } from '../components/Pagination';
 import { getAuthHeaders, fetchWithAuth } from '../utils/authUtils';
+
+const CustomBarTooltip = ({ active, payload }) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    return (
+      <div style={{ background: 'white', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '6px', boxShadow: '0 2px 6px rgba(0,0,0,0.1)', fontSize: '12px' }}>
+        <div style={{ fontWeight: '700', color: '#0d1b4b', marginBottom: '6px' }}>{data.materialName}</div>
+        <div style={{ color: '#475569', marginBottom: '3px' }}>
+          <strong>% of Plan Used:</strong> {data.percentUsed}%
+        </div>
+        <div style={{ color: '#475569', marginBottom: '3px' }}>
+          <strong>Planned Qty:</strong> {Number(data.plannedQty || 0).toLocaleString()} {data.unit || ''}
+        </div>
+        <div style={{ color: '#475569' }}>
+          <strong>Actual Usage:</strong> {Number(data.actualQty || 0).toLocaleString()} {data.unit || ''}
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
+const CustomLineTooltip = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    return (
+      <div style={{ background: 'white', padding: '10px 14px', border: '1px solid #cbd5e1', borderRadius: '6px', boxShadow: '0 2px 6px rgba(0,0,0,0.1)', fontSize: '12px' }}>
+        <div style={{ fontWeight: '700', color: '#0d1b4b', marginBottom: '4px' }}>Date: {label}</div>
+        <div style={{ color: '#2563eb', fontWeight: '600', marginBottom: '2px' }}>
+          Cumulative Usage: {Number(data.quantity || 0).toLocaleString()} units
+        </div>
+        {data.dailyQty !== undefined && (
+          <div style={{ color: '#64748b' }}>
+            Day's Usage: {Number(data.dailyQty || 0).toLocaleString()} units
+          </div>
+        )}
+      </div>
+    );
+  }
+  return null;
+};
 
 const VarianceReport = () => {
   const [reportData, setReportData] = useState([]);
@@ -33,15 +75,49 @@ const VarianceReport = () => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetchWithAuth('/api/material-usage/variance');
-      const data = await res.json().catch(() => ({}));
+      const [resVar, resBom, resItems] = await Promise.all([
+        fetchWithAuth('/api/material-usage/variance'),
+        fetchWithAuth('/api/bom').catch(() => null),
+        fetchWithAuth('/api/item-master').catch(() => null)
+      ]);
+      const data = await resVar.json().catch(() => ({}));
       if (data.success) {
-        setReportData(data.report || []);
+        let bomCostMap = new Map();
+        if (resBom && resBom.ok) {
+          const bomJson = await resBom.json().catch(() => ({}));
+          (bomJson.data || []).forEach(b => {
+            (b.materials || []).forEach(m => {
+              const key = (b.projectName || '') + ':' + (m.name || '').toLowerCase().trim();
+              if (m.estimatedUnitCost) bomCostMap.set(key, Number(m.estimatedUnitCost));
+            });
+          });
+        }
+
+        let itemCostMap = new Map();
+        if (resItems && resItems.ok) {
+          const itemJson = await resItems.json().catch(() => ({}));
+          (itemJson.data || itemJson || []).forEach(i => {
+            if (i.materialName && i.estimatedUnitCost) {
+              itemCostMap.set(i.materialName.toLowerCase().trim(), Number(i.estimatedUnitCost));
+            }
+          });
+        }
+
+        const enrichedReport = (data.report || []).map(item => {
+          const key = (item.projectName || '') + ':' + (item.materialName || '').toLowerCase().trim();
+          const unitCost = Number(item.unitCost) || bomCostMap.get(key) || itemCostMap.get((item.materialName || '').toLowerCase().trim()) || 0;
+          return {
+            ...item,
+            unitCost
+          };
+        });
+
+        setReportData(enrichedReport);
         setTimelineData(data.timeline || []);
         setTotalWastageCost(data.totalWastageCost || 0);
         
         // Extract unique projects
-        const uniqueProjects = Array.from(new Set((data.report || []).map(item => item.projectName)));
+        const uniqueProjects = Array.from(new Set(enrichedReport.map(item => item.projectName)));
         setProjects(uniqueProjects);
       } else {
         throw new Error(data.message || 'Failed to fetch variance report data.');
@@ -94,58 +170,105 @@ const VarianceReport = () => {
     return {};
   };
 
-  // Grouped material data for Bar Chart (Plan vs Actual per material)
-  const barChartData = filteredReport.reduce((acc, curr) => {
-    const existing = acc.find(item => item.materialName === curr.materialName);
-    if (existing) {
-      existing.plannedQty += curr.plannedQty;
-      existing.actualQty += curr.actualQty;
-    } else {
-      acc.push({
-        materialName: curr.materialName,
-        plannedQty: curr.plannedQty,
-        actualQty: curr.actualQty
+  // Grouped material data for Bar Chart (Top 10 materials by usage as % of plan used)
+  const materialUsageMap = new Map();
+  filteredReport.forEach(item => {
+    const matName = item.materialName;
+    if (!materialUsageMap.has(matName)) {
+      materialUsageMap.set(matName, {
+        materialName: matName,
+        plannedQty: 0,
+        actualQty: 0,
+        unit: item.unit
       });
     }
-    return acc;
-  }, []);
+    const entry = materialUsageMap.get(matName);
+    entry.plannedQty += (Number(item.plannedQty) || 0);
+    entry.actualQty += (Number(item.actualQty) || 0);
+    if (!entry.unit && item.unit) entry.unit = item.unit;
+  });
+
+  const barChartData = Array.from(materialUsageMap.values())
+    .filter(item => item.actualQty > 0)
+    .sort((a, b) => b.actualQty - a.actualQty)
+    .slice(0, 10)
+    .map(item => {
+      const pctUsed = item.plannedQty > 0
+        ? Number(((item.actualQty / item.plannedQty) * 100).toFixed(1))
+        : 100;
+      return {
+        ...item,
+        percentUsed: pctUsed
+      };
+    });
 
   // Filter and process timeline data for Line Chart (usage over time)
   const filteredTimeline = selectedProject === 'All'
     ? timelineData
     : timelineData.filter(item => item.projectName === selectedProject);
 
-  // Group timeline by date (accumulate actual quantities for chart)
-  const lineChartData = Object.values(
-    filteredTimeline.reduce((acc, curr) => {
-      const dateStr = formatDayMonth(curr.usageDate);
-      if (!acc[dateStr]) {
-        acc[dateStr] = { date: dateStr, quantity: 0 };
-      }
-      acc[dateStr].quantity += curr.actualQty;
-      return acc;
-    }, {})
-  ).sort((a, b) => new Date(a.date) - new Date(b.date));
+  // Ignore records with quantity <= 0, sort chronologically, apply running total
+  const validTimeline = filteredTimeline.filter(item => (Number(item.actualQty) || 0) > 0);
+  const sortedTimeline = [...validTimeline].sort((a, b) => new Date(a.usageDate) - new Date(b.usageDate));
 
-  // Variance Stats Calculation
-  const totalPlanned = filteredReport.reduce((sum, item) => sum + item.plannedQty, 0);
-  const totalActual = filteredReport.reduce((sum, item) => sum + item.actualQty, 0);
-  const overallVariancePct = totalPlanned > 0
-    ? Number((((totalActual - totalPlanned) / totalPlanned) * 100).toFixed(2))
-    : 0;
+  const dailyMap = new Map();
+  sortedTimeline.forEach(curr => {
+    const dateStr = formatDayMonth(curr.usageDate);
+    const qty = Number(curr.actualQty) || 0;
+    if (dailyMap.has(dateStr)) {
+      dailyMap.set(dateStr, dailyMap.get(dateStr) + qty);
+    } else {
+      dailyMap.set(dateStr, qty);
+    }
+  });
 
-  const materialsOverBudget = filteredReport.filter(item => item.variancePct > 0).length;
-  const materialsUnderBudget = filteredReport.filter(item => item.variancePct <= 0).length;
+  let runningTotal = 0;
+  const lineChartData = Array.from(dailyMap.entries()).map(([dateStr, dailyQty]) => {
+    runningTotal += dailyQty;
+    return {
+      date: dateStr,
+      quantity: runningTotal,
+      dailyQty
+    };
+  });
+
+  // Started BOM lines (BOM items where usage has started: actualQty > 0)
+  const startedBomLines = filteredReport.filter(item => item.inBom !== false && (Number(item.actualQty) || 0) > 0);
+
+  // Variance Stats Calculation in value terms (qty x unitCost) over started BOM lines
+  const totalPlannedValue = startedBomLines.reduce(
+    (sum, item) => sum + ((Number(item.plannedQty) || 0) * (Number(item.unitCost) || 0)),
+    0
+  );
+  const totalActualValue = startedBomLines.reduce(
+    (sum, item) => sum + ((Number(item.actualQty) || 0) * (Number(item.unitCost) || 0)),
+    0
+  );
+
+  const overallVariancePct = (startedBomLines.length > 0 && totalPlannedValue > 0)
+    ? Number((((totalActualValue - totalPlannedValue) / totalPlannedValue) * 100).toFixed(2))
+    : 'N/A';
+
+  // KPI card counts
+  const materialsOverBudget = filteredReport.filter(item => (Number(item.actualQty) || 0) > (Number(item.plannedQty) || 0)).length;
+  const materialsWithinPlan = filteredReport.filter(item => (Number(item.actualQty) || 0) > 0 && (Number(item.actualQty) || 0) <= (Number(item.plannedQty) || 0)).length;
+  const notStartedCount = filteredReport.filter(item => (Number(item.actualQty) || 0) === 0).length;
 
   const getVarianceColor = (pct) => {
-    if (pct <= 5) return '#2e7d32'; // Green (within 5% or under budget)
-    if (pct > 5 && pct <= 15) return '#f59e0b'; // Yellow (5-15% over budget)
+    if (pct === 'N/A' || pct === null || pct === undefined) return '#64748b';
+    const numeric = typeof pct === 'number' ? pct : parseFloat(pct);
+    if (isNaN(numeric)) return '#64748b';
+    if (numeric <= 0) return '#2e7d32'; // Green (within plan or under budget)
+    if (numeric <= 15) return '#f59e0b'; // Yellow (0-15% over budget)
     return '#c62828'; // Red (>15% over budget)
   };
 
   const getVarianceLabel = (pct) => {
-    if (pct <= 5) return 'Within 5% / Under';
-    if (pct > 5 && pct <= 15) return 'Warning (5-15%)';
+    if (pct === 'N/A' || pct === null || pct === undefined) return 'N/A';
+    const numeric = typeof pct === 'number' ? pct : parseFloat(pct);
+    if (isNaN(numeric)) return 'N/A';
+    if (numeric <= 0) return 'Within Plan';
+    if (numeric <= 15) return 'Warning (0-15%)';
     return 'Critical Overrun (>15%)';
   };
 
@@ -185,11 +308,15 @@ const VarianceReport = () => {
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.text("SUMMARY STATUS:", 20, 80);
+    doc.text("SUMMARY STATUS:", 18, 80);
     doc.setFont("helvetica", "normal");
-    doc.text(`Total Variance: ${overallVariancePct}%`, 20, 88);
-    doc.text(`Materials Over Plan: ${materialsOverBudget}`, 85, 88);
-    doc.text(`Materials Under/Within Plan: ${materialsUnderBudget}`, 145, 88);
+    const varianceStr = overallVariancePct === 'N/A'
+      ? 'N/A'
+      : `${overallVariancePct > 0 ? '+' : ''}${overallVariancePct}%`;
+    doc.text(`Total Variance: ${varianceStr}`, 18, 88);
+    doc.text(`Over Budget: ${materialsOverBudget}`, 72, 88);
+    doc.text(`Within Plan: ${materialsWithinPlan}`, 118, 88);
+    doc.text(`Not Started: ${notStartedCount}`, 162, 88);
 
     // Draw Table
     let y = 108;
@@ -214,12 +341,13 @@ const VarianceReport = () => {
         doc.addPage();
         y = 20;
       }
-      doc.text(item.materialName, 14, y);
-      doc.text(item.unit, 68, y);
+      const isNotStarted = (Number(item.actualQty) || 0) === 0;
+      doc.text(item.materialName || '', 14, y);
+      doc.text(item.unit || '', 68, y);
       doc.text((item.plannedQty || 0).toLocaleString(), 88, y);
       doc.text((item.actualQty || 0).toLocaleString(), 118, y);
-      doc.text((item.varianceQty || 0).toLocaleString(), 148, y);
-      doc.text(`${item.variancePct}%`, 178, y);
+      doc.text(isNotStarted ? '—' : (item.varianceQty || 0).toLocaleString(), 148, y);
+      doc.text(isNotStarted ? '—' : `${item.variancePct > 0 ? '+' : ''}${item.variancePct}%`, 178, y);
       
       doc.setDrawColor(240, 240, 240);
       doc.setLineWidth(0.1);
@@ -233,6 +361,10 @@ const VarianceReport = () => {
 
   // Excel Export
   const downloadExcel = () => {
+    const varianceStr = overallVariancePct === 'N/A'
+      ? 'N/A'
+      : `${overallVariancePct > 0 ? '+' : ''}${overallVariancePct}%`;
+
     const wsData = [
       ["ELS Construction (Pvt) Ltd"],
       ["Material Variance Analysis Report"],
@@ -240,23 +372,25 @@ const VarianceReport = () => {
       [`Selected Project Profile: ${selectedProject}`],
       [], // Spacer
       ["Summary Statistics"],
-      ["Total Variance %", `${overallVariancePct}%`],
+      ["Total Variance %", varianceStr],
       ["Materials Over Budget", materialsOverBudget],
-      ["Materials Under Budget", materialsUnderBudget],
+      ["Materials Within Plan", materialsWithinPlan],
+      ["Not Started", notStartedCount],
       [], // Spacer
       ["Project Name", "Material Name", "Unit", "Planned Qty", "Actual Qty", "Variance Qty", "Variance %", "Budget Status"]
     ];
 
     filteredReport.forEach(item => {
+      const isNotStarted = (Number(item.actualQty) || 0) === 0;
       wsData.push([
         item.projectName,
         item.materialName,
         item.unit,
         item.plannedQty,
         item.actualQty,
-        item.varianceQty,
-        `${item.variancePct}%`,
-        getVarianceLabel(item.variancePct)
+        isNotStarted ? '—' : item.varianceQty,
+        isNotStarted ? '—' : `${item.variancePct > 0 ? '+' : ''}${item.variancePct}%`,
+        isNotStarted ? 'Not Started' : getVarianceLabel(item.variancePct)
       ]);
     });
 
@@ -318,7 +452,11 @@ const VarianceReport = () => {
             <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', borderLeft: `5px solid ${getVarianceColor(overallVariancePct)}` }}>
               <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Total Variance %</div>
               <div style={{ fontSize: '28px', fontWeight: '700', color: getVarianceColor(overallVariancePct), marginTop: '8px' }}>
-                {overallVariancePct > 0 ? `+${overallVariancePct}%` : `${overallVariancePct}%`}
+                {overallVariancePct === 'N/A'
+                  ? 'N/A'
+                  : overallVariancePct > 0
+                    ? `+${overallVariancePct}%`
+                    : `${overallVariancePct}%`}
               </div>
               <div style={{ fontSize: '11px', color: '#64748b', marginTop: '6px' }}>Aggregate difference vs BOM plan</div>
             </div>
@@ -330,30 +468,52 @@ const VarianceReport = () => {
             </div>
 
             <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', borderLeft: '5px solid #10b981' }}>
-              <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Materials Under Budget</div>
-              <div style={{ fontSize: '28px', fontWeight: '700', color: '#10b981', marginTop: '8px' }}>{materialsUnderBudget}</div>
-              <div style={{ fontSize: '11px', color: '#64748b', marginTop: '6px' }}>Items within target planned allowances</div>
+              <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Materials Within Plan</div>
+              <div style={{ fontSize: '28px', fontWeight: '700', color: '#10b981', marginTop: '8px' }}>{materialsWithinPlan}</div>
+              <div style={{ fontSize: '11px', color: '#64748b', marginTop: '6px' }}>Started items within target planned allowances</div>
+            </div>
+
+            <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', borderLeft: '5px solid #64748b' }}>
+              <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Not Started</div>
+              <div style={{ fontSize: '28px', fontWeight: '700', color: '#64748b', marginTop: '8px' }}>{notStartedCount}</div>
+              <div style={{ fontSize: '11px', color: '#64748b', marginTop: '6px' }}>Planning lines with no material issued yet</div>
             </div>
           </div>
 
           {/* Visualizations Grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '20px', marginBottom: '24px' }}>
-            {/* Bar Chart - Plan vs Actual */}
+            {/* Bar Chart - Top 10 Materials (% of Plan Used) */}
             <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-              <h3 style={{ margin: '0 0 16px', color: '#0d1b4b', fontSize: '15px', fontWeight: '700' }}>🏗️ Material Allocations (Planned vs Actual)</h3>
+              <h3 style={{ margin: '0 0 16px', color: '#0d1b4b', fontSize: '15px', fontWeight: '700' }}>🏗️ Material Allocations (Top 10 Materials - % of Plan Used)</h3>
               {barChartData.length === 0 ? (
-                <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No data available for chart.</div>
+                <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No material usage data available for this selection.</div>
               ) : (
                 <div style={{ height: '300px' }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={barChartData} margin={{ top: 10, right: 10, left: -10, bottom: 5 }}>
+                    <BarChart data={barChartData} margin={{ top: 20, right: 20, left: -10, bottom: 25 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="materialName" tick={{ fill: '#64748b', fontSize: 11 }} />
-                      <YAxis tick={{ fill: '#64748b', fontSize: 11 }} />
-                      <Tooltip />
+                      <XAxis
+                        dataKey="materialName"
+                        tick={{ fill: '#64748b', fontSize: 11 }}
+                        interval={0}
+                        angle={-15}
+                        textAnchor="end"
+                      />
+                      <YAxis
+                        tick={{ fill: '#64748b', fontSize: 11 }}
+                        unit="%"
+                        domain={[0, (dataMax) => Math.max(120, Math.ceil(dataMax / 20) * 20)]}
+                      />
+                      <Tooltip content={<CustomBarTooltip />} />
+                      <ReferenceLine
+                        y={100}
+                        stroke="#dc2626"
+                        strokeDasharray="4 4"
+                        strokeWidth={1.5}
+                        label={{ value: '100% Plan', fill: '#dc2626', fontSize: 11, position: 'top' }}
+                      />
                       <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
-                      <Bar dataKey="plannedQty" name="Planned Quantity" fill="#0d1b4b" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="actualQty" name="Actual Usage" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="percentUsed" name="% of Plan Used" fill="#2563eb" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -372,9 +532,9 @@ const VarianceReport = () => {
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} />
                       <YAxis tick={{ fill: '#64748b', fontSize: 11 }} />
-                      <Tooltip />
+                      <Tooltip content={<CustomLineTooltip />} />
                       <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
-                      <Line type="monotone" dataKey="quantity" name="Total Units Consumed" stroke="#2563eb" strokeWidth={3} activeDot={{ r: 8 }} />
+                      <Line type="monotone" dataKey="quantity" name="Cumulative Usage" stroke="#2563eb" strokeWidth={3} activeDot={{ r: 8 }} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -460,7 +620,9 @@ const VarianceReport = () => {
                 </thead>
                 <tbody>
                   {variancePagination.paginatedData.map((item, index) => {
-                    const statusColor = getVarianceColor(item.variancePct);
+                    const isNotStarted = (Number(item.actualQty) || 0) === 0;
+                    const statusColor = isNotStarted ? '#64748b' : getVarianceColor(item.variancePct);
+                    const statusLabel = isNotStarted ? 'Not Started' : getVarianceLabel(item.variancePct);
                     return (
                       <tr key={index} style={{ borderBottom: '1px solid #f1f5f9', background: index % 2 === 0 ? 'white' : '#f8fafc', transition: 'background 0.2s' }}>
                         <td style={styles.td}>{item.projectName}</td>
@@ -468,11 +630,11 @@ const VarianceReport = () => {
                         <td style={styles.td}>{item.unit}</td>
                         <td style={styles.td}>{(item.plannedQty || 0).toLocaleString()}</td>
                         <td style={styles.td}>{(item.actualQty || 0).toLocaleString()}</td>
-                        <td style={{ ...styles.td, color: (item.varianceQty || 0) > 0 ? '#dc2626' : '#16a34a', fontWeight: '500' }}>
-                          {(item.varianceQty || 0) > 0 ? `+${(item.varianceQty || 0).toLocaleString()}` : (item.varianceQty || 0).toLocaleString()}
+                        <td style={{ ...styles.td, color: isNotStarted ? '#64748b' : (item.varianceQty || 0) > 0 ? '#dc2626' : '#16a34a', fontWeight: '500' }}>
+                          {isNotStarted ? '—' : (item.varianceQty || 0) > 0 ? `+${(item.varianceQty || 0).toLocaleString()}` : (item.varianceQty || 0).toLocaleString()}
                         </td>
-                        <td style={{ ...styles.td, color: statusColor, fontWeight: 'bold' }}>
-                          {item.variancePct > 0 ? `+${item.variancePct}%` : `${item.variancePct}%`}
+                        <td style={{ ...styles.td, color: isNotStarted ? '#64748b' : statusColor, fontWeight: 'bold' }}>
+                          {isNotStarted ? '—' : item.variancePct > 0 ? `+${item.variancePct}%` : `${item.variancePct}%`}
                         </td>
                         <td style={styles.td}>
                           <span style={{
@@ -485,7 +647,7 @@ const VarianceReport = () => {
                             color: statusColor,
                             border: `1px solid ${statusColor}30`
                           }}>
-                            {getVarianceLabel(item.variancePct)}
+                            {statusLabel}
                           </span>
                         </td>
                       </tr>

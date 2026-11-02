@@ -8,23 +8,20 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Pagination, { usePagination } from '../components/Pagination';
 import {
-  BarChart,
-  Bar,
   LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
-  ResponsiveContainer,
-  Cell
+  ResponsiveContainer
 } from 'recharts';
 import { API_BASE } from '../config';
 import useToastSetter from '../hooks/useToastSetter';
 import LoadingButton from '../components/LoadingButton';
 import { SHOW_DIRECTOR_SUMMARY_CARDS } from '../config/featureFlags';
 import useBusyAction from '../hooks/useBusyAction';
+import { resolveMaterialName } from '../utils/cryptoUtils';
 
 const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -50,6 +47,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [modalSearchTerm, setModalSearchTerm] = useState('');
   const [projects, setProjects] = useState([]);
   const [siteMaterials, setSiteMaterials] = useState([]);
+  const [itemMasterMap, setItemMasterMap] = useState({});
 
   // Notifications state
   const [notifications, setNotifications] = useState([]);
@@ -198,10 +196,23 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
 
     // 4. Fetch Inventory (for stock levels analytics)
     try {
-      const res = await fetch(`${API_BASE}/api/inventory`, { headers });
-      const data = await res.json();
+      const [resInv, resItemMaster] = await Promise.all([
+        fetch(`${API_BASE}/api/inventory`, { headers }),
+        fetch(`${API_BASE}/api/item-master`, { headers }).catch(() => null)
+      ]);
+      const data = await resInv.json();
       let invList = Array.isArray(data) ? data : [];
       setInventory(invList);
+
+      if (resItemMaster && resItemMaster.ok) {
+        const imData = await resItemMaster.json();
+        const items = imData.success ? (imData.data || []) : (Array.isArray(imData) ? imData : []);
+        const imMap = items.reduce((acc, item) => {
+          if (item.materialCode) acc[item.materialCode] = item.materialName || item.name;
+          return acc;
+        }, {});
+        setItemMasterMap(imMap);
+      }
     } catch {
       setInventory([]);
     }
@@ -909,11 +920,22 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     { name: 'Approved', count: boms.filter(b => b.status === 'Approved').length, fill: '#2e7d32' },
     { name: 'Rejected', count: boms.filter(b => b.status === 'Rejected').length, fill: '#c62828' }
   ];
+  const maxBomCount = Math.max(...bomStatusData.map(d => d.count), 1);
 
-  const stockLevelData = inventory.slice(0, 10).map(item => ({
-    name: item.name ? (item.name.length > 15 ? item.name.substring(0, 15) + '...' : item.name) : 'Unnamed',
-    stock: Number(item.quantity) || 0
-  }));
+  const mainStoreItems = inventory.filter(item => !item.location || item.location === 'MainStore');
+  const topStockData = [...mainStoreItems]
+    .sort((a, b) => (Number(b.quantity) || 0) - (Number(a.quantity) || 0))
+    .slice(0, 10)
+    .map(item => {
+      const resolvedName = resolveMaterialName(item, itemMasterMap) || item.name || item.materialName || 'Unnamed';
+      return {
+        name: resolvedName,
+        code: item.materialCode || item.code || '',
+        quantity: Number(item.quantity) || 0,
+        unit: item.unit || ''
+      };
+    });
+  const maxStock = Math.max(...topStockData.map(d => d.quantity), 1);
 
   const usageTrendData = Object.values(
     usages.reduce((acc, curr) => {
@@ -1421,43 +1443,73 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
           {activePage === 'analytics' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               {/* Row 1: Project Counts & Inventory Stock Levels */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '20px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
                 {/* Project Counts by BOM Status */}
                 <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
                   <h3 style={{ margin: '0 0 16px', color: '#0d1b4b', fontSize: '15px', fontWeight: '700' }}>📊 Project BOM Status Distribution</h3>
-                  <div style={{ height: '300px' }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={bomStatusData} margin={{ top: 10, right: 10, left: -10, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11 }} />
-                        <YAxis tick={{ fill: '#64748b', fontSize: 11 }} allowDecimals={false} />
-                        <Tooltip />
-                        <Bar dataKey="count" name="BOM Count" radius={[4, 4, 0, 0]}>
-                          {bomStatusData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.fill} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+                  {loading && boms.length === 0 ? (
+                    <div style={{ padding: '30px 20px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+                      Loading...
+                    </div>
+                  ) : boms.length === 0 ? (
+                    <div style={{ padding: '30px 20px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+                      No data yet
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {bomStatusData.map((item, idx) => {
+                        const pct = maxBomCount > 0 ? Math.min(100, Math.round((item.count / maxBomCount) * 100)) : 0;
+                        return (
+                          <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                              <span style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b', wordBreak: 'break-word' }}>
+                                {item.name}
+                              </span>
+                              <span style={{ fontSize: '14px', fontWeight: '700', color: item.fill }}>
+                                {item.count.toLocaleString()}
+                              </span>
+                            </div>
+                            <div style={{ width: '100%', height: '8px', background: '#f1f5f9', borderRadius: '9999px', overflow: 'hidden' }}>
+                              <div style={{ width: `${pct}%`, height: '100%', background: item.fill, borderRadius: '9999px', transition: 'width 0.3s ease-in-out' }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Stock Levels */}
                 <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
                   <h3 style={{ margin: '0 0 16px', color: '#0d1b4b', fontSize: '15px', fontWeight: '700' }}>📦 Current Stock Levels (Top 10 Materials)</h3>
-                  {stockLevelData.length === 0 ? (
-                    <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No inventory data available.</div>
+                  {loading && inventory.length === 0 ? (
+                    <div style={{ padding: '30px 20px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+                      Loading...
+                    </div>
+                  ) : topStockData.length === 0 ? (
+                    <div style={{ padding: '30px 20px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+                      No data yet
+                    </div>
                   ) : (
-                    <div style={{ height: '300px' }}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={stockLevelData} margin={{ top: 10, right: 10, left: -10, bottom: 5 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 10 }} />
-                          <YAxis tick={{ fill: '#64748b', fontSize: 11 }} />
-                          <Tooltip />
-                          <Bar dataKey="stock" name="Units in Stock" fill="#0d1b4b" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      {topStockData.map((item, idx) => {
+                        const pct = maxStock > 0 ? Math.min(100, Math.round((item.quantity / maxStock) * 100)) : 0;
+                        return (
+                          <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                              <span style={{ fontSize: '13px', fontWeight: '600', color: '#1e293b', wordBreak: 'break-word', flex: '1 1 auto', minWidth: '140px' }}>
+                                {item.name}
+                              </span>
+                              <span style={{ fontSize: '13px', fontWeight: '700', color: '#0d1b4b', whiteSpace: 'nowrap' }}>
+                                {item.quantity.toLocaleString()} {item.unit}
+                              </span>
+                            </div>
+                            <div style={{ width: '100%', height: '8px', background: '#f1f5f9', borderRadius: '9999px', overflow: 'hidden' }}>
+                              <div style={{ width: `${pct}%`, height: '100%', background: '#0d1b4b', borderRadius: '9999px', transition: 'width 0.3s ease-in-out' }} />
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

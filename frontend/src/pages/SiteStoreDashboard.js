@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar } from 'lucide-react';
-import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
+import { encryptTransit, decryptTransit, decryptDB } from '../utils/cryptoUtils';
 import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import SettingsPage from './SettingsPage';
@@ -228,7 +228,7 @@ const FALLBACK_PLAN_VS_ACTUAL = [
   }
 ];
 
-function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
+function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -236,7 +236,25 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
     return () => clearInterval(timer);
   }, []);
 
-  const [view, setView] = useState('dashboard'); // 'dashboard', 'site-inventory', 'request-materials', 'issue-usage'
+  const getInitialView = () => {
+    if (initialView) return initialView;
+    try {
+      const p = window.location.pathname.toLowerCase();
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab') || params.get('view') || params.get('page');
+      if (tab) {
+        if (tab === 'material-usage') return 'issue-usage';
+        return tab;
+      }
+      if (p.includes('/material-usage') || p.includes('/issue-usage') || p.includes('/site/material-usage')) return 'issue-usage';
+      if (p.includes('/site-inventory') || p.includes('/inventory')) return 'site-inventory';
+      if (p.includes('/request-materials') || p.includes('/request')) return 'request-materials';
+      if (p.includes('/setting')) return 'settings';
+    } catch (e) {}
+    return 'dashboard';
+  };
+
+  const [view, setView] = useState(getInitialView);
   const [showNotifications, setShowNotifications] = useState(false);
   const [userNotifications, setUserNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -263,6 +281,28 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
   }, [materials, inventorySearchQuery, inventoryCategoryFilter]);
 
   const siteInventoryPagination = usePagination(siteFilteredMaterials, 8, [inventorySearchQuery, inventoryCategoryFilter]);
+
+  // Site Store stock items with positive quantity (> 0), shared across projects
+  const siteStockMaterials = React.useMemo(() => {
+    return (materials || [])
+      .filter(m => {
+        const isSiteStore = m.location === 'SiteStore' || !m.location;
+        const rawQty = m.quantity;
+        const qty = typeof rawQty === 'number' ? rawQty : (Number(decryptDB(rawQty)) || Number(rawQty) || 0);
+        return isSiteStore && qty > 0;
+      })
+      .map(m => {
+        const rawName = m.name || '';
+        const decName = decryptDB(rawName) || rawName;
+        const rawQty = m.quantity;
+        const parsedQty = typeof rawQty === 'number' ? rawQty : (Number(decryptDB(rawQty)) || Number(rawQty) || 0);
+        return {
+          ...m,
+          displayName: decName,
+          parsedQuantity: parsedQty
+        };
+      });
+  }, [materials]);
 
   // Phase 8 - project selection for Material Issue & Usage (which project the
   // shared Site Store stock is issued to, and whose history/plan is shown)
@@ -469,10 +509,25 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
           finalData = data;
         }
       }
+      let items = [];
       if (Array.isArray(finalData)) {
-        setMaterials(finalData);
-      } else if (finalData && finalData.success && Array.isArray(finalData.data)) {
-        setMaterials(finalData.data);
+        items = finalData;
+      } else if (finalData && Array.isArray(finalData.data)) {
+        items = finalData.data;
+      } else if (finalData && Array.isArray(finalData.materials)) {
+        items = finalData.materials;
+      }
+      if (items.length > 0 || res.ok) {
+        const normalized = items.map(m => {
+          const decName = decryptDB(m.name) || m.name;
+          const qty = typeof m.quantity === 'number' ? m.quantity : (Number(decryptDB(m.quantity)) || Number(m.quantity) || 0);
+          return {
+            ...m,
+            name: decName,
+            quantity: qty
+          };
+        });
+        setMaterials(normalized);
       } else {
         if (!res.ok && finalData && finalData.message) {
           setError(finalData.message);
@@ -807,9 +862,11 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
       return;
     }
 
-    const selectedMaterial = materials.find(m => m._id === materialId);
-    if (selectedMaterial && qty > selectedMaterial.quantity) {
-      setError(`Insufficient site stock. Available quantity: ${selectedMaterial.quantity} ${selectedMaterial.unit}.`);
+    const selectedMaterial = siteStockMaterials.find(m => String(m._id) === String(materialId)) ||
+                             materials.find(m => String(m._id) === String(materialId));
+    const availableQty = selectedMaterial ? (selectedMaterial.parsedQuantity !== undefined ? selectedMaterial.parsedQuantity : (typeof selectedMaterial.quantity === 'number' ? selectedMaterial.quantity : (Number(decryptDB(selectedMaterial.quantity)) || 0))) : 0;
+    if (selectedMaterial && qty > availableQty) {
+      setError(`Insufficient site stock. Available quantity: ${availableQty} ${selectedMaterial.unit || ''}.`);
       return;
     }
 
@@ -823,8 +880,10 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
           projectId: selectedProjId,
           materialId,
           quantity: qty,
+          quantityUsed: qty,
           activity: activity.trim(),
           notes: notes || '',
+          usageDate: date,
           date
         })
       });
@@ -2030,20 +2089,37 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       disabled={!selectedProjId}
                       required
                     >
-                      <option value="">-- Select Material --</option>
-                      {materials.map(m => (
-                        <option key={m._id} value={m._id}>{m.name}</option>
-                      ))}
+                      {siteStockMaterials.length === 0 ? (
+                        <option value="">No stock at Site Store. Request materials from Main Store first.</option>
+                      ) : (
+                        <>
+                          <option value="">-- Select Material --</option>
+                          {siteStockMaterials.map(m => (
+                            <option key={m._id} value={m._id}>
+                              {m.displayName || m.name} ({m.unit || 'unit'})
+                            </option>
+                          ))}
+                        </>
+                      )}
                     </select>
+                    {siteStockMaterials.length === 0 && selectedProjId && (
+                      <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#dc2626', fontWeight: 500 }}>
+                        No stock at Site Store. Request materials from Main Store first.
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label style={styles.fieldLabel}>Available at Site</label>
                     <input
                       type="text"
                       value={(() => {
-                        const m = materials.find(mat => mat._id === issueForm.materialId);
-                        return m ? `${m.quantity} ${m.unit}` : '-';
+                        const m = siteStockMaterials.find(mat => String(mat._id) === String(issueForm.materialId)) ||
+                                  materials.find(mat => String(mat._id) === String(issueForm.materialId));
+                        if (!m) return '';
+                        const qty = m.parsedQuantity !== undefined ? m.parsedQuantity : (typeof m.quantity === 'number' ? m.quantity : (Number(decryptDB(m.quantity)) || Number(m.quantity) || 0));
+                        return `${qty} ${m.unit || ''}`.trim();
                       })()}
+                      placeholder="Select a material above"
                       style={{ ...styles.formInput, background: '#f1f5f9' }}
                       disabled
                     />
@@ -2060,8 +2136,10 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                       style={styles.formInput}
                       min="1"
                       max={(() => {
-                        const m = materials.find(mat => mat._id === issueForm.materialId);
-                        return m ? m.quantity : undefined;
+                        const m = siteStockMaterials.find(mat => String(mat._id) === String(issueForm.materialId)) ||
+                                  materials.find(mat => String(mat._id) === String(issueForm.materialId));
+                        if (!m) return undefined;
+                        return m.parsedQuantity !== undefined ? m.parsedQuantity : (typeof m.quantity === 'number' ? m.quantity : (Number(decryptDB(m.quantity)) || Number(m.quantity) || 0));
                       })()}
                       disabled={!issueForm.materialId}
                       required
@@ -2072,8 +2150,9 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate }) {
                     <input
                       type="text"
                       value={(() => {
-                        const m = materials.find(mat => mat._id === issueForm.materialId);
-                        return m ? m.unit : '';
+                        const m = siteStockMaterials.find(mat => String(mat._id) === String(issueForm.materialId)) ||
+                                  materials.find(mat => String(mat._id) === String(issueForm.materialId));
+                        return m ? (m.unit || '') : '';
                       })()}
                       style={{ ...styles.formInput, background: '#f1f5f9' }}
                       disabled

@@ -9,6 +9,7 @@ import User from '../models/userModel.js';
 import { sendMail, escapeHtml } from '../utils/mailer.js';
 import { notifyRoles } from './notificationController.js';
 import { broadcastRealtimeEvent } from '../utils/realtimeEvents.js';
+import { calculateDueDate } from '../utils/invoiceUtils.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder');
 const CURRENCY = (process.env.STRIPE_CURRENCY || 'lkr').toLowerCase();
@@ -999,7 +1000,7 @@ export const generatePaymentReport = async (req, res) => {
 
     const invoices = await Invoice.find(filter)
       .populate('supplier', 'name')
-      .populate('po', 'poNumber')
+      .populate('po', 'poNumber paymentTerms')
       .populate('grn', 'grnNumber')
       .sort({ createdAt: -1 });
 
@@ -1086,7 +1087,8 @@ export const generatePaymentReport = async (req, res) => {
       const supName = inv.supplier?.name || (typeof inv.supplier === 'string' ? inv.supplier : '-');
       const amt = Number(inv.amount || 0).toLocaleString();
       const invDate = inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '-';
-      const dueDate = inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : '-';
+      const effectiveDueDate = inv.dueDate || calculateDueDate(inv.invoiceDate, inv.po?.paymentTerms);
+      const dueDate = effectiveDueDate ? new Date(effectiveDueDate).toLocaleDateString() : '-';
       const statusText = inv.status || 'Pending';
       const paidDateText = inv.paidAt
         ? `${new Date(inv.paidAt).toLocaleDateString()} ${inv.status === 'Paid' ? (inv.paymentMethod || '') : ''}`.trim()
