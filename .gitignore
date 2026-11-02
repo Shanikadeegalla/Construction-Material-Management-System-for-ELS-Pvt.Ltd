@@ -5,6 +5,8 @@ backend/.env
 dist/
 build/
 .DS_Store
+backend/uploads/
 backend/uploads/*
 !backend/uploads/.gitkeep
 !backend/uploads/**/.gitkeep
+mongodb_data/

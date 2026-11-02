@@ -1,4 +1,5 @@
 import Material from '../models/Material.js';
+import ItemMaster from '../models/ItemMaster.js';
 import GRN from '../models/GRN.js';
 import PurchaseOrder from '../models/PurchaseOrder.js';
 import TransferLog from '../models/TransferLog.js';
@@ -10,6 +11,33 @@ import { encryptDB, decryptDB } from '../utils/cryptoUtils.js';
 import { recordMovement, getDecryptedQuantity } from '../utils/stockService.js';
 import { notifyRoles } from './notificationController.js';
 import { broadcastRealtimeEvent } from '../utils/realtimeEvents.js';
+
+const isHex = (str) => typeof str === 'string' && str.length >= 16 && /^[0-9a-fA-F]+$/.test(str) && str.length % 2 === 0;
+
+const resolveMaterialDoc = (m, itemMasterMap) => {
+  const doc = m.toObject ? m.toObject() : { ...m };
+  if (doc.location === 'SiteStore' || isHex(doc.name)) {
+    // 1. Decrypt Site Store name using decryptDB
+    let resolved = decryptDB(doc.name);
+    // 2. If decryption is not possible/fails (remains hex), lookup from Item Master using materialCode
+    const code = doc.materialCode || doc.code;
+    if ((!resolved || isHex(resolved)) && code && itemMasterMap) {
+      const masterName = itemMasterMap.get(code);
+      if (masterName) {
+        resolved = masterName;
+      }
+    }
+    // 3. If neither works, show material code instead of a hex string (never show raw encrypted text)
+    if (!resolved || isHex(resolved)) {
+      resolved = code || '-';
+    }
+    doc.name = resolved;
+  }
+  if (doc.location === 'SiteStore') {
+    doc.quantity = Number(decryptDB(doc.quantity)) || 0;
+  }
+  return doc;
+};
 
 // @desc    Get all materials (optionally filter by location)
 // @route   GET /api/inventory
@@ -29,6 +57,9 @@ export const getMaterials = async (req, res) => {
       ];
     }
 
+    const itemMasters = await ItemMaster.find({}, 'materialCode materialName').lean();
+    const itemMasterMap = new Map(itemMasters.map(im => [im.materialCode, im.materialName]));
+
     if (page || limit) {
       const pageNum = Math.max(1, parseInt(page, 10) || 1);
       const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
@@ -41,14 +72,7 @@ export const getMaterials = async (req, res) => {
 
       const materials = await Material.find(query).sort(sortObj).skip(skip).limit(limitNum);
 
-      const decrypted = materials.map(m => {
-        const doc = m.toObject();
-        if (doc.location === 'SiteStore') {
-          doc.name = decryptDB(doc.name);
-          doc.quantity = Number(decryptDB(doc.quantity)) || 0;
-        }
-        return doc;
-      });
+      const decrypted = materials.map(m => resolveMaterialDoc(m, itemMasterMap));
 
       return res.status(200).json({
         success: true,
@@ -64,14 +88,7 @@ export const getMaterials = async (req, res) => {
     const materials = await Material.find(query).sort({ updatedAt: -1 });
     
     // Decrypt SiteStore materials
-    const decrypted = materials.map(m => {
-      const doc = m.toObject();
-      if (doc.location === 'SiteStore') {
-        doc.name = decryptDB(doc.name);
-        doc.quantity = Number(decryptDB(doc.quantity)) || 0;
-      }
-      return doc;
-    });
+    const decrypted = materials.map(m => resolveMaterialDoc(m, itemMasterMap));
     
     res.json(decrypted);
   } catch (error) {

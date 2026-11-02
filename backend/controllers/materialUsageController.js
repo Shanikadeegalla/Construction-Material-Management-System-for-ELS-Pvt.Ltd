@@ -206,6 +206,7 @@ export const getVarianceReport = async (req, res) => {
           unit: item.unit,
           plannedQty: item.plannedQty,
           actualQty: item.actualQty,
+          unitCost: item.unitCost || 0,
           varianceQty: diff,
           variancePct: numericVariancePct,
           wastageQty,

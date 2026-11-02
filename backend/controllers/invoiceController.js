@@ -5,6 +5,7 @@ import User from '../models/userModel.js';
 import PurchaseOrder from '../models/PurchaseOrder.js';
 import { createNotificationHelper, notifyRoles } from './notificationController.js';
 import { UPLOAD_DIR } from '../config/uploadDir.js';
+import { calculateDueDate, validateDueDate } from '../utils/invoiceUtils.js';
 
 const attachFileExists = (invoice) => {
   const invObj = invoice.toObject ? invoice.toObject() : { ...invoice };
@@ -32,7 +33,7 @@ const generateNextInvoiceNumber = async () => {
 };
 
 // What the Director needs from the PO and GRN to judge an invoice.
-const PO_MATCH_FIELDS = 'poNumber totalAmount items status';
+const PO_MATCH_FIELDS = 'poNumber totalAmount items status paymentTerms';
 const GRN_MATCH_POPULATE = {
   path: 'grn',
   select: 'grnNumber status receivedDate receivedBy notes items',
@@ -156,6 +157,19 @@ export const createInvoice = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Referenced Purchase Order has an invalid total amount.' });
     }
 
+    const invDate = invoiceDate ? new Date(invoiceDate) : new Date();
+    let finalDueDate;
+
+    if (dueDate) {
+      const validation = validateDueDate(invDate, dueDate);
+      if (!validation.valid) {
+        return res.status(400).json({ success: false, message: validation.message });
+      }
+      finalDueDate = new Date(dueDate);
+    } else {
+      finalDueDate = calculateDueDate(invDate, poDoc.paymentTerms);
+    }
+
     const invoiceNumber = await generateNextInvoiceNumber();
 
     if (req.file) {
@@ -171,8 +185,8 @@ export const createInvoice = async (req, res) => {
       po,
       grn: grn || undefined,
       amount: invoiceAmount,
-      invoiceDate: invoiceDate || new Date(),
-      dueDate: dueDate || undefined,
+      invoiceDate: invDate,
+      dueDate: finalDueDate,
       notes: notes || '',
       submittedBy: req.user ? req.user.name : '',
       file: req.file ? { url: `/uploads/${req.file.filename}`, filename: req.file.originalname } : undefined
@@ -227,13 +241,19 @@ export const getInvoices = async (req, res) => {
 
       const invoices = await Invoice.find(query)
         .populate('supplier', 'name supplierId')
-        .populate('po', 'poNumber')
+        .populate('po', 'poNumber paymentTerms')
         .populate('grn', 'grnNumber')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit);
 
-      const formatted = invoices.map(attachFileExists);
+      const formatted = invoices.map(inv => {
+        const doc = attachFileExists(inv);
+        if (!doc.dueDate) {
+          doc.dueDate = calculateDueDate(doc.invoiceDate, doc.po?.paymentTerms);
+        }
+        return doc;
+      });
 
       return res.status(200).json({
         success: true,
@@ -253,7 +273,13 @@ export const getInvoices = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    const data = invoices.map(inv => ({ ...inv, deliveryCheck: buildDeliveryCheck(inv) }));
+    const data = invoices.map(inv => {
+      const withCheck = { ...inv, deliveryCheck: buildDeliveryCheck(inv) };
+      if (!withCheck.dueDate) {
+        withCheck.dueDate = calculateDueDate(withCheck.invoiceDate, withCheck.po?.paymentTerms);
+      }
+      return withCheck;
+    });
 
     const formatted = data.map(attachFileExists);
 
@@ -276,7 +302,11 @@ export const getInvoiceById = async (req, res) => {
     if (!invoice) {
       return res.status(404).json({ success: false, message: 'Invoice not found.' });
     }
-    res.status(200).json({ success: true, data: attachFileExists({ ...invoice, deliveryCheck: buildDeliveryCheck(invoice) }) });
+    const withCheck = { ...invoice, deliveryCheck: buildDeliveryCheck(invoice) };
+    if (!withCheck.dueDate) {
+      withCheck.dueDate = calculateDueDate(withCheck.invoiceDate, withCheck.po?.paymentTerms);
+    }
+    res.status(200).json({ success: true, data: attachFileExists(withCheck) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

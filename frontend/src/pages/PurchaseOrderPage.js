@@ -6,6 +6,7 @@ import { formatPhoneInput, isValidPhone, PHONE_PLACEHOLDER } from '../utils/phon
 import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import { downloadPaymentReport, downloadPaymentReceipt } from '../services/paymentService';
+import { calculateDueDate } from '../utils/invoiceUtils';
 import ReportsCenter from './ReportsCenter';
 import { API_BASE } from '../config';
 import useToastSetter from '../hooks/useToastSetter';
@@ -221,8 +222,12 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashbo
 
   const poPagination = usePagination(filteredOrders, 8, [poSearchTerm]);
   const prPagination = usePagination(sortedPurchaseRequests, 8, [sortedPurchaseRequests.length]);
+  const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
   const payableItems = React.useMemo(() => {
-    const list = [...invoices];
+    const list = invoices.map(inv => ({
+      ...inv,
+      dueDate: inv.dueDate || calculateDueDate(inv.invoiceDate, inv.po?.paymentTerms)
+    }));
     // Include approved GRNs that don't already have an invoice record in the list
     (grns || []).filter(g => g.status === 'Approved').forEach(g => {
       const alreadyHasInv = list.some(inv => (inv.grn?._id || inv.grn) === g._id || (g.poId && (inv.po?._id || inv.po) === g.poId));
@@ -238,6 +243,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashbo
           supplier: typeof g.supplier === 'object' ? g.supplier : { name: g.supplier, _id: g.supplierId },
           amount: Number(po?.totalAmount) || 0,
           invoiceDate: g.receivedDate || g.createdAt,
+          dueDate: calculateDueDate(g.receivedDate || g.createdAt, po?.paymentTerms),
           status: 'Approved',
           approvedBy: 'GRN Approved'
         });
@@ -2088,6 +2094,13 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashbo
                         )}
                       </tr>
                     ))}
+                    {supplierPagination.paginatedData.length === 0 && (
+                      <tr>
+                        <td colSpan={9} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
+                          No suppliers found.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
                 <Pagination pagination={supplierPagination} />
@@ -2126,7 +2139,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashbo
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#0d1b4b', color: 'white' }}>
-                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Status', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
+                      {['Invoice No', 'PO Number', 'GRN No', 'Supplier', 'Amount (LKR)', 'Invoice Date', 'Due Date', 'Status', 'Paid Date', 'Payment Method/Ref', 'Action'].map(h => (
                         <th key={h} style={{ padding: '14px 16px', textAlign: 'left', fontSize: '13px' }}>{h}</th>
                       ))}
                     </tr>
@@ -2173,6 +2186,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashbo
                           <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px' }}>{inv.supplier?.name || '-'}</td>
                           <td style={{ padding: '14px 16px', color: '#334155', fontSize: '13px', fontWeight: '600' }}>{Number(inv.amount).toLocaleString()}</td>
                           <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{formatDate(inv.invoiceDate)}</td>
+                          <td style={{ padding: '14px 16px', fontSize: '12px', color: '#666' }}>{inv.dueDate ? formatDate(inv.dueDate) : '-'}</td>
                           <td style={{ padding: '14px 16px' }}>
                             <span style={{
                               background: statusBg,
@@ -2234,7 +2248,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashbo
                     })}
                     {invoicesPagination.paginatedData.length === 0 && (
                       <tr>
-                        <td colSpan={10} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
+                        <td colSpan={11} style={{ padding: '24px', textAlign: 'center', fontSize: '13px', color: '#999' }}>
                           No invoices or approved GRNs recorded yet. Invoices/GRNs will appear here once goods are received against a PO.
                         </td>
                       </tr>

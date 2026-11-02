@@ -19,12 +19,18 @@ const decryptIfNeeded = (val) => {
 // @access  Private
 export const getSiteInventory = async (req, res) => {
   try {
-    const materials = await Material.find({ location: 'SiteStore' });
+    const materials = await Material.find({
+      $or: [
+        { location: 'SiteStore' },
+        { location: 'Site Store' },
+        { location: { $regex: /^sitestore$/i } }
+      ]
+    });
 
     const decrypted = materials.map(m => {
       const doc = m.toObject();
       doc.name = decryptDB(doc.name);
-      doc.quantity = Number(decryptDB(doc.quantity)) || 0;
+      doc.quantity = typeof doc.quantity === 'number' ? doc.quantity : (Number(decryptDB(doc.quantity)) || 0);
       return doc;
     });
 
@@ -70,32 +76,65 @@ export const getProjectsOverview = async (req, res) => {
 //          trail), and records the same quantity as actual project material
 //          usage - a single submission, a single stock deduction.
 // @route   POST /api/site/material-usage
-// @access  Private (SiteStoreOfficer - "Log Material Usage" permission)
+// @access  Private (SiteStoreOfficer, Admin)
 export const issueMaterialToProject = async (req, res) => {
   try {
-    const { projectId, materialId, quantity, quantity_used, activity, purpose, notes, date } = req.body;
-    const qty = Number(quantity || quantity_used);
+    const {
+      projectId,
+      project_id,
+      materialId,
+      material_id,
+      quantity,
+      quantity_used,
+      quantityUsed,
+      activity,
+      purpose,
+      notes,
+      date,
+      usageDate
+    } = req.body;
 
-    if (!projectId) {
-      return res.status(400).json({ success: false, message: 'Please select a project.' });
-    }
-    if (!materialId) {
+    const rawQty = quantityUsed !== undefined && quantityUsed !== null && quantityUsed !== ''
+      ? quantityUsed
+      : (quantity !== undefined && quantity !== null && quantity !== '' ? quantity : quantity_used);
+    const qty = Number(rawQty);
+
+    const mId = materialId || material_id;
+    let pId = projectId || project_id;
+    const effectiveDate = usageDate || date || new Date();
+    const actStr = String(activity || purpose || 'General Usage').trim();
+
+    if (!mId) {
       return res.status(400).json({ success: false, message: 'Please select a material.' });
     }
     if (!qty || Number.isNaN(qty) || qty <= 0) {
       return res.status(400).json({ success: false, message: 'Please enter a valid quantity greater than 0.' });
     }
 
-    const project = await Project.findById(projectId);
-    if (!project) {
-      return res.status(404).json({ success: false, message: 'Project not found.' });
+    let siteMaterial = await Material.findOne({ _id: mId, location: 'SiteStore' });
+    if (!siteMaterial) {
+      const anyMat = await Material.findById(mId);
+      if (anyMat && (!anyMat.location || anyMat.location === 'SiteStore')) {
+        siteMaterial = anyMat;
+      } else {
+        return res.status(404).json({ success: false, message: 'Material not found in Site Store inventory.' });
+      }
     }
 
-    // Site Store stock is shared, so any site material can be issued to any
-    // project - the project only decides whose usage/BOM it counts against.
-    const siteMaterial = await Material.findOne({ _id: materialId, location: 'SiteStore' });
-    if (!siteMaterial) {
-      return res.status(404).json({ success: false, message: 'Material not found in Site Store inventory.' });
+    if (!pId && siteMaterial) {
+      pId = siteMaterial.projectId || siteMaterial.project_id;
+    }
+    if (!pId) {
+      const defaultProj = await Project.findOne();
+      if (defaultProj) pId = defaultProj._id;
+    }
+    if (!pId) {
+      return res.status(400).json({ success: false, message: 'Please select a project.' });
+    }
+
+    const project = await Project.findById(pId);
+    if (!project) {
+      return res.status(404).json({ success: false, message: 'Project not found.' });
     }
 
     const decryptedName = decryptDB(siteMaterial.name);
@@ -127,7 +166,6 @@ export const issueMaterialToProject = async (req, res) => {
 
     const issuedBy = req.user ? req.user.name : 'Site Store Officer';
     const projectName = project.projectName || project.name;
-    const actStr = String(activity || purpose || 'General Usage').trim();
 
     const priorCount = await MaterialUsage.countDocuments({ minNumber: { $exists: true, $ne: '' } });
     const minNumber = `MIN-${new Date().getFullYear()}-${String(priorCount + 1).padStart(3, '0')}`;
@@ -138,7 +176,7 @@ export const issueMaterialToProject = async (req, res) => {
     // single issue compared to the whole plan would always look "under".
     let plannedQty = 0;
     let inBom = false;
-    const approvedBOM = await getLatestApprovedBOM(projectId);
+    const approvedBOM = await getLatestApprovedBOM(pId);
     if (approvedBOM) {
       const match = approvedBOM.materials.find(m => m.name.trim().toLowerCase() === decryptedName.trim().toLowerCase());
       if (match) {
@@ -147,7 +185,7 @@ export const issueMaterialToProject = async (req, res) => {
       }
     }
 
-    const priorUsages = await MaterialUsage.find({ projectId });
+    const priorUsages = await MaterialUsage.find({ projectId: pId });
     const previouslyUsed = priorUsages.reduce((sum, u) => {
       const name = String(decryptDB(u.materialName) || '').trim().toLowerCase();
       if (name !== decryptedName.trim().toLowerCase()) return sum;
@@ -171,8 +209,8 @@ export const issueMaterialToProject = async (req, res) => {
     try {
       usage = await MaterialUsage.create({
         minNumber,
-        projectId,
-        project_id: projectId,
+        projectId: pId,
+        project_id: pId,
         materialId: siteMaterial._id,
         projectName,
         materialName: decryptedName,
@@ -184,7 +222,7 @@ export const issueMaterialToProject = async (req, res) => {
         purpose: actStr,
         notes: notes || '',
         recordedBy: issuedBy,
-        usageDate: date || new Date()
+        usageDate: effectiveDate
       });
     } catch (usageErr) {
       await recordMovement({
@@ -240,10 +278,3 @@ export const issueMaterialToProject = async (req, res) => {
 };
 
 export const logMaterialUsage = issueMaterialToProject;
-
-// Note: issuing materials from Main Store to Site Store and confirming their
-// receipt is handled separately by the Material Issuance Note flow (see
-// controllers/materialIssuanceController.js, mounted at /api/min). That is a
-// distinct business event (Site Store requesting/receiving replenishment
-// stock from Main Store) from issueMaterialToProject above (Site Store
-// issuing its own on-hand stock to a project's construction activity).
