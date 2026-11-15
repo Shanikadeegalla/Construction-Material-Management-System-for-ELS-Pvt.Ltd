@@ -1,5 +1,7 @@
 import MaterialUsage from '../models/MaterialUsage.js';
 import BOM from '../models/BOM.js';
+import ItemMaster from '../models/ItemMaster.js';
+import Material from '../models/Material.js';
 import { decryptDB } from '../utils/cryptoUtils.js';
 
 // @desc    Get all material usage records
@@ -104,6 +106,48 @@ export const getVarianceReport = async (req, res) => {
       return true;
     });
     
+    // Build pricing lookup map from ItemMaster and Material catalogs to accurately compute wastage costs
+    const itemMasterMap = new Map();
+    try {
+      const itemMasters = await ItemMaster.find({}).lean();
+      itemMasters.forEach(it => {
+        const code = (it.materialCode || '').toLowerCase().trim();
+        const name = (it.materialName || '').toLowerCase().trim();
+        const cleanName = name.replace(/[^a-z0-9]/g, '');
+        const cost = Number(it.estimatedUnitCost || it.unitPrice || 0);
+        if (code && cost > 0) itemMasterMap.set(code, cost);
+        if (name && cost > 0) itemMasterMap.set(name, cost);
+        if (cleanName && cost > 0) itemMasterMap.set(cleanName, cost);
+      });
+      const materialsList = await Material.find({}).lean();
+      materialsList.forEach(m => {
+        const code = (m.materialCode || '').toLowerCase().trim();
+        const name = decryptDB(m.name || '').toLowerCase().trim();
+        const cleanName = name.replace(/[^a-z0-9]/g, '');
+        const cost = Number(m.unitPrice || 0);
+        if (code && cost > 0 && !itemMasterMap.has(code)) itemMasterMap.set(code, cost);
+        if (name && cost > 0 && !itemMasterMap.has(name)) itemMasterMap.set(name, cost);
+        if (cleanName && cost > 0 && !itemMasterMap.has(cleanName)) itemMasterMap.set(cleanName, cost);
+      });
+    } catch (priceErr) {
+      console.warn('Error loading price catalog for variance report:', priceErr.message);
+    }
+
+    const resolveCost = (nameStr, codeStr) => {
+      const code = (codeStr || '').toLowerCase().trim();
+      const name = (nameStr || '').toLowerCase().trim();
+      if (code && itemMasterMap.has(code)) return itemMasterMap.get(code);
+      if (name && itemMasterMap.has(name)) return itemMasterMap.get(name);
+      const clean = name.replace(/[^a-z0-9]/g, '');
+      if (clean && itemMasterMap.has(clean)) return itemMasterMap.get(clean);
+      for (const [mapKey, val] of itemMasterMap.entries()) {
+        if (mapKey.length > 5 && (name.includes(mapKey) || mapKey.includes(name))) {
+          return val;
+        }
+      }
+      return 0;
+    };
+
     // 2. Get all usage records
     const usages = await MaterialUsage.find({});
     const decryptedUsages = usages.map(u => {
@@ -136,13 +180,15 @@ export const getVarianceReport = async (req, res) => {
       }
       bom.materials.forEach(mat => {
         const key = mat.name.toLowerCase().trim();
+        const codeKey = (mat.materialCode || '').toLowerCase().trim();
+        const cost = Number(mat.estimatedUnitCost) || resolveCost(mat.name, mat.materialCode);
         projectMaterials[proj][key] = {
           projectName: proj,
           materialName: mat.name,
           unit: mat.unit,
           plannedQty: Number(mat.plannedQty) || 0,
           actualQty: 0,
-          unitCost: Number(mat.estimatedUnitCost) || 0,
+          unitCost: cost,
           bomNumber: bom.bomNumber || '',
           bomVersion: bom.version || '',
           inBom: true,
@@ -155,6 +201,8 @@ export const getVarianceReport = async (req, res) => {
       const proj = use.projectName;
       const matName = use.materialName || '';
       const key = matName.toLowerCase().trim();
+      const codeKey = (use.materialCode || '').toLowerCase().trim();
+      const resolvedCost = resolveCost(matName, use.materialCode);
       
       if (!projectMaterials[proj]) {
         projectMaterials[proj] = {};
@@ -166,11 +214,13 @@ export const getVarianceReport = async (req, res) => {
           unit: use.unit || 'bag',
           plannedQty: 0,
           actualQty: 0,
-          unitCost: 0,
+          unitCost: resolvedCost,
           bomNumber: '',
           bomVersion: '',
           inBom: false,
         };
+      } else if (!projectMaterials[proj][key].unitCost && resolvedCost > 0) {
+        projectMaterials[proj][key].unitCost = resolvedCost;
       }
       projectMaterials[proj][key].actualQty += Number(use.actualQty) || 0;
       projectMaterials[proj][key].issueCount = (projectMaterials[proj][key].issueCount || 0) + 1;

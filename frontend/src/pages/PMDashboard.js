@@ -93,26 +93,45 @@ const PMDashboard = ({ user, onLogout, onUserUpdate, initialPage = 'dashboard' }
 
   const handleDocBack = () => {
     setViewingDoc(null);
+    try {
+      if (window.history.state && window.history.state.modal === 'projectDoc') {
+        window.history.back();
+      }
+    } catch (e) {}
   };
 
   const handleCloseProjectModal = () => {
+    setViewingDoc(null);
     setShowViewProjectModal(false);
     setViewingProject(null);
-    setViewingDoc(null);
+    try {
+      if (window.history.state && window.history.state.modal === 'projectDoc') {
+        window.history.go(-2);
+      } else if (window.history.state && window.history.state.modal === 'projectDetails') {
+        window.history.back();
+      }
+    } catch (e) {}
   };
 
   useEffect(() => {
-    const handlePopState = () => {
-      if (viewingDoc) {
+    const handlePopState = (e) => {
+      const stateModal = e?.state?.modal;
+      if (stateModal === 'projectDoc') {
+        // Doc state active in history
+      } else if (stateModal === 'projectDetails') {
+        // Popped back from doc to project details
         setViewingDoc(null);
-      } else if (showViewProjectModal) {
+        setShowViewProjectModal(true);
+      } else {
+        // Popped back to project registry
+        setViewingDoc(null);
         setShowViewProjectModal(false);
         setViewingProject(null);
       }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [viewingDoc, showViewProjectModal]);
+  }, []);
   // Bring the form into view when it opens further down the page.
   useEffect(() => {
     if (!showProjectForm) return undefined;
@@ -387,10 +406,18 @@ const PMDashboard = ({ user, onLogout, onUserUpdate, initialPage = 'dashboard' }
   const handleDocumentPrint = (url) => {
     const printWindow = window.open(url, '_blank');
     if (printWindow) {
-      printWindow.addEventListener('load', () => {
-        printWindow.focus();
-        printWindow.print();
-      });
+      const triggerPrint = () => {
+        try {
+          printWindow.focus();
+          printWindow.print();
+        } catch (e) {}
+      };
+      if (printWindow.document && printWindow.document.readyState === 'complete') {
+        setTimeout(triggerPrint, 300);
+      } else {
+        printWindow.addEventListener('load', () => setTimeout(triggerPrint, 300));
+        setTimeout(triggerPrint, 1500);
+      }
     }
   };
 

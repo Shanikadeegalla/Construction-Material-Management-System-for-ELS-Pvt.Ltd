@@ -11,6 +11,7 @@ import { encryptDB, decryptDB } from '../utils/cryptoUtils.js';
 import { recordMovement, getDecryptedQuantity } from '../utils/stockService.js';
 import { notifyRoles } from './notificationController.js';
 import { broadcastRealtimeEvent } from '../utils/realtimeEvents.js';
+import { calculateDueDate } from '../utils/invoiceUtils.js';
 
 const isHex = (str) => typeof str === 'string' && str.length >= 16 && /^[0-9a-fA-F]+$/.test(str) && str.length % 2 === 0;
 
@@ -874,15 +875,26 @@ export const updateGRNStatus = async (req, res) => {
       try {
         const Invoice = (await import('../models/Invoice.js')).default;
         let inv = await Invoice.findOne({ grn: grn._id }) || (grn.poId ? await Invoice.findOne({ po: grn.poId }) : null);
+        if (!inv && grn.poReference) {
+          const matchedPo = await PurchaseOrder.findOne({ poNumber: grn.poReference });
+          if (matchedPo) {
+            inv = await Invoice.findOne({ po: matchedPo._id });
+          }
+        }
+
         if (inv) {
-          if (inv.status === 'Pending Approval') {
+          if (inv.status === 'Pending Approval' || !inv.status) {
             inv.status = 'Approved';
             inv.approvedBy = req.user ? req.user.name : 'GRN Approval';
             inv.approvedAt = new Date();
+            if (!inv.grn) inv.grn = grn._id;
             await inv.save();
           }
-        } else if (grn.poId) {
-          const poDoc = await PurchaseOrder.findById(grn.poId);
+        } else {
+          let poDoc = grn.poId ? await PurchaseOrder.findById(grn.poId) : null;
+          if (!poDoc && grn.poReference) {
+            poDoc = await PurchaseOrder.findOne({ poNumber: grn.poReference });
+          }
           if (poDoc) {
             let next = (await Invoice.countDocuments()) + 1;
             let invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
@@ -891,13 +903,17 @@ export const updateGRNStatus = async (req, res) => {
               invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
             }
 
+            const invDate = grn.receivedDate || new Date();
+            const calculatedDue = calculateDueDate(invDate, poDoc.paymentTerms);
+
             const newInv = new Invoice({
               invoiceNumber,
               supplier: grn.supplierId || poDoc.supplier,
               po: poDoc._id,
               grn: grn._id,
               amount: Number(poDoc.totalAmount) || 0,
-              invoiceDate: new Date(),
+              invoiceDate: invDate,
+              dueDate: calculatedDue,
               status: 'Approved',
               approvedBy: req.user ? req.user.name : 'GRN Approval',
               approvedAt: new Date(),

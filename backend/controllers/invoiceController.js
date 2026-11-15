@@ -179,6 +179,18 @@ export const createInvoice = async (req, res) => {
       }
     }
 
+    let initialStatus = 'Pending Approval';
+    let approvedBy = undefined;
+    let approvedAt = undefined;
+    if (grn) {
+      const grnDoc = await GRN.findById(grn);
+      if (grnDoc && (grnDoc.status === 'Approved' || grnDoc.status === 'Completed')) {
+        initialStatus = 'Approved';
+        approvedBy = 'GRN Approved';
+        approvedAt = new Date();
+      }
+    }
+
     const invoice = new Invoice({
       invoiceNumber,
       supplier,
@@ -187,6 +199,9 @@ export const createInvoice = async (req, res) => {
       amount: invoiceAmount,
       invoiceDate: invDate,
       dueDate: finalDueDate,
+      status: initialStatus,
+      approvedBy,
+      approvedAt,
       notes: notes || '',
       submittedBy: req.user ? req.user.name : '',
       file: req.file ? { url: `/uploads/${req.file.filename}`, filename: req.file.originalname } : undefined

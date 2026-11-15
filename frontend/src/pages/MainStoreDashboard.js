@@ -2146,7 +2146,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               <div style={{ ...styles.tableContainer, padding: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
                   <h3 id="inventory-value-by-category-title" style={{ margin: 0, color: '#0d1b4b' }}>
-                    Inventory Value by Category — Total: LKR {stockValue.toLocaleString()}
+                    Inventory Value by Category – Total Value: LKR {stockValue.toLocaleString()}
                   </h3>
                   <span style={{ fontSize: '13px', color: '#64748b' }}>Total: <strong style={{ color: '#0d1b4b' }}>LKR {stockValue.toLocaleString()}</strong></span>
                 </div>
@@ -2158,7 +2158,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                       const maxBarVal = Math.max(...categoryBars.map(b => b.value), 1);
                       return categoryBars.map((c, idx) => {
                         const pct = stockValue > 0 ? (c.value / stockValue) * 100 : 0;
-                        const labelText = `${c.name} ${formatCompactLKR(c.value)} (${pct.toFixed(1)}%)`;
+                        const labelText = `${c.name} – ${formatCompactLKR(c.value)} (${pct.toFixed(1)}%)`;
                         const barWidth = maxBarVal > 0 ? (c.value / maxBarVal) * 100 : 0;
                         const barColor = c.isRest ? '#94a3b8' : '#2563eb';
                         const textColor = c.isRest ? '#64748b' : '#334155';
