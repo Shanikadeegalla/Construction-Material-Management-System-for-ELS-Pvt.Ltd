@@ -224,15 +224,33 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashbo
   const prPagination = usePagination(sortedPurchaseRequests, 8, [sortedPurchaseRequests.length]);
   const supplierPagination = usePagination(filteredSuppliers, 8, [supplierSearch]);
   const payableItems = React.useMemo(() => {
-    const list = invoices.map(inv => ({
-      ...inv,
-      dueDate: inv.dueDate || calculateDueDate(inv.invoiceDate, inv.po?.paymentTerms)
-    }));
+    const list = invoices.map(inv => {
+      const invPoId = inv.po?._id || inv.po;
+      const invPoNumber = inv.po?.poNumber;
+      const linkedGrn = (grns || []).find(g =>
+        (inv.grn?._id || inv.grn) === g._id ||
+        (invPoId && (g.poId?._id || g.poId) === invPoId) ||
+        (invPoNumber && g.poReference === invPoNumber)
+      );
+      const isGrnApproved = linkedGrn && (linkedGrn.status === 'Approved' || linkedGrn.status === 'Completed');
+      const effectiveStatus = (inv.status !== 'Paid' && isGrnApproved) ? 'Approved' : inv.status;
+      return {
+        ...inv,
+        status: effectiveStatus,
+        dueDate: inv.dueDate || calculateDueDate(inv.invoiceDate, inv.po?.paymentTerms),
+        grn: inv.grn || linkedGrn,
+        isGrnApproved
+      };
+    });
     // Include approved GRNs that don't already have an invoice record in the list
-    (grns || []).filter(g => g.status === 'Approved').forEach(g => {
-      const alreadyHasInv = list.some(inv => (inv.grn?._id || inv.grn) === g._id || (g.poId && (inv.po?._id || inv.po) === g.poId));
+    (grns || []).filter(g => g.status === 'Approved' || g.status === 'Completed').forEach(g => {
+      const alreadyHasInv = list.some(inv =>
+        (inv.grn?._id || inv.grn) === g._id ||
+        (g.poId && (inv.po?._id || inv.po) === (g.poId?._id || g.poId)) ||
+        (g.poReference && inv.po?.poNumber === g.poReference)
+      );
       if (!alreadyHasInv) {
-        const po = orders.find(o => o._id === g.poId || o.poNumber === g.poReference);
+        const po = orders.find(o => o._id === (g.poId?._id || g.poId) || o.poNumber === g.poReference);
         list.push({
           _id: `grn-${g._id}`,
           isVirtualFromGRN: true,
@@ -736,8 +754,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashbo
   // Payment state of a PO, derived from its supplier invoices and approved GRN so it matches the Payment Portal.
   const getPoPaymentState = (po) => {
     const poInvoices = invoices.filter(inv => (inv.po?._id || inv.po) === po._id && inv.status !== 'Rejected');
-    const poGrn = (grns || []).find(g => (g.poId?._id || g.poId) === po._id || g.poReference === po.poNumber);
-    const isGrnApproved = poGrn && poGrn.status === 'Approved';
+    const isGrnApproved = (grns || []).some(g =>
+      (g.status === 'Approved' || g.status === 'Completed') &&
+      ((g.poId?._id || g.poId) === po._id || g.poReference === po.poNumber)
+    );
+    const poGrn = (grns || []).find(g =>
+      ((g.poId?._id || g.poId) === po._id || g.poReference === po.poNumber) &&
+      (g.status === 'Approved' || g.status === 'Completed')
+    ) || (grns || []).find(g => (g.poId?._id || g.poId) === po._id || g.poReference === po.poNumber);
 
     if (poInvoices.some(inv => inv.status === 'Paid') || po.paymentStatus === 'paid') {
       return { label: '✓ Paid', bg: '#dcfce7', color: '#15803d', status: 'paid', invoice: poInvoices.find(i => i.status === 'Paid') };
@@ -764,7 +788,14 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashbo
     const payState = getPoPaymentState(po);
     const poInvoices = invoices.filter(inv => (inv.po?._id || inv.po) === po._id && inv.status !== 'Rejected');
     let targetInv = poInvoices.find(inv => inv.status === 'Approved') || poInvoices[0];
-    const poGrn = (grns || []).find(g => (g.poId?._id || g.poId) === po._id || g.poReference === po.poNumber);
+    const poGrn = (grns || []).find(g =>
+      ((g.poId?._id || g.poId) === po._id || g.poReference === po.poNumber) &&
+      (g.status === 'Approved' || g.status === 'Completed')
+    ) || (grns || []).find(g => (g.poId?._id || g.poId) === po._id || g.poReference === po.poNumber);
+
+    if (targetInv && payState.grnApproved) {
+      targetInv = { ...targetInv, status: 'Approved', grn: targetInv.grn || poGrn };
+    }
 
     if (!targetInv && (payState.grnApproved || poGrn?.status === 'Approved')) {
       targetInv = {
@@ -2271,7 +2302,7 @@ const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashbo
                   💳 Go to Payment Portal
                 </button>
               </div>
-              <ReportsCenter tabs={['procurement', 'payment', 'inventory']} />
+              <ReportsCenter tabs={['payment', 'procurement', 'inventory']} />
             </div>
           )}
 

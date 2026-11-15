@@ -519,8 +519,8 @@ export const createCheckoutSession = async (req, res) => {
     if (invoice.status !== 'Approved') {
       const linkedGrn = invoice.grn
         ? await GRN.findById(invoice.grn)
-        : await GRN.findOne({ poId: po._id });
-      if (linkedGrn && linkedGrn.status === 'Approved') {
+        : await GRN.findOne({ $or: [{ poId: po._id }, { poReference: po.poNumber }] });
+      if (linkedGrn && (linkedGrn.status === 'Approved' || linkedGrn.status === 'Completed')) {
         invoice.status = 'Approved';
         invoice.approvedBy = invoice.approvedBy || 'GRN Approval';
         invoice.approvedAt = invoice.approvedAt || new Date();
@@ -662,7 +662,10 @@ export const recordManualPayment = async (req, res) => {
           if (poInv) invoiceId = poInv._id;
         }
         if (!invoiceId && grnDoc && (grnDoc.status === 'Approved' || grnDoc.status === 'Completed')) {
-          const poDoc = grnDoc.poId ? await PurchaseOrder.findById(grnDoc.poId) : null;
+          let poDoc = grnDoc.poId ? await PurchaseOrder.findById(grnDoc.poId) : null;
+          if (!poDoc && grnDoc.poReference) {
+            poDoc = await PurchaseOrder.findOne({ poNumber: grnDoc.poReference });
+          }
           if (poDoc) {
             let next = (await Invoice.countDocuments()) + 1;
             let invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
@@ -670,13 +673,17 @@ export const recordManualPayment = async (req, res) => {
               next++;
               invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
             }
+            const invDate = grnDoc.receivedDate || new Date();
+            const calculatedDue = calculateDueDate(invDate, poDoc.paymentTerms);
+
             const createdInv = new Invoice({
               invoiceNumber,
               supplier: grnDoc.supplierId || poDoc.supplier,
               po: poDoc._id,
               grn: grnDoc._id,
               amount: Number(poDoc.totalAmount) || 0,
-              invoiceDate: new Date(),
+              invoiceDate: invDate,
+              dueDate: calculatedDue,
               status: 'Approved',
               approvedBy: req.user ? req.user.name : 'GRN Approval',
               approvedAt: new Date(),
@@ -694,9 +701,17 @@ export const recordManualPayment = async (req, res) => {
       const poInvoice = await Invoice.findOne({ po: purchaseOrderId, status: 'Approved' })
         || await Invoice.findOne({ po: purchaseOrderId }).sort({ createdAt: -1 });
       if (!poInvoice) {
-        const grnDoc = await GRN.findOne({ poId: purchaseOrderId, status: 'Approved' });
+        let poDoc = await PurchaseOrder.findById(purchaseOrderId);
+        const grnDoc = await GRN.findOne({
+          $or: [
+            { poId: purchaseOrderId, status: { $in: ['Approved', 'Completed'] } },
+            ...(poDoc?.poNumber ? [{ poReference: poDoc.poNumber, status: { $in: ['Approved', 'Completed'] } }] : [])
+          ]
+        });
         if (grnDoc) {
-          const poDoc = await PurchaseOrder.findById(purchaseOrderId);
+          if (!poDoc && grnDoc.poReference) {
+            poDoc = await PurchaseOrder.findOne({ poNumber: grnDoc.poReference });
+          }
           if (poDoc) {
             let next = (await Invoice.countDocuments()) + 1;
             let invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
@@ -704,13 +719,17 @@ export const recordManualPayment = async (req, res) => {
               next++;
               invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
             }
+            const invDate = grnDoc.receivedDate || new Date();
+            const calculatedDue = calculateDueDate(invDate, poDoc.paymentTerms);
+
             const createdInv = new Invoice({
               invoiceNumber,
               supplier: grnDoc.supplierId || poDoc.supplier,
               po: poDoc._id,
               grn: grnDoc._id,
               amount: Number(poDoc.totalAmount) || 0,
-              invoiceDate: new Date(),
+              invoiceDate: invDate,
+              dueDate: calculatedDue,
               status: 'Approved',
               approvedBy: req.user ? req.user.name : 'GRN Approval',
               approvedAt: new Date(),
@@ -743,7 +762,7 @@ export const recordManualPayment = async (req, res) => {
       const linkedGrn = invoice.grn
         ? await GRN.findById(invoice.grn)
         : await GRN.findOne({ poId: invoice.po });
-      if (linkedGrn && linkedGrn.status === 'Approved') {
+      if (linkedGrn && (linkedGrn.status === 'Approved' || linkedGrn.status === 'Completed')) {
         invoice.status = 'Approved';
         invoice.approvedBy = invoice.approvedBy || 'GRN Approval';
         invoice.approvedAt = invoice.approvedAt || new Date();
