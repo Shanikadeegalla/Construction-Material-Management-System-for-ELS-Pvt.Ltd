@@ -10,6 +10,7 @@ import {
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
 import { UPLOAD_DIR } from '../config/uploadDir.js';
+import { persistUploads } from '../utils/fileStore.js';
 
 const uploadDir = UPLOAD_DIR;
 if (!fs.existsSync(uploadDir)) {
@@ -41,7 +42,7 @@ const router = express.Router();
 
 router.route('/')
   .get(protect, getQuotations)
-  .post(protect, checkPermission('Manage Quotations'), uploadQuotationFile.single('file'), createQuotation);
+  .post(protect, checkPermission('Manage Quotations'), uploadQuotationFile.single('file'), persistUploads, createQuotation);
 
 router.get('/:id', protect, getQuotationById);
 

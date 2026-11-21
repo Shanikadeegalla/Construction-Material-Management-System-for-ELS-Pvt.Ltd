@@ -114,13 +114,13 @@ const seedDemoData = async () => {
     console.log('\n=================================================');
     console.log('🎉 DEMO DATA SEEDING COMPLETE FOR ELS VIVA DEMO!');
     console.log('=================================================');
-    console.log('Accounts ready:');
-    console.log('  • Admin:            adminO@els.com / admin123');
-    console.log('  • Director:         director@els.com / dir123');
-    console.log('  • Project Manager:  pm@els.com / pm123456');
-    console.log('  • Purchase Manager: PurchaseManager@els.com / Purchase@123');
-    console.log('  • Main Store:       store@els.com / store123');
-    console.log('  • Site Store:       sitestore@els.com / site123');
+    console.log('Demo accounts (password = DEMO_USER_PASSWORD from backend/.env for new accounts):');
+    console.log('  • Admin:            adminO@els.com');
+    console.log('  • Director:         director@els.com');
+    console.log('  • Project Manager:  pm@els.com');
+    console.log('  • Purchase Manager: PurchaseManager@els.com');
+    console.log('  • Main Store:       store@els.com');
+    console.log('  • Site Store:       sitestore@els.com');
     console.log('=================================================\n');
 
     process.exit(0);

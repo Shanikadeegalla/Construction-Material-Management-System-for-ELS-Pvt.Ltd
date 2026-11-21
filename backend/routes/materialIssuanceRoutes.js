@@ -15,7 +15,7 @@ const router = express.Router();
 
 router.route('/')
   .get(protect, getMINs)
-  .post(protect, createMIN);
+  .post(protect, checkPermission('Log Material Usage'), createMIN);
 
 router.post('/request', protect, createMaterialRequest);
 router.post('/transfer', protect, checkPermission('Issue Materials'), transferMIN);

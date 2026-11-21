@@ -72,13 +72,15 @@ cd backend
 npm run seed:demo
 ```
 
-### Seeded Demonstration Accounts
-- **Admin**: `adminO@els.com` / `admin123`
-- **Director**: `director@els.com` / `dir123`
-- **Project Manager**: `pm@els.com` / `pm123456`
-- **Purchase Manager**: `PurchaseManager@els.com` / `Purchase@123`
-- **Main Store Officer**: `store@els.com` / `store123`
-- **Site Store Officer**: `sitestore@els.com` / `site123`
+### Demonstration Accounts
+Set `DEMO_USER_PASSWORD` in `backend/.env` (8+ characters with upper and lower case, a digit and a symbol) before seeding. Any of these accounts that does not exist yet is created with that password; existing accounts are never changed. Change the passwords from the Admin screen afterwards.
+
+- **Admin**: `adminO@els.com`
+- **Director**: `director@els.com`
+- **Project Manager**: `pm@els.com`
+- **Purchase Manager**: `PurchaseManager@els.com`
+- **Main Store Officer**: `store@els.com`
+- **Site Store Officer**: `sitestore@els.com`
 
 ---
 

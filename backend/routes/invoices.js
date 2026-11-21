@@ -15,6 +15,7 @@ import {
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
 import { UPLOAD_DIR } from '../config/uploadDir.js';
+import { persistUploads } from '../utils/fileStore.js';
 
 const uploadDir = UPLOAD_DIR;
 if (!fs.existsSync(uploadDir)) {
@@ -46,11 +47,11 @@ const router = express.Router();
 
 router.route('/')
   .get(protect, getInvoices)
-  .post(protect, checkPermission('Create Invoice'), uploadInvoiceFile.single('file'), createInvoice);
+  .post(protect, checkPermission('Create Invoice'), uploadInvoiceFile.single('file'), persistUploads, createInvoice);
 
 router.get('/:id', protect, getInvoiceById);
-router.put('/:id/reupload', protect, uploadInvoiceFile.single('file'), reuploadInvoiceFile);
-router.delete('/:id/file', protect, deleteInvoiceFile);
+router.put('/:id/reupload', protect, checkPermission('Create Invoice'), uploadInvoiceFile.single('file'), persistUploads, reuploadInvoiceFile);
+router.delete('/:id/file', protect, checkPermission('Create Invoice'), deleteInvoiceFile);
 router.put('/:id/approve-payment', protect, checkPermission('Approve Payment'), approveInvoicePayment);
 
 router.put('/:id/reject-payment', protect, checkPermission('Approve Payment'), rejectInvoicePayment);

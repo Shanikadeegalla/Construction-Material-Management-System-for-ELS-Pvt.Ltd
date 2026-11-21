@@ -195,6 +195,12 @@ export const createTransferNote = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please provide a valid material and transfer quantity for every row.' });
     }
 
+    // The Main Store sends materials to the site only in answer to a Site Store request.
+    if (!sourceRequestId) {
+      return res.status(400).json({ success: false,
+        message: 'A Material Transfer Note must be created from a Site Store material request.' });
+    }
+
     let sourceRequest = null;
     // Every transfer goes to the one general Site Store; only a legacy
     // request raised for a project's own Site Store carries an id/name.

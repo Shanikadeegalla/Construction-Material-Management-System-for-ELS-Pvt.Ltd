@@ -5,6 +5,7 @@ import PurchaseRequest from '../models/PurchaseRequest.js';
 import Quotation from '../models/Quotation.js';
 import Invoice from '../models/Invoice.js';
 import GRN from '../models/GRN.js';
+import { searchRegex } from '../utils/searchUtils.js';
 
 // Generate the next unique sequential Supplier ID (e.g. SUP-0001)
 const generateNextSupplierId = async () => {
@@ -49,10 +50,10 @@ export const getSuppliers = async (req, res) => {
     if (status) query.status = status;
     if (search) {
       query.$or = [
-        { name: new RegExp(search, 'i') },
-        { supplierId: new RegExp(search, 'i') },
-        { email: new RegExp(search, 'i') },
-        { phone: new RegExp(search, 'i') }
+        { name: searchRegex(search) },
+        { supplierId: searchRegex(search) },
+        { email: searchRegex(search) },
+        { phone: searchRegex(search) }
       ];
     }
 

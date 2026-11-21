@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { jest, describe, test, expect, beforeAll } from '@jest/globals';
 import { isStrongPassword } from '../../controllers/authController.js';
-import { encryptDB, decryptDB, encryptTransit, decryptTransit } from '../../utils/cryptoUtils.js';
+import { encryptDB, decryptDB, decryptIfEncrypted } from '../../utils/cryptoUtils.js';
 import { recordMovement } from '../../utils/stockService.js';
 
 describe('CMMS Core Business Logic Unit Tests', () => {
@@ -36,13 +36,12 @@ describe('CMMS Core Business Logic Unit Tests', () => {
       expect(decrypted).toBe(originalText);
     });
 
-    test('should complete transit encryption roundtrip', () => {
-      const payload = 'Confidential Material Details';
-      const encryptedTransit = encryptTransit(payload);
-      expect(encryptedTransit).toContain(':');
-
-      const decryptedTransit = decryptTransit(encryptedTransit);
-      expect(decryptedTransit).toBe(payload);
+    test('decryptIfEncrypted restores encrypted fields and leaves other values unchanged', () => {
+      const encrypted = encryptDB('Confidential Material Details');
+      expect(decryptIfEncrypted(encrypted)).toBe('Confidential Material Details');
+      expect(decryptIfEncrypted('64f1c2a9b3e4d5f6a7b8c9d0')).toBe('64f1c2a9b3e4d5f6a7b8c9d0'); // an ObjectId
+      expect(decryptIfEncrypted('River Sand')).toBe('River Sand');
+      expect(decryptIfEncrypted(25)).toBe(25);
     });
   });
 

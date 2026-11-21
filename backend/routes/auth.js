@@ -17,9 +17,11 @@ import {
   getNextEmployeeId,
   resetAllPasswords
 } from '../controllers/authController.js';
-import { protect } from '../middleware/authMiddleware.js';
+import { protect, authorizeRoles } from '../middleware/authMiddleware.js';
+import { loginRateLimiter } from '../middleware/loginRateLimiter.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
 import { UPLOAD_DIR } from '../config/uploadDir.js';
+import { persistUploads } from '../utils/fileStore.js';
 
 const uploadDir = UPLOAD_DIR;
 if (!fs.existsSync(uploadDir)) {
@@ -53,7 +55,7 @@ const upload = multer({
 
 const router = express.Router();
 
-router.post('/upload-avatar', protect, upload.single('avatar'), (req, res) => {
+router.post('/upload-avatar', protect, upload.single('avatar'), persistUploads, (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload a file' });
@@ -66,8 +68,9 @@ router.post('/upload-avatar', protect, upload.single('avatar'), (req, res) => {
 });
 
 router.post('/register', protect, checkPermission('Create/Edit Users'), registerUser);
-router.post('/login', loginUser);
-router.post('/reset-all-passwords', resetAllPasswords);
+router.post('/login', loginRateLimiter, loginUser);
+// Admin only: creates any missing demo accounts (never changes existing users)
+router.post('/reset-all-passwords', protect, authorizeRoles('Admin'), resetAllPasswords);
 router.get('/me', protect, getUserProfile);
 
 // Dedicated profile endpoints (Self profile update for any authenticated user)
@@ -89,7 +92,9 @@ router.get('/next-employee-id', protect, checkPermission('Create/Edit Users'), g
 router.get('/users', protect, checkPermission('View User List'), getUsers);
 router.put('/users/:id', protect, checkUserUpdateAuth, updateUser);
 router.put('/users/:id/deactivate', protect, checkPermission('Create/Edit Users'), deactivateUser);
+router.put('/users/:id/disable', protect, checkPermission('Create/Edit Users'), deactivateUser);
 router.put('/users/:id/activate', protect, checkPermission('Create/Edit Users'), activateUser);
+router.put('/users/:id/enable', protect, checkPermission('Create/Edit Users'), activateUser);
 router.put('/users/:id/reset-password', protect, checkPermission('Create/Edit Users'), resetUserPassword);
 router.delete('/users/:id', protect, checkPermission('Create/Edit Users'), deleteUser);
 

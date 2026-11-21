@@ -12,6 +12,7 @@ import { recordMovement, getDecryptedQuantity } from '../utils/stockService.js';
 import { notifyRoles } from './notificationController.js';
 import { broadcastRealtimeEvent } from '../utils/realtimeEvents.js';
 import { calculateDueDate } from '../utils/invoiceUtils.js';
+import { searchRegex } from '../utils/searchUtils.js';
 
 const isHex = (str) => typeof str === 'string' && str.length >= 16 && /^[0-9a-fA-F]+$/.test(str) && str.length % 2 === 0;
 
@@ -52,9 +53,9 @@ export const getMaterials = async (req, res) => {
     }
     if (search) {
       query.$or = [
-        { name: new RegExp(search, 'i') },
-        { category: new RegExp(search, 'i') },
-        { code: new RegExp(search, 'i') }
+        { name: searchRegex(search) },
+        { category: searchRegex(search) },
+        { code: searchRegex(search) }
       ];
     }
 
@@ -266,6 +267,23 @@ export const createGRN = async (req, res) => {
 
   if (!supplier || !receivedBy || !items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ message: 'Missing required GRN information' });
+  }
+  // Goods are received only against a Purchase Order (FR-21)
+  if (!poReference) {
+    return res.status(400).json({ message: 'Please select the Purchase Order these goods were delivered for.' });
+  }
+  // A damaged quantity must be valid and must have a reason (FR-22)
+  for (const item of items) {
+    if (item.condition !== 'Damaged') continue;
+    const damaged = Number(item.damagedQty) || 0;
+    const received = Number(item.receivedQty) || 0;
+    const name = item.materialName || 'an item';
+    if (damaged < 0 || damaged > received) {
+      return res.status(400).json({ message: `Damaged quantity for ${name} must be between 0 and the received quantity (${received}).` });
+    }
+    if (damaged > 0 && !String(item.discrepancyReason || '').trim()) {
+      return res.status(400).json({ message: `Please give the reason for the damaged quantity of ${name}.` });
+    }
   }
 
   try {
@@ -858,72 +876,30 @@ export const updateGRNStatus = async (req, res) => {
     if (notes) grn.notes = notes;
     await grn.save();
 
-    // When GRN status changes to 'Approved', trigger payment workflow connection!
+    // When the Main Store approves a GRN, the goods are confirmed. The supplier invoice is
+    // linked to the GRN and sent to the Director - it is NOT approved here, because only the
+    // Director may approve an invoice for payment.
     if (status === 'Approved') {
-      try {
-        await notifyRoles(
-          ['PurchaseManager', 'Admin'],
-          `GRN ${grn.grnNumber} for ${grn.poReference || 'Purchase Order'} has been Approved. Payment can now be processed.`,
-          'GRN_Approved',
-          '/payment'
-        );
-      } catch (nErr) {
-        console.error('Error notifying PurchaseManager on GRN approval:', nErr);
-      }
-
-      // Ensure associated Invoice is created or marked Approved so payment workflow can process immediately
       try {
         const Invoice = (await import('../models/Invoice.js')).default;
         let inv = await Invoice.findOne({ grn: grn._id }) || (grn.poId ? await Invoice.findOne({ po: grn.poId }) : null);
         if (!inv && grn.poReference) {
           const matchedPo = await PurchaseOrder.findOne({ poNumber: grn.poReference });
-          if (matchedPo) {
-            inv = await Invoice.findOne({ po: matchedPo._id });
-          }
+          if (matchedPo) inv = await Invoice.findOne({ po: matchedPo._id });
         }
-
-        if (inv) {
-          if (inv.status === 'Pending Approval' || !inv.status) {
-            inv.status = 'Approved';
-            inv.approvedBy = req.user ? req.user.name : 'GRN Approval';
-            inv.approvedAt = new Date();
-            if (!inv.grn) inv.grn = grn._id;
-            await inv.save();
-          }
-        } else {
-          let poDoc = grn.poId ? await PurchaseOrder.findById(grn.poId) : null;
-          if (!poDoc && grn.poReference) {
-            poDoc = await PurchaseOrder.findOne({ poNumber: grn.poReference });
-          }
-          if (poDoc) {
-            let next = (await Invoice.countDocuments()) + 1;
-            let invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
-            while (await Invoice.findOne({ invoiceNumber })) {
-              next++;
-              invoiceNumber = `INV-${String(next).padStart(4, '0')}`;
-            }
-
-            const invDate = grn.receivedDate || new Date();
-            const calculatedDue = calculateDueDate(invDate, poDoc.paymentTerms);
-
-            const newInv = new Invoice({
-              invoiceNumber,
-              supplier: grn.supplierId || poDoc.supplier,
-              po: poDoc._id,
-              grn: grn._id,
-              amount: Number(poDoc.totalAmount) || 0,
-              invoiceDate: invDate,
-              dueDate: calculatedDue,
-              status: 'Approved',
-              approvedBy: req.user ? req.user.name : 'GRN Approval',
-              approvedAt: new Date(),
-              submittedBy: grn.receivedBy || (req.user ? req.user.name : 'Main Store')
-            });
-            await newInv.save();
-          }
+        if (inv && !inv.grn) {
+          inv.grn = grn._id;
+          await inv.save();
         }
-      } catch (invErr) {
-        console.error('Error linking invoice on GRN approval:', invErr);
+        const msg = inv && inv.status === 'Pending Approval'
+          ? `GRN ${grn.grnNumber} approved. Invoice ${inv.invoiceNumber} is waiting for your approval.`
+          : `GRN ${grn.grnNumber} for ${grn.poReference || 'Purchase Order'} approved. Waiting for the supplier invoice.`;
+        await notifyRoles(['Director'], msg, 'GRN_Approved', '/director-dashboard');
+        await notifyRoles(['PurchaseManager'],
+          `GRN ${grn.grnNumber} for ${grn.poReference || 'Purchase Order'} approved. Payment can be made after the Director approves the invoice.`,
+          'GRN_Approved', '/payment');
+      } catch (nErr) {
+        console.error('Error after GRN approval:', nErr);
       }
     }
 

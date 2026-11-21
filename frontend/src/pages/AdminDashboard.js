@@ -262,6 +262,17 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
       showErrorMessage('Please fill in Material Code, Name, Category, and Unit.');
       return;
     }
+    const minStock = Number(materialForm.minimumStock) || 0;
+    const maxStock = Number(materialForm.maximumStock) || 0;
+    const preOrder = Number(materialForm.reorderLevel) || 0;
+    if (maxStock > 0 && minStock > maxStock) {
+      showErrorMessage('Minimum stock cannot exceed maximum stock.');
+      return;
+    }
+    if (preOrder > 0 && (preOrder < minStock || (maxStock > 0 && preOrder > maxStock))) {
+      showErrorMessage('Pre-order level must be between the minimum and maximum stock.');
+      return;
+    }
     try {
       const token = JSON.parse(localStorage.getItem('user'))?.token;
       const url = editingMaterialId
@@ -1421,7 +1432,8 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         fetchUsers();
         fetchAuditLogs();
         if (selectedUser && selectedUser._id === targetUser._id) {
-          setSelectedUser({ ...selectedUser, status: !targetUser.status });
+          const updatedStatus = data.data && typeof data.data.status === 'boolean' ? data.data.status : targetUser.status === false;
+          setSelectedUser(data.data ? { ...selectedUser, ...data.data, status: updatedStatus } : { ...selectedUser, status: updatedStatus });
         }
       } else {
         showErrorMessage(`❌ ${data.message || 'Failed to change status'}`);
@@ -3460,4 +3472,4 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
   );
 };
 
-export default AdminDashboard;
+export default AdminDashboard;

@@ -20,7 +20,7 @@ import { SHOW_PURCHASE_MANAGER_PAYMENT_KPI } from '../config/featureFlags';
 import { useToast } from '../context/ToastContext';
 
 const PurchaseOrderPage = ({ user, onLogout, onUserUpdate, initialPage = 'dashboard' }) => {
-  const { toast } = useToast() || {};
+  const toast = useToast();
 
   const getInitialActivePage = () => {
     if (initialPage && initialPage !== 'dashboard') return initialPage;

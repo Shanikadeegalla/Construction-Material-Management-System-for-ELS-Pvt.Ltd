@@ -1,6 +1,7 @@
 import ItemMaster from '../models/ItemMaster.js';
 import Material from '../models/Material.js';
 import { syncThresholdsToMaterials } from '../utils/materialSync.js';
+import { validateStockLevels, duplicateMaterialMessage } from '../utils/itemMasterValidation.js';
 
 // Generate the next unique sequential Material Code (e.g. MAT0001)
 const generateNextMaterialCode = async () => {
@@ -55,6 +56,15 @@ export const createItemMaster = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please provide material code, name, category, and unit.' });
     }
 
+    const levelError = validateStockLevels({
+      minimumStock: minimumStock ?? 10,
+      maximumStock: maximumStock ?? 100,
+      reorderLevel: reorderLevel ?? 0
+    });
+    if (levelError) {
+      return res.status(400).json({ success: false, message: levelError });
+    }
+
     const calculatedReorder = reorderLevel !== undefined ? Number(reorderLevel) : Math.round(Number(maximumStock || 100) * 0.5);
 
     const item = new ItemMaster({
@@ -106,6 +116,8 @@ export const createItemMaster = async (req, res) => {
 
     res.status(201).json({ success: true, data: item });
   } catch (error) {
+    const duplicate = duplicateMaterialMessage(error);
+    if (duplicate) return res.status(409).json({ success: false, message: duplicate });
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -124,6 +136,15 @@ export const updateItemMaster = async (req, res) => {
     const item = await ItemMaster.findById(id);
     if (!item) {
       return res.status(404).json({ success: false, message: 'Material master record not found.' });
+    }
+
+    const levelError = validateStockLevels({
+      minimumStock: minimumStock !== undefined ? minimumStock : item.minimumStock,
+      maximumStock: maximumStock !== undefined ? maximumStock : item.maximumStock,
+      reorderLevel: reorderLevel !== undefined ? reorderLevel : 0
+    });
+    if (levelError) {
+      return res.status(400).json({ success: false, message: levelError });
     }
 
     const calculatedReorder = reorderLevel !== undefined ? Number(reorderLevel) : Math.round(Number(maximumStock || item.maximumStock) * 0.5);
@@ -151,6 +172,8 @@ export const updateItemMaster = async (req, res) => {
 
     res.status(200).json({ success: true, data: item });
   } catch (error) {
+    const duplicate = duplicateMaterialMessage(error);
+    if (duplicate) return res.status(409).json({ success: false, message: duplicate });
     res.status(500).json({ success: false, message: error.message });
   }
 };

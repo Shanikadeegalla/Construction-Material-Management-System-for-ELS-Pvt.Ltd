@@ -7,6 +7,7 @@ import Material from '../models/Material.js';
 import PurchaseRequest from '../models/PurchaseRequest.js';
 import PurchaseOrder from '../models/PurchaseOrder.js';
 import { createNotificationHelper } from './notificationController.js';
+import { logAction } from '../utils/auditLogger.js';
 
 // Helper to calculate the next version for a project
 const getNextVersion = async (projectId) => {
@@ -310,6 +311,7 @@ export const approveBOM = async (req, res) => {
       console.error('Error creating BOM stock-check notification:', nErr);
     }
 
+    await logAction(req, `BOM ${bom.bomNumber || bom._id} approved`, 'Project & BOM');
     res.status(200).json({ success: true, message: 'BOM approved successfully!', data: bom });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -347,6 +349,7 @@ export const rejectBOM = async (req, res) => {
     const msg = `BOM ${bom.version} for ${projectName} Rejected${rejectionReason ? `: ${rejectionReason}` : ''}`;
     await createNotificationHelper(bom.createdBy, msg, 'BOM_rejected', '/bom');
 
+    await logAction(req, `BOM ${bom.bomNumber || bom._id} rejected`, 'Project & BOM');
     res.status(200).json({ success: true, message: 'BOM rejected successfully!', data: bom });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });

@@ -1,16 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { Eye, EyeOff, Mail, Lock } from 'lucide-react';
-import AdminDashboard from './pages/AdminDashboard';
-import PMDashboard from './pages/PMDashboard';
-import PurchaseOrderPage from './pages/PurchaseOrderPage';
-import MainStoreDashboard from './pages/MainStoreDashboard';
-import DirectorDashboard from './pages/DirectorDashboard';
-import SiteStoreDashboard from './pages/SiteStoreDashboard';
-import PaymentSuccess from './pages/PaymentSuccess';
-import PaymentCancel from './pages/PaymentCancel';
 import { ToastProvider } from './context/ToastContext';
 import { API_BASE } from './config';
 import { isValidJwtFormat } from './utils/authUtils';
+
+// Each role's dashboard is downloaded only when that role logs in, so the login page
+// and every dashboard open faster (the browser no longer loads all six at once).
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const PMDashboard = lazy(() => import('./pages/PMDashboard'));
+const PurchaseOrderPage = lazy(() => import('./pages/PurchaseOrderPage'));
+const MainStoreDashboard = lazy(() => import('./pages/MainStoreDashboard'));
+const DirectorDashboard = lazy(() => import('./pages/DirectorDashboard'));
+const SiteStoreDashboard = lazy(() => import('./pages/SiteStoreDashboard'));
+const PaymentSuccess = lazy(() => import('./pages/PaymentSuccess'));
+const PaymentCancel = lazy(() => import('./pages/PaymentCancel'));
+
+const PageLoading = () => (
+  <div style={{ padding: '60px', textAlign: 'center', color: '#64748b', fontFamily: 'sans-serif' }}>Loading…</div>
+);
 
 function MainApp() {
   const [view, setView] = useState('login');
@@ -247,6 +254,7 @@ function MainApp() {
       <style>{globalStyles}</style>
       <main style={!user && !view.startsWith('payment-') ? styles.main : {}}>
         {view === 'login' && renderLogin()}
+        <Suspense fallback={<PageLoading />}>
         {view === 'payment-success' && (
           <PaymentSuccess onReturnToPOs={() => {
             window.history.pushState({}, '', '/');
@@ -260,6 +268,7 @@ function MainApp() {
           }} />
         )}
         {user && renderDashboard()}
+        </Suspense>
       </main>
       {!user && !view.startsWith('payment-') && (
         <footer style={styles.footer}>

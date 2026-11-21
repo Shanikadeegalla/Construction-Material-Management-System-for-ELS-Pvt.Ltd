@@ -6,6 +6,10 @@ import PurchaseOrder from '../models/PurchaseOrder.js';
 import { createNotificationHelper, notifyRoles } from './notificationController.js';
 import { UPLOAD_DIR } from '../config/uploadDir.js';
 import { calculateDueDate, validateDueDate } from '../utils/invoiceUtils.js';
+import GRN from '../models/GRN.js';
+import { logAction } from '../utils/auditLogger.js';
+import { searchRegex } from '../utils/searchUtils.js';
+import { removeUploadCopy } from '../utils/fileStore.js';
 
 const attachFileExists = (invoice) => {
   const invObj = invoice.toObject ? invoice.toObject() : { ...invoice };
@@ -179,17 +183,8 @@ export const createInvoice = async (req, res) => {
       }
     }
 
-    let initialStatus = 'Pending Approval';
-    let approvedBy = undefined;
-    let approvedAt = undefined;
-    if (grn) {
-      const grnDoc = await GRN.findById(grn);
-      if (grnDoc && (grnDoc.status === 'Approved' || grnDoc.status === 'Completed')) {
-        initialStatus = 'Approved';
-        approvedBy = 'GRN Approved';
-        approvedAt = new Date();
-      }
-    }
+    // Every invoice waits for the Director's approval, even when its GRN is approved.
+    const initialStatus = 'Pending Approval';
 
     const invoice = new Invoice({
       invoiceNumber,
@@ -200,8 +195,6 @@ export const createInvoice = async (req, res) => {
       invoiceDate: invDate,
       dueDate: finalDueDate,
       status: initialStatus,
-      approvedBy,
-      approvedAt,
       notes: notes || '',
       submittedBy: req.user ? req.user.name : '',
       file: req.file ? { url: `/uploads/${req.file.filename}`, filename: req.file.originalname } : undefined
@@ -240,9 +233,9 @@ export const getInvoices = async (req, res) => {
     if (req.query.status) query.status = req.query.status;
     if (req.query.search) {
       query.$or = [
-        { invoiceNumber: new RegExp(req.query.search, 'i') },
-        { notes: new RegExp(req.query.search, 'i') },
-        { submittedBy: new RegExp(req.query.search, 'i') }
+        { invoiceNumber: searchRegex(req.query.search) },
+        { notes: searchRegex(req.query.search) },
+        { submittedBy: searchRegex(req.query.search) }
       ];
     }
 
@@ -364,6 +357,7 @@ export const approveInvoicePayment = async (req, res) => {
       'Invoice_approved'
     );
 
+    await logAction(req, `Invoice ${invoice.invoiceNumber} approved for payment`, 'Payments');
     res.status(200).json({ success: true, message: 'Invoice approved for payment!', data: invoice });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -398,6 +392,7 @@ export const rejectInvoicePayment = async (req, res) => {
       'Invoice_rejected'
     );
 
+    await logAction(req, `Invoice ${invoice.invoiceNumber} payment rejected`, 'Payments');
     res.status(200).json({ success: true, message: 'Invoice payment rejected.', data: invoice });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -486,13 +481,16 @@ export const deleteInvoiceFile = async (req, res) => {
       }
     }
 
+    if (invoice.file?.url) {
+      await removeUploadCopy(invoice.file.url).catch(err => console.error('Error removing stored file copy:', err));
+    }
     invoice.file = undefined;
     await invoice.save();
 
     res.status(200).json({
       success: true,
       message: 'Invoice document deleted successfully.',
-      data: formatInvoice(invoice)
+      data: attachFileExists(invoice)
     });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });

@@ -25,6 +25,11 @@ export const handleSSEConnection = async (req, res) => {
     }
   }
 
+  // Only logged-in, active users may receive live business events
+  if (!user || user.status === false) {
+    return res.status(401).json({ success: false, message: 'Not authorized for real-time events.' });
+  }
+
   // Set SSE HTTP response headers
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -88,4 +93,4 @@ setInterval(() => {
       clients.delete(clientId);
     }
   }
-}, 25000);
+}, 25000).unref(); // unref: the timer alone must not keep Node running (e.g. in tests)

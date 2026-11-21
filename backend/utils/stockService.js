@@ -52,15 +52,44 @@ export const recordMovement = async ({
   notes = ''
 }) => {
   const isSite = materialDoc.location === 'SiteStore';
-  const currentQty = getDecryptedQuantity(materialDoc);
-  const newQty = currentQty + quantityChange;
+  const Model = materialDoc.constructor;
+  const canSwap = !materialDoc.isNew && typeof Model?.findOneAndUpdate === 'function';
 
-  if (newQty < 0) {
-    throw new Error(`Insufficient stock for ${isSite ? decryptDB(materialDoc.name) : materialDoc.name}. Current: ${currentQty}, requested change: ${quantityChange}`);
+  let currentQty;
+  let newQty;
+  // Compare-and-set: the new balance is written only if the stored quantity is still the
+  // value we read. If another user changed it in the meantime, re-read and try again, so two
+  // simultaneous issues can never overwrite each other or take stock below zero.
+  for (let attempt = 0; ; attempt++) {
+    currentQty = getDecryptedQuantity(materialDoc);
+    newQty = currentQty + quantityChange;
+    if (newQty < 0) {
+      throw new Error(`Insufficient stock for ${isSite ? decryptDB(materialDoc.name) : materialDoc.name}. Current: ${currentQty}, requested change: ${quantityChange}`);
+    }
+    const stored = isSite ? encryptDB(String(newQty)) : newQty;
+
+    if (!canSwap) {                       // a brand-new record: plain save
+      materialDoc.quantity = stored;
+      await materialDoc.save();
+      break;
+    }
+    const swapped = await Model.findOneAndUpdate(
+      { _id: materialDoc._id, quantity: materialDoc.quantity },
+      { $set: { quantity: stored } },
+      { new: true }
+    );
+    if (swapped) {
+      materialDoc.set('quantity', stored);
+      materialDoc.unmarkModified('quantity');
+      if (materialDoc.isModified()) await materialDoc.save();   // other fields the caller changed
+      break;
+    }
+    if (attempt >= 4) throw new Error('Stock is being updated by another user. Please try again.');
+    const fresh = await Model.findById(materialDoc._id);
+    if (!fresh) throw new Error('Material not found.');
+    materialDoc.set('quantity', fresh.quantity);
+    materialDoc.unmarkModified('quantity');
   }
-
-  materialDoc.quantity = isSite ? encryptDB(String(newQty)) : newQty;
-  await materialDoc.save();
 
   const materialName = isSite ? decryptDB(materialDoc.name) : materialDoc.name;
 

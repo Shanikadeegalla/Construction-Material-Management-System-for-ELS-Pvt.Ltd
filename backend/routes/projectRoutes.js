@@ -7,6 +7,7 @@ import BOM from '../models/BOM.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
 import { UPLOAD_DIR } from '../config/uploadDir.js';
+import { persistUploads } from '../utils/fileStore.js';
 
 const router = express.Router();
 
@@ -117,7 +118,7 @@ router.get('/pm-stats', protect, checkPermission('Create Project'), async (req, 
 // @desc    Create a new project
 // @route   POST /api/projects
 // @access  Private (Project Manager)
-router.post('/', protect, checkPermission('Create Project'), uploadProjectFiles, async (req, res) => {
+router.post('/', protect, checkPermission('Create Project'), uploadProjectFiles, persistUploads, async (req, res) => {
   try {
     const {
       projectName,
@@ -209,7 +210,7 @@ router.get('/', protect, checkPermission('View Projects'), async (req, res) => {
 // @desc    Update a project
 // @route   PUT /api/projects/:id
 // @access  Private (Project Manager)
-router.put('/:id', protect, uploadProjectFiles, async (req, res) => {
+router.put('/:id', protect, checkPermission('Create Project'), uploadProjectFiles, persistUploads, async (req, res) => {
   try {
     const {
       projectName,

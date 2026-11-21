@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import SettingsPage from './SettingsPage';
 import { Calendar, Eye, Upload, Trash2, RefreshCw, FileText, X, ExternalLink } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { encryptTransit, decryptTransit } from '../utils/cryptoUtils';
 import { formatDate, formatDateTime, formatDateLong, formatFullDate, formatShortDate, formatTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import * as XLSX from 'xlsx';
@@ -10,6 +9,7 @@ import { API_BASE } from '../config';
 import useToastSetter from '../hooks/useToastSetter';
 import LoadingButton from '../components/LoadingButton';
 import { scrollToElement } from '../utils/scrollToElement';
+import { openUploadedFile } from '../utils/openUploadedFile';
 import useBusyAction from '../hooks/useBusyAction';
 import useMaterialCategories from '../hooks/useMaterialCategories';
 import ReportsCenter from './ReportsCenter';
@@ -278,6 +278,8 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
   const [invoiceAmountEdited, setInvoiceAmountEdited] = useState(false);
   const selectedPO = purchaseOrders.find(p => p._id === selectedGrnPO);
   const poTotalAmount = Number(selectedPO?.totalAmount || 0);
+  // Value shown on the GRN invoice section (the backend always records the PO total)
+  const grnPoAmount = poTotalAmount;
 
   useEffect(() => {
     if (invoiceAmountEdited) return;
@@ -423,9 +425,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       const res = await fetch(`${API_BASE}/api/material-usage`, { headers });
       const data = await res.json();
       let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
       if (finalData.success && Array.isArray(finalData.data)) {
         setUsageLogs(finalData.data);
       }
@@ -768,9 +767,6 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       if (res.ok) {
         const data = await res.json();
         let finalData = data;
-        if (data && data.ciphertext) {
-          finalData = JSON.parse(decryptTransit(data.ciphertext));
-        }
         if (finalData.success && (finalData.nextMtnNumber || finalData.data?.nextMtnNumber)) {
           return finalData.nextMtnNumber || finalData.data?.nextMtnNumber;
         }
@@ -905,17 +901,13 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         sourceRequestId: transferForm.sourceRequestId || undefined,
         materials: transferForm.items.map(item => ({ materialName: item.materialName, quantity: item.quantity, unit: item.unit }))
       };
-      const ciphertext = encryptTransit(JSON.stringify(payload));
       const res = await fetch(`${API_BASE}/api/material-transfer-notes`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ ciphertext })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
       if (res.ok && finalData.success) {
         setSuccess(`✅ ${finalData.data.mtnNumber} issued - stock is in transit until the Site Store confirms receipt.`);
         setShowTransferForm(false);
@@ -936,17 +928,13 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
     setError(''); setSuccess('');
     try {
       const payload = { reason: reason || 'Rejected by Main Store' };
-      const ciphertext = encryptTransit(JSON.stringify(payload));
       const res = await fetch(`${API_BASE}/api/material-requests/${id}/reject`, {
         method: 'PUT',
         headers: getHeaders(),
-        body: JSON.stringify({ ciphertext })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
       if (res.ok && finalData.success) {
         setSuccess('Request rejected.');
         fetchPendingRequests();
@@ -1596,7 +1584,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
         const poRef = invoiceOrGrn.poReference || invoiceOrGrn.po;
         const matchedPO = purchaseOrders.find(p => p.poNumber === poRef || p._id === poRef);
         if (!matchedPO) {
-          toast.error('Could not upload invoice: Matched Purchase Order not found.');
+          setError('Could not upload invoice: Matched Purchase Order not found.');
           return;
         }
 
@@ -1623,16 +1611,16 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       }
 
       if (data.success) {
-        toast.success('Invoice file uploaded successfully!');
+        setSuccess('Invoice file uploaded successfully!');
         fetchData(true);
         if (previewInvoice) {
           setPreviewInvoice(data.data || null);
         }
       } else {
-        toast.error(data.message || 'Failed to upload invoice file.');
+        setError(data.message || 'Failed to upload invoice file.');
       }
     } catch (err) {
-      toast.error('Upload failed: ' + err.message);
+      setError('Upload failed: ' + err.message);
     }
   };
 
@@ -1646,14 +1634,14 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
       });
       const data = await res.json();
       if (data.success) {
-        toast.success('Invoice file deleted successfully.');
+        setSuccess('Invoice file deleted successfully.');
         setPreviewInvoice(null);
         fetchData(true);
       } else {
-        toast.error(data.message || 'Failed to delete invoice file.');
+        setError(data.message || 'Failed to delete invoice file.');
       }
     } catch (err) {
-      toast.error('Delete failed: ' + err.message);
+      setError('Delete failed: ' + err.message);
     }
   };
 
@@ -1761,7 +1749,7 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
               {previewInvoice.file?.url && (
                 <button
                   type="button"
-                  onClick={() => openUploadedFile(previewInvoice.file.url, { fileType: 'invoice', toast })}
+                  onClick={() => openUploadedFile(previewInvoice.file.url, { fileType: 'invoice', toast: { error: setError } })}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -2559,29 +2547,16 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
                         type="number"
                         min="0"
                         step="0.01"
-                        value={invoiceForm.amount}
-                        onChange={e => {
-                          setInvoiceAmountEdited(true);
-                          setInvoiceForm({ ...invoiceForm, amount: e.target.value });
-                        }}
-                        style={styles.formInput}
+                        value={grnPoAmount > 0 ? grnPoAmount : ''}
+                        readOnly
+                        title="The invoice amount is always the Purchase Order total"
+                        style={{ ...styles.formInput, backgroundColor: '#f1f5f9' }}
                       />
-                      {invoiceAmountEdited && invoiceFile && grnPoAmount > 0 && Number(invoiceForm.amount) !== grnPoAmount ? (
-                        <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#b45309' }}>
-                          Differs from the PO value (LKR {grnPoAmount.toLocaleString()}).{' '}
-                          <button
-                            type="button"
-                            onClick={() => setInvoiceAmountEdited(false)}
-                            style={{ background: 'none', border: 'none', padding: 0, color: '#2563eb', fontSize: '12px', fontWeight: '600', cursor: 'pointer', textDecoration: 'underline' }}
-                          >
-                            Use PO value
-                          </button>
-                        </p>
-                      ) : !invoiceAmountEdited && invoiceFile && grnPoAmount > 0 ? (
+                      {grnPoAmount > 0 && (
                         <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#64748b' }}>
-                          Filled from the PO (received qty × unit price). Change it if the bill is different.
+                          Equal to the Purchase Order total. The Director checks it against the supplier's bill.
                         </p>
-                      ) : null}
+                      )}
                     </div>
                     <div>
                       <label style={styles.fieldLabel}>Invoice Date</label>
@@ -3151,12 +3126,19 @@ function MainStoreDashboard({ user, onLogout, onUserUpdate }) {
           <div style={styles.container}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <h1 style={styles.pageTitle}>Material Transfer Notes</h1>
-              <button
-                onClick={() => (showTransferForm ? setShowTransferForm(false) : openTransferForm())}
-                style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}
-              >
-                {showTransferForm ? 'Cancel' : '+ Create Material Transfer Note'}
-              </button>
+              {/* An MTN can only be created from a pending Site Store request (Review / Create MTN below) */}
+              {showTransferForm ? (
+                <button
+                  onClick={() => setShowTransferForm(false)}
+                  style={{ background: '#64748b', color: 'white', border: 'none', padding: '10px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold' }}
+                >
+                  Cancel
+                </button>
+              ) : (
+                <span style={{ color: '#64748b', fontSize: '13px' }}>
+                  To send materials, choose a pending Site Store request below and click "Review / Create MTN".
+                </span>
+              )}
             </div>
 
             {showTransferForm && (

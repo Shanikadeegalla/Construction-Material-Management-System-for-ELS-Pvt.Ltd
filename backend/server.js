@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import rateLimit from 'express-rate-limit';
 import connectDB from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
 import inventoryRoutes from './routes/inventory.js';
@@ -28,8 +29,9 @@ import realtimeRoutes from './routes/realtimeRoutes.js';
 import { fileURLToPath } from 'url';
 import { handleWebhook } from './controllers/paymentController.js';
 import { notFound, errorHandler } from './middleware/errorMiddleware.js';
-import { handleEncryption } from './middleware/encryptionMiddleware.js';
+import { decryptResponses } from './middleware/decryptResponses.js';
 import { UPLOAD_DIR } from './config/uploadDir.js';
+import { serveUploadFromStore } from './utils/fileStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +40,17 @@ const __dirname = path.dirname(__filename);
 connectDB();
 
 const app = express();
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skipSuccessfulRequests: true,
+  statusCode: 429,
+  message: { success: false, message: 'Too many login attempts, please try again after 15 minutes' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use('/api/auth/login', loginLimiter);
 
 // Middlewares
 // CORS_ORIGIN may hold a comma-separated allow-list (e.g. the deployed
@@ -50,10 +63,12 @@ app.use(cors(allowedOrigins.length ? { origin: allowedOrigins } : undefined));
 app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), handleWebhook);
 
 app.use(express.json()); // Body parser
-app.use(handleEncryption);
+// Encrypted Site Store fields are decrypted on the server before any response is sent
+app.use(decryptResponses);
 
 // Serve static uploads using absolute path independent of Node launch directory
-app.use('/uploads', express.static(UPLOAD_DIR));
+// Files missing on disk (e.g. after a Vercel restart) are served from the database copy
+app.use('/uploads', express.static(UPLOAD_DIR), serveUploadFromStore);
 console.log(`Serving uploads from: ${UPLOAD_DIR}`);
 
 

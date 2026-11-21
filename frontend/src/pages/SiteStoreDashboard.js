@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar } from 'lucide-react';
-import { encryptTransit, decryptTransit, decryptDB } from '../utils/cryptoUtils';
 import { formatDate, formatFullDate, formatShortDate, formatTime, formatDateTime } from '../utils/dateUtils';
 import DateInput from '../components/DateInput';
 import SettingsPage from './SettingsPage';
@@ -288,14 +287,14 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
       .filter(m => {
         const isSiteStore = m.location === 'SiteStore' || !m.location;
         const rawQty = m.quantity;
-        const qty = typeof rawQty === 'number' ? rawQty : (Number(decryptDB(rawQty)) || Number(rawQty) || 0);
+        const qty = typeof rawQty === 'number' ? rawQty : (Number(rawQty) || 0);
         return isSiteStore && qty > 0;
       })
       .map(m => {
         const rawName = m.name || '';
-        const decName = decryptDB(rawName) || rawName;
+        const decName = rawName;
         const rawQty = m.quantity;
-        const parsedQty = typeof rawQty === 'number' ? rawQty : (Number(decryptDB(rawQty)) || Number(rawQty) || 0);
+        const parsedQty = typeof rawQty === 'number' ? rawQty : (Number(rawQty) || 0);
         return {
           ...m,
           displayName: decName,
@@ -481,8 +480,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
     const token = JSON.parse(localStorage.getItem('user'))?.token;
     return {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-      'x-site-store': 'true'
+      'Authorization': `Bearer ${token}`
     };
   };
 
@@ -501,14 +499,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
       }
       const data = await res.json();
       let finalData = data;
-      if (data && data.ciphertext) {
-        try {
-          const decrypted = decryptTransit(data.ciphertext);
-          finalData = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
-        } catch (e) {
-          finalData = data;
-        }
-      }
       let items = [];
       if (Array.isArray(finalData)) {
         items = finalData;
@@ -519,8 +509,8 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
       }
       if (items.length > 0 || res.ok) {
         const normalized = items.map(m => {
-          const decName = decryptDB(m.name) || m.name;
-          const qty = typeof m.quantity === 'number' ? m.quantity : (Number(decryptDB(m.quantity)) || Number(m.quantity) || 0);
+          const decName = m.name;
+          const qty = typeof m.quantity === 'number' ? m.quantity : (Number(m.quantity) || 0);
           return {
             ...m,
             name: decName,
@@ -551,14 +541,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
       });
       const data = await res.json();
       let finalData = data;
-      if (data && data.ciphertext) {
-        try {
-          const decrypted = decryptTransit(data.ciphertext);
-          finalData = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
-        } catch (e) {
-          finalData = data;
-        }
-      }
       if (finalData && finalData.success && Array.isArray(finalData.data)) {
         const filtered = selectedProjId
           ? finalData.data.filter(m => String(m.projectId) === String(selectedProjId))
@@ -864,7 +846,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
 
     const selectedMaterial = siteStockMaterials.find(m => String(m._id) === String(materialId)) ||
                              materials.find(m => String(m._id) === String(materialId));
-    const availableQty = selectedMaterial ? (selectedMaterial.parsedQuantity !== undefined ? selectedMaterial.parsedQuantity : (typeof selectedMaterial.quantity === 'number' ? selectedMaterial.quantity : (Number(decryptDB(selectedMaterial.quantity)) || 0))) : 0;
+    const availableQty = selectedMaterial ? (selectedMaterial.parsedQuantity !== undefined ? selectedMaterial.parsedQuantity : (typeof selectedMaterial.quantity === 'number' ? selectedMaterial.quantity : (Number(selectedMaterial.quantity) || 0))) : 0;
     if (selectedMaterial && qty > availableQty) {
       setError(`Insufficient site stock. Available quantity: ${availableQty} ${selectedMaterial.unit || ''}.`);
       return;
@@ -888,14 +870,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
         })
       });
       let data = await res.json();
-      if (data && data.ciphertext) {
-        try {
-          const decrypted = decryptTransit(data.ciphertext);
-          data = typeof decrypted === 'string' ? JSON.parse(decrypted) : decrypted;
-        } catch (e) {
-          // leave as-is; handled as a failure below
-        }
-      }
 
       if (res.ok && data.success) {
         setSuccess(`✅ ${data.message || 'Material issued and usage recorded successfully.'}`);
@@ -1051,19 +1025,14 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
         }))
       };
 
-      const ciphertext = encryptTransit(JSON.stringify(payload));
-
       const res = await fetch(`${API_BASE}/api/material-requests`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ ciphertext })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
 
       let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
 
       if (res.ok && finalData.success) {
         setSuccess(`✅ Material request ${finalData.data.requestNo} submitted successfully to Main Store!`);
@@ -1088,9 +1057,6 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
       });
       const data = await res.json();
       let finalData = data;
-      if (data && data.ciphertext) {
-        finalData = JSON.parse(decryptTransit(data.ciphertext));
-      }
       if (res.ok && finalData.success) {
         setSuccess('Request cancelled.');
         fetchMyRequests();
@@ -2116,7 +2082,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
                         const m = siteStockMaterials.find(mat => String(mat._id) === String(issueForm.materialId)) ||
                                   materials.find(mat => String(mat._id) === String(issueForm.materialId));
                         if (!m) return '';
-                        const qty = m.parsedQuantity !== undefined ? m.parsedQuantity : (typeof m.quantity === 'number' ? m.quantity : (Number(decryptDB(m.quantity)) || Number(m.quantity) || 0));
+                        const qty = m.parsedQuantity !== undefined ? m.parsedQuantity : (typeof m.quantity === 'number' ? m.quantity : (Number(m.quantity) || 0));
                         return `${qty} ${m.unit || ''}`.trim();
                       })()}
                       placeholder="Select a material above"
@@ -2139,7 +2105,7 @@ function SiteStoreDashboard({ user, onLogout, onUserUpdate, initialView }) {
                         const m = siteStockMaterials.find(mat => String(mat._id) === String(issueForm.materialId)) ||
                                   materials.find(mat => String(mat._id) === String(issueForm.materialId));
                         if (!m) return undefined;
-                        return m.parsedQuantity !== undefined ? m.parsedQuantity : (typeof m.quantity === 'number' ? m.quantity : (Number(decryptDB(m.quantity)) || Number(m.quantity) || 0));
+                        return m.parsedQuantity !== undefined ? m.parsedQuantity : (typeof m.quantity === 'number' ? m.quantity : (Number(m.quantity) || 0));
                       })()}
                       disabled={!issueForm.materialId}
                       required

@@ -121,15 +121,9 @@ export const issueMaterialToProject = async (req, res) => {
       }
     }
 
-    if (!pId && siteMaterial) {
-      pId = siteMaterial.projectId || siteMaterial.project_id;
-    }
+    // Usage must be booked to the project the user selected - never to a guessed project
     if (!pId) {
-      const defaultProj = await Project.findOne();
-      if (defaultProj) pId = defaultProj._id;
-    }
-    if (!pId) {
-      return res.status(400).json({ success: false, message: 'Please select a project.' });
+      return res.status(400).json({ success: false, message: 'Please select the project this material is used for.' });
     }
 
     const project = await Project.findById(pId);

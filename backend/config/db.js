@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { seedDatabase } from '../utils/seeder.js';
+import { restoreUploads } from '../utils/fileStore.js';
 
 // Old seeder used role names that never matched the real userModel.js role enum
 // (StoreOfficer/SiteStorekeeper vs. the actual MainStoreOfficer/SiteStoreOfficer).
@@ -81,17 +82,21 @@ const runPostConnectTasks = async () => {
   try {
     const { ensureDefaultUsersExist } = await import('../scripts/verifyAndSeedUsers.js');
     const userSummary = await ensureDefaultUsersExist();
-    console.log('[Auth Seeder] Test user credentials verified & ready:');
+    console.log('[Auth Seeder] Default accounts checked (existing users are never changed):');
     console.table(userSummary);
   } catch (err) {
     console.error('[Auth Seeder Error]:', err.message);
   }
 
-  try {
-    const { seedSiteStoreDemoData } = await import('../scripts/seedSiteStoreDummyData.js');
-    await seedSiteStoreDemoData();
-  } catch (err) {
-    console.error('[SiteStore Demo Seeder Error]:', err.message);
+  // Demo Site Store records overwrite and delete data, so they are loaded only on request
+  // (set SEED_DEMO_DATA=true in .env for a fresh demo database).
+  if (process.env.SEED_DEMO_DATA === 'true') {
+    try {
+      const { seedSiteStoreDemoData } = await import('../scripts/seedSiteStoreDummyData.js');
+      await seedSiteStoreDemoData();
+    } catch (err) {
+      console.error('[SiteStore Demo Seeder Error]:', err.message);
+    }
   }
 
   try {
@@ -125,6 +130,7 @@ const connectDB = async () => {
   try {
     const conn = await mongoose.connect(primaryUri, { serverSelectionTimeoutMS: 10000, socketTimeoutMS: 15000 });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
+    restoreUploads().catch(err => console.error('[FileStore] Restore failed:', err.message));
     await runPostConnectTasks();
     return;
   } catch (error) {

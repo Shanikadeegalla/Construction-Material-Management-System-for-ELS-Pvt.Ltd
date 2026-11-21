@@ -18,10 +18,11 @@ import {
 } from 'recharts';
 import { API_BASE } from '../config';
 import useToastSetter from '../hooks/useToastSetter';
+import { useToast } from '../context/ToastContext';
 import LoadingButton from '../components/LoadingButton';
 import { SHOW_DIRECTOR_SUMMARY_CARDS } from '../config/featureFlags';
 import useBusyAction from '../hooks/useBusyAction';
-import { resolveMaterialName } from '../utils/cryptoUtils';
+import { resolveMaterialName } from '../utils/materialName';
 
 const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -30,6 +31,10 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const toast = useToast();
+  // Unread count from the previous poll, used to pop up an alert only for new notifications
+  const prevUnreadRef = useRef(0);
 
   const [activePage, setActivePage] = useState('dashboard');
   const [boms, setBoms] = useState([]);
@@ -125,7 +130,7 @@ const DirectorDashboard = ({ user, onLogout, onUserUpdate }) => {
         if (newUnreadCount > prevUnreadRef.current && prevUnreadRef.current > 0) {
           const latest = unreadList[0];
           const alertMsg = latest?.message || `You have ${newUnreadCount} unread notification(s).`;
-          toast.notify(alertMsg, 'Director Board Notification');
+          if (toast && toast.notify) toast.notify(alertMsg, 'Director Board Notification');
         }
         prevUnreadRef.current = newUnreadCount;
 

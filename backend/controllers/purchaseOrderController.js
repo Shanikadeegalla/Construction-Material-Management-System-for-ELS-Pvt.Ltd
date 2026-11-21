@@ -8,6 +8,8 @@ import mongoose from 'mongoose';
 import { createNotificationHelper, notifyRoles } from './notificationController.js';
 import { sendMail, escapeHtml } from '../utils/mailer.js';
 import { broadcastRealtimeEvent } from '../utils/realtimeEvents.js';
+import { logAction } from '../utils/auditLogger.js';
+import { searchRegex } from '../utils/searchUtils.js';
 
 // Helper to resolve material name to an ObjectId, creating a Material if it doesn't exist
 const resolveMaterial = async (materialName, unit) => {
@@ -50,9 +52,9 @@ export const getPurchaseOrders = async (req, res) => {
     if (supplier) query.supplier = supplier;
     if (search) {
       query.$or = [
-        { poNumber: new RegExp(search, 'i') },
-        { notes: new RegExp(search, 'i') },
-        { createdBy: new RegExp(search, 'i') }
+        { poNumber: searchRegex(search) },
+        { notes: searchRegex(search) },
+        { createdBy: searchRegex(search) }
       ];
     }
 
@@ -506,6 +508,7 @@ export const approvePurchaseOrder = async (req, res) => {
       po
     });
 
+    await logAction(req, `Purchase Order ${po.poNumber} approved`, 'Procurement');
     res.status(200).json({ success: true, message: `Purchase Order ${po.poNumber} approved${sendNote}.`, data: po });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -550,6 +553,7 @@ export const rejectPurchaseOrder = async (req, res) => {
       po
     });
 
+    await logAction(req, `Purchase Order ${po.poNumber} rejected`, 'Procurement');
     res.status(200).json({ success: true, message: 'Purchase Order rejected successfully!', data: po });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });

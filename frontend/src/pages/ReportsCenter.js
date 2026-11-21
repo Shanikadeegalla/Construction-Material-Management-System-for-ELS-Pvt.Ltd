@@ -7,7 +7,7 @@ import { API_BASE } from '../config';
 import { useToast } from '../context/ToastContext';
 import Pagination, { usePagination } from '../components/Pagination';
 import { getAuthHeaders, fetchWithAuth } from '../utils/authUtils';
-import { resolveMaterialName } from '../utils/cryptoUtils';
+import { resolveMaterialName } from '../utils/materialName';
 import { calculateDueDate } from '../utils/invoiceUtils';
 
 const num = (v) => Number(v) || 0;

@@ -15,6 +15,7 @@ import {
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
 import { UPLOAD_DIR } from '../config/uploadDir.js';
+import { persistUploads } from '../utils/fileStore.js';
 
 const uploadDir = UPLOAD_DIR;
 if (!fs.existsSync(uploadDir)) {
@@ -44,7 +45,7 @@ const uploadDocument = multer({
 
 const router = express.Router();
 
-router.post('/upload-document', protect, checkPermission('Supplier Management'), uploadDocument.single('document'), (req, res) => {
+router.post('/upload-document', protect, checkPermission('Supplier Management'), uploadDocument.single('document'), persistUploads, (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'Please upload a file' });
