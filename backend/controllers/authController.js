@@ -86,6 +86,10 @@ export const registerUser = async (req, res, next) => {
     });
 
     if (user) {
+      if (user.status === false) {
+        res.status(403);
+        throw new Error('Account is deactivated');
+      }
       res.status(201).json({
         success: true,
         data: {
@@ -163,55 +167,7 @@ export const loginUser = async (req, res, next) => {
       user = await User.findOne({ employeeId: { $regex: new RegExp(`^${escapedId}$`, 'i') } });
     }
 
-    // 3b. Fuzzy role or display name fallback lookup if exact identifier was not matched
     if (!user) {
-      const lower = cleanEmail;
-      let targetRole = null;
-      if (lower.includes('purchase')) targetRole = 'PurchaseManager';
-      else if (lower.includes('admin')) targetRole = 'Admin';
-      else if (lower.includes('director') || lower.includes('dir')) targetRole = 'Director';
-      else if (lower.includes('pm') || lower.includes('project')) targetRole = 'ProjectManager';
-      else if (lower.includes('sitestore')) targetRole = 'SiteStoreOfficer';
-      else if (lower.includes('store') || lower.includes('mainstore')) targetRole = 'MainStoreOfficer';
-
-      if (targetRole) {
-        user = await User.findOne({ role: targetRole, status: true });
-      }
-    }
-
-    // 4. Strict password check
-    let isMatch = user ? await user.matchPassword(cleanPassword) : false;
-
-    // Smart role default passwords and candidate check
-    if (user && !isMatch) {
-      const roleDefaults = {
-        PurchaseManager: ['Purchase@123', 'purchase123', 'password123', 'purchasemanager', 'PurchaseManager@els.com', 'pofficer123'],
-        Admin: ['admin123', 'password123', 'adminO@els.com', 'admin'],
-        Director: ['dir123', 'director123', 'password123', 'director@els.com'],
-        ProjectManager: ['pm123456', 'pm123', 'password123', 'pm@els.com'],
-        MainStoreOfficer: ['store123', 'mainstore123', 'password123', 'store@els.com'],
-        SiteStoreOfficer: ['site123', 'sitestore123', 'password123', 'sitestore@els.com']
-      };
-
-      const acceptedForRole = roleDefaults[user.role] || ['password123'];
-
-      // Check A: did the user type a recognized standard password for their role or universal password?
-      if (acceptedForRole.includes(cleanPassword) || cleanPassword === 'password123') {
-        isMatch = true;
-      }
-
-      // Check B: does the user's stored hash match any recognized role password?
-      if (!isMatch) {
-        for (const cand of acceptedForRole) {
-          if (await user.matchPassword(cand)) {
-            isMatch = true;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!user || !isMatch) {
       try {
         const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
         await AuditLog.create({
@@ -230,12 +186,38 @@ export const loginUser = async (req, res, next) => {
       throw new Error('Invalid credentials');
     }
 
-    // 5. Reactivate account if it was inactive
+    // 4. Check account status
     if (user.status === false) {
+      res.status(403);
+      throw new Error('Account is deactivated');
+    }
+
+    // Strict password check - only user.matchPassword decides login
+    const isMatch = await user.matchPassword(cleanPassword);
+
+    if (!isMatch) {
       try {
-        user.status = true;
-        await user.save();
-      } catch (e) {}
+        const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+        await AuditLog.create({
+          userId: null,
+          userName: cleanIdentifier,
+          action: 'Failed Login',
+          module: 'Authentication',
+          ipAddress,
+          timestamp: new Date(),
+          status: 'Failed'
+        });
+      } catch (logErr) {
+        // Ignore audit log write failure
+      }
+      res.status(401);
+      throw new Error('Invalid credentials');
+    }
+
+    // Check account status
+    if (user.status === false) {
+      res.status(403);
+      throw new Error('Account is deactivated');
     }
 
     // Update lastLogin timestamp
@@ -458,7 +440,7 @@ export const getUsers = async (req, res, next) => {
 // @access  Private (Admin Only)
 export const updateUser = async (req, res, next) => {
   try {
-    const { name, email, role, currentPassword, newPassword, firstName, lastName, phone, contactNumber, alternatePhone, username, employeeId, gender, avatarUrl, profilePicture, settings, status } = req.body;
+    const { name, email, role, currentPassword, newPassword, firstName, lastName, phone, contactNumber, alternatePhone, username, employeeId, gender, avatarUrl, profilePicture, settings, status, isActive, active, disabled, is_active, deactivated } = req.body;
     const user = await User.findById(req.params.id);
 
     if (!user) {
@@ -484,8 +466,35 @@ export const updateUser = async (req, res, next) => {
       throw new Error('Not authorized to change your own role');
     }
 
+    // Map status from incoming fields (status, isActive, active, disabled, is_active, deactivated)
+    let resolvedStatus = undefined;
+    if (status !== undefined) {
+      if (typeof status === 'boolean') {
+        resolvedStatus = status;
+      } else if (typeof status === 'string') {
+        const lower = status.trim().toLowerCase();
+        if (['inactive', 'disabled', 'deactivated', 'false', '0'].includes(lower)) {
+          resolvedStatus = false;
+        } else if (['active', 'enabled', 'activated', 'true', '1'].includes(lower)) {
+          resolvedStatus = true;
+        }
+      } else if (typeof status === 'number') {
+        resolvedStatus = status !== 0;
+      }
+    } else if (isActive !== undefined) {
+      resolvedStatus = typeof isActive === 'string' ? ['true', '1', 'active', 'enabled'].includes(isActive.trim().toLowerCase()) : Boolean(isActive);
+    } else if (active !== undefined) {
+      resolvedStatus = typeof active === 'string' ? ['true', '1', 'active', 'enabled'].includes(active.trim().toLowerCase()) : Boolean(active);
+    } else if (is_active !== undefined) {
+      resolvedStatus = typeof is_active === 'string' ? ['true', '1', 'active', 'enabled'].includes(is_active.trim().toLowerCase()) : Boolean(is_active);
+    } else if (disabled !== undefined) {
+      resolvedStatus = typeof disabled === 'string' ? !['true', '1', 'disabled'].includes(disabled.trim().toLowerCase()) : !disabled;
+    } else if (deactivated !== undefined) {
+      resolvedStatus = typeof deactivated === 'string' ? !['true', '1', 'deactivated'].includes(deactivated.trim().toLowerCase()) : !deactivated;
+    }
+
     // Last Admin Protection: cannot demote or deactivate the last remaining active Admin
-    if (user.role === 'Admin' && ((role && role !== 'Admin') || status === false)) {
+    if (user.role === 'Admin' && ((role && role !== 'Admin') || resolvedStatus === false)) {
       const activeAdminCount = await User.countDocuments({ role: 'Admin', status: true });
       if (activeAdminCount <= 1) {
         res.status(400);
@@ -554,8 +563,8 @@ export const updateUser = async (req, res, next) => {
     if (req.user.role === 'Admin' && role) {
       user.role = role;
     }
-    if (req.user.role === 'Admin' && status !== undefined) {
-      user.status = status;
+    if (req.user.role === 'Admin' && resolvedStatus !== undefined) {
+      user.status = resolvedStatus;
     }
 
     if (firstName !== undefined) user.firstName = firstName;
@@ -682,6 +691,9 @@ export const activateUser = async (req, res, next) => {
   }
 };
 
+export const disableUser = deactivateUser;
+export const enableUser = activateUser;
+
 // @desc    Delete a user
 // @route   DELETE /api/auth/users/:id
 // @access  Private (Admin Only)
@@ -789,32 +801,12 @@ export const resetUserPassword = async (req, res, next) => {
   }
 };
 
-// @desc    Synchronize canonical test user credentials in active DB
+// @desc    Synchronize canonical test user credentials in active DB (Disabled)
 // @route   POST /api/auth/reset-all-passwords
-// @access  Public (Debug / Maintenance)
+// @access  Disabled
 export const resetAllPasswords = async (req, res, next) => {
-  try {
-    const { ensureDefaultUsersExist } = await import('../scripts/verifyAndSeedUsers.js');
-    const userSummary = await ensureDefaultUsersExist();
-
-    const mongoose = (await import('mongoose')).default;
-    const hostName = mongoose.connection?.host || 'Unknown Host';
-    const dbName = mongoose.connection?.name || 'Unknown DB';
-
-    console.log(`[Auth Seeder] Synchronized canonical test users in ${hostName}/${dbName}`);
-    console.table(userSummary);
-
-    res.status(200).json({
-      success: true,
-      message: `Successfully synchronized canonical test user accounts in active DB (${hostName}/${dbName})`,
-      activeDatabase: {
-        host: hostName,
-        name: dbName,
-        connectionString: process.env.MONGO_URI ? 'Atlas/Primary (or Local Fallback)' : 'Local'
-      },
-      summary: userSummary
-    });
-  } catch (error) {
-    next(error);
-  }
+  res.status(404).json({
+    success: false,
+    message: 'Endpoint disabled'
+  });
 };

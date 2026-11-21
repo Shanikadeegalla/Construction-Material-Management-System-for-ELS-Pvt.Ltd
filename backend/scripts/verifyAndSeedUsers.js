@@ -72,31 +72,8 @@ export const ensureDefaultUsersExist = async () => {
     let primaryUser = null;
 
     if (matchingUsers.length > 0) {
-      // Prefer exact match on primary clean email if present
       primaryUser = matchingUsers.find(u => u.email === primaryCleanEmail) || matchingUsers[0];
-
-      primaryUser.name = tu.name.trim();
-      primaryUser.email = primaryCleanEmail;
-      primaryUser.role = tu.role;
-      primaryUser.status = true;
-      primaryUser.password = tu.password;
-
-      if (!primaryUser.employeeId && tu.employeeId) {
-        const idTaken = await User.findOne({ employeeId: tu.employeeId, _id: { $ne: primaryUser._id } });
-        if (!idTaken) {
-          primaryUser.employeeId = tu.employeeId;
-        }
-      }
-      await primaryUser.save();
-
-      // Ensure any extra legacy alias user documents found also have password synced & status enabled
-      for (const extraUser of matchingUsers) {
-        if (extraUser._id.toString() !== primaryUser._id.toString()) {
-          extraUser.password = tu.password;
-          extraUser.status = true;
-          await extraUser.save();
-        }
-      }
+      // Existing user: do not reset password or status
     } else {
       const newUserDoc = {
         name: tu.name.trim(),
@@ -115,33 +92,11 @@ export const ensureDefaultUsersExist = async () => {
       await primaryUser.save();
     }
 
-    const verified = await primaryUser.matchPassword(tu.password);
     seededSummary.push({
       Role: primaryUser.role,
       Email: tu.displayEmail || primaryUser.email,
-      Status: verified ? 'PASS ✅' : 'FAIL ❌'
+      Status: 'VERIFIED'
     });
-  }
-
-  // Synchronize all existing users by role to guarantee no account is locked with invalid hashes
-  const roleDefaultPassword = {
-    PurchaseManager: 'Purchase@123',
-    Admin: 'admin123',
-    Director: 'dir123',
-    ProjectManager: 'pm123456',
-    MainStoreOfficer: 'store123',
-    SiteStoreOfficer: 'site123'
-  };
-
-  const allDbUsers = await User.find({});
-  for (const u of allDbUsers) {
-    const defPass = roleDefaultPassword[u.role] || 'password123';
-    const valid = (await u.matchPassword(defPass)) || (await u.matchPassword('password123'));
-    if (!valid) {
-      u.password = defPass;
-      u.status = true;
-      await u.save();
-    }
   }
 
   return seededSummary;

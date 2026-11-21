@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import rateLimit from 'express-rate-limit';
 import connectDB from './config/db.js';
 import authRoutes from './routes/authRoutes.js';
 import inventoryRoutes from './routes/inventory.js';
@@ -38,6 +39,17 @@ const __dirname = path.dirname(__filename);
 connectDB();
 
 const app = express();
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skipSuccessfulRequests: true,
+  statusCode: 429,
+  message: { success: false, message: 'Too many login attempts, please try again after 15 minutes' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use('/api/auth/login', loginLimiter);
 
 // Middlewares
 // CORS_ORIGIN may hold a comma-separated allow-list (e.g. the deployed

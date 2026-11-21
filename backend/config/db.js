@@ -78,13 +78,13 @@ const runPostConnectTasks = async () => {
 
   await seedDatabase();
 
-  try {
-    const { ensureDefaultUsersExist } = await import('../scripts/verifyAndSeedUsers.js');
-    const userSummary = await ensureDefaultUsersExist();
-    console.log('[Auth Seeder] Test user credentials verified & ready:');
-    console.table(userSummary);
-  } catch (err) {
-    console.error('[Auth Seeder Error]:', err.message);
+  if (process.env.RUN_STARTUP_TASKS === 'true') {
+    try {
+      const { ensureDefaultUsersExist } = await import('../scripts/verifyAndSeedUsers.js');
+      await ensureDefaultUsersExist();
+    } catch (err) {
+      console.error('[Auth Seeder Error]:', err.message);
+    }
   }
 
   try {

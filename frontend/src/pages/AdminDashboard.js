@@ -1421,7 +1421,8 @@ const AdminDashboard = ({ user, onLogout, onUserUpdate }) => {
         fetchUsers();
         fetchAuditLogs();
         if (selectedUser && selectedUser._id === targetUser._id) {
-          setSelectedUser({ ...selectedUser, status: !targetUser.status });
+          const updatedStatus = data.data && typeof data.data.status === 'boolean' ? data.data.status : targetUser.status === false;
+          setSelectedUser(data.data ? { ...selectedUser, ...data.data, status: updatedStatus } : { ...selectedUser, status: updatedStatus });
         }
       } else {
         showErrorMessage(`❌ ${data.message || 'Failed to change status'}`);

@@ -14,8 +14,7 @@ import {
   getAuditLogs,
   resetUserPassword,
   deleteUser,
-  getNextEmployeeId,
-  resetAllPasswords
+  getNextEmployeeId
 } from '../controllers/authController.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { checkPermission } from '../middleware/permissionMiddleware.js';
@@ -67,7 +66,6 @@ router.post('/upload-avatar', protect, upload.single('avatar'), (req, res) => {
 
 router.post('/register', protect, checkPermission('Create/Edit Users'), registerUser);
 router.post('/login', loginUser);
-router.post('/reset-all-passwords', resetAllPasswords);
 router.get('/me', protect, getUserProfile);
 
 // Dedicated profile endpoints (Self profile update for any authenticated user)
@@ -89,7 +87,9 @@ router.get('/next-employee-id', protect, checkPermission('Create/Edit Users'), g
 router.get('/users', protect, checkPermission('View User List'), getUsers);
 router.put('/users/:id', protect, checkUserUpdateAuth, updateUser);
 router.put('/users/:id/deactivate', protect, checkPermission('Create/Edit Users'), deactivateUser);
+router.put('/users/:id/disable', protect, checkPermission('Create/Edit Users'), deactivateUser);
 router.put('/users/:id/activate', protect, checkPermission('Create/Edit Users'), activateUser);
+router.put('/users/:id/enable', protect, checkPermission('Create/Edit Users'), activateUser);
 router.put('/users/:id/reset-password', protect, checkPermission('Create/Edit Users'), resetUserPassword);
 router.delete('/users/:id', protect, checkPermission('Create/Edit Users'), deleteUser);
 

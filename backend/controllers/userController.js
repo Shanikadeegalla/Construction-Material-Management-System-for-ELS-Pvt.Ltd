@@ -97,4 +97,6 @@ export const updateUserEmail = async (req, res, next) => {
   }
 };
 
-export { updateUserProfile, updateUser } from './authController.js';
+export { updateUserProfile, updateUser, deactivateUser, activateUser } from './authController.js';
+export const disableUser = deactivateUser;
+export const enableUser = activateUser;
